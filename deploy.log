@@ -1,0 +1,149 @@
+[17:39:29] Building local project archive...
+[17:39:29] Archive created: D:\Loihalar\maorif_portal.tar.gz (2799881 bytes)
+[17:39:32] Connected to 169.58.154.191 as root
+[17:39:32] --- Step 1/8: System updates ---
+[17:39:32] >>> apt-get -q -y update
+[17:39:38] Hit:1 http://security.ubuntu.com/ubuntu noble-security InRelease
+Hit:2 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:3 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:4 http://archive.ubuntu.com/ubuntu noble-backports InRelease
+Reading package lists...
+
+[17:39:38] >>> DEBIAN_FRONTEND=noninteractive apt-get -q -y -o Dpkg::Options::="--force-confdef...
+[17:39:41] Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+[17:39:41] >>> DEBIAN_FRONTEND=noninteractive apt-get -q -y install python3-pip python3-venv gi...
+[17:39:43] Reading package lists...
+Building dependency tree...
+Reading state information...
+python3-pip is already the newest version (24.0+dfsg-1ubuntu1.3).
+python3-venv is already the newest version (3.12.3-0ubuntu2.1).
+git is already the newest version (1:2.43.0-1ubuntu7.3).
+nginx is already the newest version (1.24.0-2ubuntu7.15).
+curl is already the newest version (8.5.0-2ubuntu10.11).
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+[17:39:43] --- Step 2/8: Upload project ---
+[17:39:43] >>> rm -rf /var/www/maorif_zafarobod && mkdir -p /var/www/maorif_zafarobod
+[17:39:46] Uploading D:\Loihalar\maorif_portal.tar.gz to /tmp/maorif_portal.tar.gz...
+[17:39:57] Upload complete.
+[17:39:57] >>> tar -xzf /tmp/maorif_portal.tar.gz -C /var/www/maorif_zafarobod
+[17:39:57] >>> rm -f /tmp/maorif_portal.tar.gz
+[17:39:58] --- Step 3/8: Virtual environment ---
+[17:39:58] >>> python3 -m venv /var/www/maorif_zafarobod/venv
+[17:40:05] >>> cd /var/www/maorif_zafarobod && . venv/bin/activate && pip install --no-cache-di...
+[17:40:33] Collecting Django<5.0,>=4.2 (from -r requirements.txt (line 1))
+  Downloading django-4.2.30-py3-none-any.whl.metadata (4.2 kB)
+Collecting Pillow>=10.0 (from -r requirements.txt (line 2))
+  Downloading pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+Collecting pandas>=2.0 (from -r requirements.txt (line 3))
+  Downloading pandas-3.0.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (79 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 79.5/79.5 kB 3.7 MB/s eta 0:00:00
+Collecting openpyxl>=3.1 (from -r requirements.txt (line 4))
+  Downloading openpyxl-3.1.5-py2.py3-none-any.whl.metadata (2.5 kB)
+Collecting python-dateutil>=2.8 (from -r requirements.txt (line 5))
+  Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting psycopg2-binary>=2.9 (from -r requirements.txt (line 6))
+  Downloading psycopg2_binary-2.9.12-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (4.9 kB)
+Collecting asgiref<4,>=3.6.0 (from Django<5.0,>=4.2->-r requirements.txt (line 1))
+  Downloading asgiref-3.12.1-py3-none-any.whl.metadata (9.4 kB)
+Collecting sqlparse>=0.3.1 (from Django<5.0,>=4.2->-r requirements.txt (line 1))
+  Downloading sqlparse-0.5.5-py3-none-any.whl.metadata (4.7 kB)
+Collecting numpy>=1.26.0 (from pandas>=2.0->-r requirements.txt (line 3))
+  Downloading numpy-2.5.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+Collecting et-xmlfile (from openpyxl>=3.1->-r requirements.txt (line 4))
+  Downloading et_xmlfile-2.0.0-py3-none-any.whl.metadata (2.7 kB)
+Collecting six>=1.5 (from python-dateutil>=2.8->-r requirements.txt (line 5))
+  Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+Downloading django-4.2.30-py3-none-any.whl (8.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 8.0/8.0 MB 19.8 MB/s eta 0:00:00
+Downloading pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.9/6.9 MB 25.0 MB/s eta 0:00:00
+Downloading pandas-3.0.5-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (11.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.0/11.0 MB 23.0 MB/s eta 0:00:00
+Downloading openpyxl-3.1.5-py2.py3-none-any.whl (250 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 250.9/250.9 kB 177.2 MB/s eta 0:00:00
+Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 229.9/229.9 kB 197.0 MB/s eta 0:00:00
+Downloading psycopg2_binary-2.9.12-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.3/4.3 MB 16.0 MB/s eta 0:00:00
+Downloading asgiref-3.12.1-py3-none-any.whl (25 kB)
+Downloading numpy-2.5.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 14.6 MB/s eta 0:00:00
+Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+Downloading sqlparse-0.5.5-py3-none-any.whl (46 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 46.1/46.1 kB 103.4 MB/s eta 0:00:00
+Downloading et_xmlfile-2.0.0-py3-none-any.whl (18 kB)
+Installing collected packages: sqlparse, six, psycopg2-binary, Pillow, numpy, et-xmlfile, asgiref, python-dateutil, openpyxl, Django, pandas
+Successfully installed Django-4.2.30 Pillow-12.3.0 asgiref-3.12.1 et-xmlfile-2.0.0 numpy-2.5.2 openpyxl-3.1.5 pandas-3.0.5 psycopg2-binary-2.9.12 python-dateutil-2.9.0.post0 six-1.17.0 sqlparse-0.5.5
+Collecting gunicorn
+  Downloading gunicorn-26.0.0-py3-none-any.whl.metadata (5.4 kB)
+Collecting packaging (from gunicorn)
+  Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Downloading gunicorn-26.0.0-py3-none-any.whl (212 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 212.0/212.0 kB 2.6 MB/s eta 0:00:00
+Downloading packaging-26.3-py3-none-any.whl (129 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 130.0/130.0 kB 1.7 MB/s eta 0:00:00
+Installing collected packages: packaging, gunicorn
+Successfully installed gunicorn-26.0.0 packaging-26.3
+
+[17:40:33] --- Step 4/8: Harden Django settings ---
+[17:40:33] >>> sed -i 's|^DEBUG = .*|DEBUG = False|' /var/www/maorif_zafarobod/maorif_portal/se...
+[17:40:34] >>> sed -i "s|^SECRET_KEY = .*|SECRET_KEY = 'lY1d3WW1rhruycgXNGOLvcXgLsf6dgVdkHkOWPB...
+[17:40:34] >>> sed -i "s|^ALLOWED_HOSTS = .*|ALLOWED_HOSTS = ['maorif-zafarobod.tj', '169.58.15...
+[17:40:35] --- Step 5/8: Django migrate & collectstatic ---
+[17:40:35] >>> cd /var/www/maorif_zafarobod && . venv/bin/activate && python manage.py migrate
+[17:40:39] Operations to perform:
+  Apply all migrations: admin, auth, contenttypes, portal, sessions
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying admin.0003_logentry_add_action_flag_choices... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying auth.0009_alter_user_last_name_max_length... OK
+  Applying auth.0010_alter_group_name_max_length... OK
+  Applying auth.0011_update_proxy_permissions... OK
+  Applying auth.0012_alter_user_first_name_max_length... OK
+  Applying portal.0001_initial... OK
+  Applying portal.0002_alter_classsubject_options_and_more... OK
+  Applying portal.0003_grade_attendance_grade_behavior_score... OK
+  Applying sessions.0001_initial... OK
+
+[17:40:39] >>> cd /var/www/maorif_zafarobod && . venv/bin/activate && python manage.py collects...
+[17:40:40] 
+127 static files copied to '/var/www/maorif_zafarobod/staticfiles', 1 unmodified.
+
+[17:40:40] --- Step 6/8: Gunicorn service ---
+[17:40:42] --- Step 7/8: Nginx configuration ---
+[17:40:43] >>> ln -sf /etc/nginx/sites-available/maorif_portal /etc/nginx/sites-enabled/maorif_...
+[17:40:43] >>> rm -f /etc/nginx/sites-enabled/default
+[17:40:44] >>> nginx -t
+[17:40:44] STDERR: nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+[17:40:44] --- Step 8/8: Start services ---
+[17:40:44] >>> systemctl daemon-reload && systemctl enable --now gunicorn && systemctl enable -...
+[17:40:48] STDERR: Created symlink /etc/systemd/system/multi-user.target.wants/gunicorn.service → /etc/systemd/system/gunicorn.service.
+Synchronizing state of nginx.service with SysV service script with /usr/lib/systemd/systemd-sysv-install.
+Executing: /usr/lib/systemd/systemd-sysv-install enable nginx
+
+[17:40:48] >>> systemctl is-active --quiet gunicorn && systemctl is-active --quiet nginx && ech...
+[17:40:49] OK: gunicorn and nginx are active
+
+[17:40:49] >>> curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/
+[17:40:51] 302
+[17:40:51] Gunicorn HTTP status: 302
+[17:40:51] Deployment completed successfully.

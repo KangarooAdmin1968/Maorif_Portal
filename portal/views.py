@@ -338,7 +338,7 @@ def logout_view(request):
 @login_required
 def school_list(request):
     role = get_user_role(request.user)
-    if role == settings.ROLE_DIRECTOR:
+    if request.user.is_superuser or role == settings.ROLE_DIRECTOR:
         schools = School.objects.all()
     else:
         user_school = get_user_school(request.user)

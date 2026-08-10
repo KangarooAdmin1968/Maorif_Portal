@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 from django.db.models import Avg, Count, Sum
 import io
 import json
+import re
 import datetime
 import pandas as pd
 from openpyxl import Workbook
@@ -343,7 +344,32 @@ def school_list(request):
     else:
         user_school = get_user_school(request.user)
         schools = School.objects.filter(id=user_school.id) if user_school else School.objects.none()
-    return render(request, 'portal/school_list.html', {'schools': schools, 'role': role})
+
+    def school_sort_key(school):
+        name_lower = school.name.lower()
+        type_lower = school.type.lower()
+
+        if 'идор' in type_lower:
+            group_priority = 4
+        elif 'кӯд' in type_lower or 'куд' in type_lower:
+            group_priority = 3
+        elif 'лит' in type_lower or 'лиц' in type_lower:
+            group_priority = 2
+        elif 'гимн' in name_lower:
+            group_priority = 1
+            return (group_priority, 0, school.name)
+        else:
+            group_priority = 1
+
+        nums = re.findall(r'\d+', school.name)
+        num = int(nums[0]) if nums else 999999
+
+        return (group_priority, num, school.name)
+
+    schools_list = list(schools)
+    schools_list.sort(key=school_sort_key)
+
+    return render(request, 'portal/school_list.html', {'schools': schools_list, 'role': role})
 
 
 @login_required

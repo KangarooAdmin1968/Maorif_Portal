@@ -86,6 +86,8 @@ def is_quarter_locked(school, class_name, subject, quarter):
 
 
 def get_user_school(user):
+    if not user or user.is_anonymous:
+        return None
     try:
         return user.userprofile.school
     except UserProfile.DoesNotExist:
@@ -93,6 +95,8 @@ def get_user_school(user):
 
 
 def get_user_role(user):
+    if not user or user.is_anonymous:
+        return settings.ROLE_TEACHER
     try:
         return user.userprofile.role
     except UserProfile.DoesNotExist:
@@ -260,7 +264,6 @@ def calculate_subject_rankings():
     return data
 
 
-@login_required
 def dashboard(request):
     role = get_user_role(request.user)
     user_school = get_user_school(request.user)

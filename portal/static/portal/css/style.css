@@ -1,0 +1,190 @@
+/* Maorif Portal - basic responsive styles */
+* { box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Arial", sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #f4f6f9;
+    color: #1f2937;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+.navbar {
+    background: #003366;
+    color: #fff;
+    padding: 0.75rem 0;
+}
+
+.nav-inner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    color: #fff;
+    font-size: 1.25rem;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.nav-links a, .nav-links span {
+    color: #fff;
+    text-decoration: none;
+    margin-left: 1rem;
+    font-size: 0.95rem;
+}
+
+.user {
+    opacity: 0.85;
+}
+
+.btn {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 0.95rem;
+    transition: background 0.2s;
+}
+
+.btn:hover { background: #1d4ed8; }
+
+.btn-outline { background: transparent; border: 1px solid #fff; }
+.btn-secondary { background: #10b981; }
+.btn-secondary:hover { background: #059669; }
+.btn-danger { background: #ef4444; }
+.btn-danger:hover { background: #dc2626; }
+.btn-sm { padding: 0.25rem 0.5rem; font-size: 0.85rem; }
+.btn-xs { padding: 0.15rem 0.35rem; font-size: 0.75rem; }
+
+.card {
+    background: #fff;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    text-align: center;
+}
+
+.stat-title {
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin-bottom: 0.25rem;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #003366;
+}
+
+.dashboard-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+    .dashboard-columns { grid-template-columns: 1fr; }
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.75rem;
+}
+
+.data-table th, .data-table td {
+    text-align: left;
+    padding: 0.75rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.data-table th {
+    background: #003366;
+    color: #fff;
+    font-weight: 600;
+}
+
+.data-table tr:nth-child(even) { background: #f9fafb; }
+
+.data-table input.grade-input {
+    width: 80px;
+    padding: 0.4rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+}
+
+.inline-form { display: inline-block; margin: 0 0.25rem; }
+
+.toolbar {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.subject-list { list-style: none; padding: 0; }
+.subject-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.login-card {
+    max-width: 400px;
+    margin: 5rem auto;
+    background: #fff;
+    padding: 2rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.login-card input {
+    width: 100%;
+    padding: 0.5rem;
+    margin: 0.25rem 0 1rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+}
+
+.alert {
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: 0.375rem;
+}
+
+.alert-success { background: #d1fae5; color: #065f46; }
+.alert-error { background: #fee2e2; color: #991b1b; }
+
+.footer {
+    background: #e5e7eb;
+    padding: 1rem 0;
+    text-align: center;
+    color: #4b5563;
+    margin-top: 2rem;
+}

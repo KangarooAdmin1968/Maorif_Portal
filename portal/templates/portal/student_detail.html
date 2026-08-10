@@ -1,0 +1,272 @@
+{% extends 'portal/base.html' %}
+{% load static %}
+{% block title %}{{ student.full_name }}{% endblock %}
+{% block content %}
+
+<style>
+.profile-hero {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2rem;
+    background: linear-gradient(135deg, #003366 0%, #004e92 100%);
+    color: #fff;
+    padding: 2rem;
+    border-radius: 1rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+}
+.profile-avatar {
+    width: 100px;
+    height: 100px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 3rem;
+    flex-shrink: 0;
+}
+.profile-info h1 {
+    margin: 0 0 0.35rem;
+    font-size: 1.8rem;
+}
+.profile-meta {
+    opacity: 0.9;
+    font-size: 1.05rem;
+}
+.profile-gpa {
+    margin-left: auto;
+    text-align: center;
+}
+.profile-gpa .gpa-value {
+    font-size: 3rem;
+    font-weight: 800;
+    line-height: 1;
+}
+.profile-gpa .gpa-label {
+    font-size: 0.95rem;
+    opacity: 0.85;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.badges-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.badge-card {
+    background: #fff;
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    border-top: 4px solid #004e92;
+}
+.badge-card .badge-icon {
+    font-size: 1.6rem;
+    margin-bottom: 0.35rem;
+}
+.badge-card .badge-title {
+    font-size: 0.9rem;
+    color: #6b7280;
+    margin-bottom: 0.25rem;
+}
+.badge-card .badge-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #003366;
+}
+.badge-card.overall-gpa {
+    border-top-color: #f59e0b;
+    background: #fffbeb;
+}
+.badge-card.overall-gpa .badge-value {
+    color: #b45309;
+    font-size: 2.2rem;
+}
+
+.dynamic-badge {
+    display: inline-block;
+    padding: 0.6rem 1.2rem;
+    border-radius: 2rem;
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+}
+.badge-green { background: #dcfce7; color: #166534; }
+.badge-blue { background: #dbeafe; color: #1e40af; }
+.badge-gray { background: #f3f4f6; color: #4b5563; }
+
+.chart-card {
+    background: #fff;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+.chart-card h2 {
+    margin-top: 0;
+    color: #003366;
+    font-size: 1.25rem;
+}
+.chart-wrapper {
+    position: relative;
+    height: 400px;
+    max-width: 900px;
+    margin: auto;
+}
+
+@media (max-width: 600px) {
+    .profile-hero { text-align: center; justify-content: center; }
+    .profile-gpa { margin-left: 0; width: 100%; }
+    .chart-wrapper { height: 300px; }
+}
+</style>
+
+<a href="{% url 'class_detail' student.school.id student.class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">← Бозгашт ба синф</a>
+
+<section class="profile-hero">
+    <div class="profile-avatar">👤</div>
+    <div class="profile-info">
+        <h1>{{ student.full_name }}</h1>
+        <div class="profile-meta">🏫 {{ student.school.name }} &nbsp;|&nbsp; 🎓 Синф {{ student.class_name }}</div>
+    </div>
+    <div class="profile-gpa">
+        <div class="gpa-value">{{ gpa }}</div>
+        <div class="gpa-label">Холи миёна</div>
+    </div>
+</section>
+
+{% if gpa >= 9.0 %}
+    <div class="dynamic-badge badge-green">🌟 АЪЛОЧӢ</div>
+{% elif gpa >= 7.0 %}
+    <div class="dynamic-badge badge-blue">👍 ХУБ</div>
+{% else %}
+    <div class="dynamic-badge badge-gray">📚 Дар ҳоли омӯзиш</div>
+{% endif %}
+
+<section class="badges-row">
+    <div class="badge-card">
+        <div class="badge-icon">👥</div>
+        <div class="badge-title">Ҷойи синфӣ</div>
+        <div class="badge-value">{{ class_rank }}</div>
+    </div>
+    <div class="badge-card">
+        <div class="badge-icon">🏢</div>
+        <div class="badge-title">Ҷойи мактабӣ</div>
+        <div class="badge-value">{{ school_rank }}</div>
+    </div>
+    <div class="badge-card">
+        <div class="badge-icon">🏆</div>
+        <div class="badge-title">Ҷойи ноҳиявӣ</div>
+        <div class="badge-value">{{ district_rank }}</div>
+    </div>
+    <div class="badge-card overall-gpa">
+        <div class="badge-icon">📊</div>
+        <div class="badge-title">Холи миёнаи умумӣ</div>
+        <div class="badge-value">{{ gpa|floatformat:1 }}</div>
+    </div>
+</section>
+
+<section class="badges-row">
+    <div class="badge-card">
+        <div class="badge-icon">🎓</div>
+        <div class="badge-title">Тарбия (Хулқ-атвор)</div>
+        <div class="badge-value">{{ student.behavior_status }}</div>
+    </div>
+    <div class="badge-card">
+        <div class="badge-icon">✅</div>
+        <div class="badge-title">Сабабнок (соат)</div>
+        <div class="badge-value">{{ student.total_excused }}</div>
+    </div>
+    <div class="badge-card">
+        <div class="badge-icon">❌</div>
+        <div class="badge-title">Бесабаб (соат)</div>
+        <div class="badge-value">{{ student.total_unexcused }}</div>
+    </div>
+    <div class="badge-card">
+        <div class="badge-icon">📈</div>
+        <div class="badge-title">Фоизи давомот</div>
+        <div class="badge-value">{{ student.attendance_percentage }}%</div>
+    </div>
+</section>
+
+<section class="chart-card">
+    <h2>📊 Холҳо аз рӯи фанҳо</h2>
+    <div class="chart-wrapper">
+        <canvas id="scoreChart"></canvas>
+    </div>
+</section>
+
+{{ subjects|json_script:"subjects-data" }}
+{{ scores|json_script:"scores-data" }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+<script>
+const subjects = JSON.parse(document.getElementById('subjects-data').textContent);
+const scores = JSON.parse(document.getElementById('scores-data').textContent);
+
+const colors = scores.map(score =>
+    score >= 9 ? '#22C55E' :
+    score >= 7 ? '#3B82F6' :
+    score >= 5 ? '#EAB308' :
+    '#EF4444'
+);
+
+Chart.register(ChartDataLabels);
+
+const ctx = document.getElementById('scoreChart').getContext('2d');
+new Chart(ctx, {
+    type: 'bar',
+    data: {
+        labels: subjects,
+        datasets: [{
+            label: 'Хол',
+            data: scores,
+            backgroundColor: colors,
+            borderRadius: 6,
+            barPercentage: 0.6,
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            datalabels: {
+                anchor: 'end',
+                align: 'top',
+                offset: 4,
+                color: '#1E293B',
+                font: { weight: 'bold', size: 12 },
+                formatter: function(value) {
+                    return Number(value).toFixed(1);
+                }
+            },
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        return 'Хол: ' + context.raw;
+                    }
+                }
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                min: 0,
+                max: 11,
+                ticks: { stepSize: 1 }
+            },
+            x: {
+                ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 }
+            }
+        }
+    }
+});
+</script>
+
+{% endblock %}

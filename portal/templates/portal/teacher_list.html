@@ -1,0 +1,23 @@
+{% extends 'portal/base.html' %}
+{% block title %}Муаллимон — {{ school.name }}{% endblock %}
+{% block content %}
+<h1>{{ school.name }} — Муаллимон</h1>
+<table class="data-table">
+    <thead>
+        <tr><th>№</th><th>Ному насаб</th><th>Фан</th><th>Таҷриба</th><th>Телефон</th></tr>
+    </thead>
+    <tbody>
+        {% for t in teachers %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ t.name }}</td>
+            <td>{{ t.subject }}</td>
+            <td>{{ t.experience }}</td>
+            <td>{{ t.phone }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5">Муаллим ёфт нашуд.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

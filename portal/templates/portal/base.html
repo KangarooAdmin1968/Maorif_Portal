@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="uz-cyrl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Портали маориф — Зафаробод{% endblock %}</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'portal/css/style.css' %}">
+    <style>
+        .site-footer {
+            background: #003366;
+            color: #fff;
+            padding: 2rem 0 1rem;
+            margin-top: 2rem;
+        }
+        .site-footer h3 {
+            text-align: center;
+            margin: 0 0 1.5rem;
+            font-size: 1.25rem;
+            letter-spacing: 1px;
+        }
+        .footer-columns {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2rem;
+        }
+        .footer-col strong {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+            color: #ffd700;
+        }
+        .footer-col p {
+            margin: 0;
+            line-height: 1.5;
+            font-size: 0.95rem;
+            opacity: 0.9;
+        }
+        .footer-bottom {
+            text-align: center;
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255,255,255,0.2);
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        @media (max-width: 768px) {
+            .footer-columns {
+                grid-template-columns: 1fr;
+                gap: 1.25rem;
+                text-align: center;
+            }
+            .site-footer h3 { font-size: 1.1rem; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container nav-inner">
+            <a href="{% url 'dashboard' %}" class="logo">🏫 Портали маориф</a>
+            <div class="nav-links">
+                {% if user.is_authenticated %}
+                    <a href="{% url 'dashboard' %}">Асосӣ</a>
+                    <a href="{% url 'school_list' %}">Муассисаҳо</a>
+                    {% if user.userprofile.school %}
+                        <a href="{% url 'class_list' user.userprofile.school.id %}">Синфҳо</a>
+                        <a href="{% url 'teacher_list' user.userprofile.school.id %}">Муаллимон</a>
+                    {% endif %}
+                    <span class="user">{{ user.username }}</span>
+                    <a href="{% url 'logout' %}" class="btn btn-outline">Баромад</a>
+                {% else %}
+                    <a href="{% url 'login' %}" class="btn">Вуруд</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+    <main class="container">
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="site-footer">
+        <div class="container">
+            <h3>ТАМОС ВА ДАСТГИРИИ ТЕХНИКӢ</h3>
+            <div class="footer-columns">
+                <div class="footer-col">
+                    <strong>Идораи маорифи ноҳияи Зафаробод</strong>
+                    <p>Суроға: вилояти Суғд, ноҳияи Зафаробод, шаҳраки Зафаробод, кӯчаи Исмоили Сомонӣ</p>
+                </div>
+                <div class="footer-col">
+                    <strong>Мудири маориф: Санҷар Одиназода</strong>
+                    <p>Телефонҳо: +992 92 666 6544 (WhatsApp/Telegram), +992 00 909 0083</p>
+                </div>
+                <div class="footer-col">
+                    <strong>Дастгирии техникӣ (Муаллифи сомона): Ӯсар Дӯсарович</strong>
+                    <p>Телефонҳо: +992 93 900 0049 (WhatsApp/Telegram), +992 90 041 4777</p>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>© {% now 'Y' %} Шӯъбаи маорифи ноҳияи Зафаробод</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

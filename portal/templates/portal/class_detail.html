@@ -1,0 +1,159 @@
+{% extends 'portal/base.html' %}
+{% block title %}{{ school.name }} — {{ class_name }}{% endblock %}
+{% block content %}
+<h1>{{ school.name }} — Синф {{ class_name }}</h1>
+
+<div class="toolbar">
+    <a href="{% url 'download_template' class_name %}" class="btn btn-secondary">📥 Боргирории шаблон</a>
+    <form action="{% url 'import_excel' class_name %}" method="post" enctype="multipart/form-data" class="inline-form">
+        {% csrf_token %}
+        <input type="file" name="excel" accept=".xlsx,.xls" required>
+        <button type="submit" class="btn btn-secondary">📤 Воридоти Excel</button>
+    </form>
+</div>
+
+<section class="card">
+    <div class="class-header-bar">
+        <h2 style="margin:0;">Хонандагон</h2>
+        {% if not non_graded %}
+        <div class="subject-dropdown">
+            <button type="button" class="btn btn-secondary dropdown-toggle" onclick="toggleSubjects()">
+                ⚙️ Интихоби фан барои холгузорӣ
+            </button>
+            <div class="dropdown-menu" id="subject-menu">
+                {% for s in subjects %}
+                <div class="dropdown-item">
+                    <a href="{% url 'grade_entry' school.id class_name s.subject %}">{{ s.subject }}</a>
+                    {% if not s.is_default %}
+                    <form action="{% url 'add_remove_subject' school.id class_name %}" method="post" class="inline-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="subject" value="{{ s.subject }}">
+                        <input type="hidden" name="action" value="remove">
+                        <button type="submit" class="btn btn-danger btn-xs" title="Хориҷ">−</button>
+                    </form>
+                    {% endif %}
+                </div>
+                {% empty %}
+                <div class="dropdown-item disabled">Фан ёфт нашуд.</div>
+                {% endfor %}
+                <div class="dropdown-divider"></div>
+                <div class="dropdown-add">
+                    <form action="{% url 'add_remove_subject' school.id class_name %}" method="post" class="inline-form">
+                        {% csrf_token %}
+                        <input type="text" name="subject" placeholder="Фани нав" required>
+                        <input type="hidden" name="action" value="add">
+                        <button type="submit" class="btn btn-sm">+ Илова</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    <table class="data-table">
+        <thead><tr><th>№</th><th>Ному насаб</th></tr></thead>
+        <tbody>
+            {% for s in students %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td><a href="{% url 'student_detail' s.id %}">{{ s.full_name }}</a></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2">Хонанда ёфт нашуд.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+{% if non_graded %}
+<section class="card">
+    <p>Ин синф холҳои рақамӣ намегирад (сифатӣ ё ҳозирӣ).</p>
+</section>
+{% endif %}
+
+<style>
+.class-header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.subject-dropdown {
+    position: relative;
+    display: inline-block;
+}
+.dropdown-toggle {
+    white-space: nowrap;
+}
+.dropdown-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    min-width: 300px;
+    max-height: 340px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    z-index: 100;
+    padding: 0.5rem 0;
+}
+.dropdown-menu.show {
+    display: block;
+}
+.dropdown-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid #f3f4f6;
+    gap: 0.5rem;
+}
+.dropdown-item:hover {
+    background: #f9fafb;
+}
+.dropdown-item a {
+    color: #1f2937;
+    text-decoration: none;
+    flex: 1;
+}
+.dropdown-item.disabled {
+    color: #9ca3af;
+    pointer-events: none;
+}
+.dropdown-divider {
+    height: 1px;
+    background: #e5e7eb;
+    margin: 0.4rem 0;
+}
+.dropdown-add {
+    padding: 0.5rem 0.9rem;
+}
+.dropdown-add input[type="text"] {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.25rem;
+    width: 170px;
+}
+@media (max-width: 600px) {
+    .class-header-bar { flex-direction: column; align-items: flex-start; }
+    .dropdown-menu { right: auto; left: 0; min-width: 260px; }
+}
+</style>
+
+<script>
+function toggleSubjects() {
+    document.getElementById('subject-menu').classList.toggle('show');
+}
+document.addEventListener('click', function(e) {
+    const dropdown = document.querySelector('.subject-dropdown');
+    if (!dropdown) return;
+    if (!dropdown.contains(e.target)) {
+        document.getElementById('subject-menu').classList.remove('show');
+    }
+});
+</script>
+{% endblock %}

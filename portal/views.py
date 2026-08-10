@@ -1,0 +1,1014 @@
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
+from django.db.models import Avg, Count, Sum
+import io
+import json
+import datetime
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, Protection
+from django.http import HttpResponse, JsonResponse
+from django.conf import settings
+from django.contrib import messages
+from django.views.decorators.http import require_POST
+
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile
+from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
+from .utils import (
+    normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
+    default_subjects_for_class, ensure_class_subjects, is_non_graded
+)
+
+
+QUALITATIVE_CHOICES = [
+    ('', '---'),
+    ('1', 'Ғайб'),
+    ('2', 'Ҳозир'),
+    ('3', 'Қонеъкунанда'),
+    ('4', 'Қаноатбахш'),
+    ('5', 'Аъло'),
+]
+
+
+def std_round(value):
+    """Round positive numbers using standard half-up rounding."""
+    if value is None:
+        return None
+    return int(value + 0.5)
+
+
+def calc_quarterly(qmap):
+    """Calculate semi-annual, annual, and final grades from a quarter map."""
+    calc = {'semi_annual_1': None, 'semi_annual_2': None, 'annual': None, 'final': None}
+    if 1 in qmap and qmap[1] is not None and 2 in qmap and qmap[2] is not None:
+        calc['semi_annual_1'] = std_round((qmap[1] + qmap[2]) / 2)
+    if 3 in qmap and qmap[3] is not None and 4 in qmap and qmap[4] is not None:
+        calc['semi_annual_2'] = std_round((qmap[3] + qmap[4]) / 2)
+    if calc['semi_annual_1'] is not None and calc['semi_annual_2'] is not None:
+        calc['annual'] = std_round((calc['semi_annual_1'] + calc['semi_annual_2']) / 2)
+    if calc['annual'] is not None:
+        if 'att' in qmap and qmap['att'] is not None:
+            calculated_final = std_round((calc['annual'] + qmap['att']) / 2)
+            calc['final'] = min(calculated_final, qmap['att'])
+        else:
+            calc['final'] = calc['annual']
+    return calc
+
+
+def get_date_quarter(date):
+    """Map a date to its academic quarter."""
+    m = date.month
+    if m in (9, 10, 11):
+        return 1
+    elif m in (12, 1, 2):
+        return 2
+    elif m in (3, 4, 5):
+        return 3
+    elif m in (6, 7, 8):
+        return 4
+    return None
+
+
+def is_quarter_locked(school, class_name, subject, quarter):
+    """Return True if the given quarter is administratively locked."""
+    if quarter is None:
+        return False
+    return QuarterLock.objects.filter(
+        school=school,
+        class_name=normalize_class_name(class_name),
+        subject=normalize_subject(subject),
+        quarter=quarter,
+        locked=True
+    ).exists()
+
+
+def get_user_school(user):
+    try:
+        return user.userprofile.school
+    except UserProfile.DoesNotExist:
+        return None
+
+
+def get_user_role(user):
+    try:
+        return user.userprofile.role
+    except UserProfile.DoesNotExist:
+        return settings.ROLE_TEACHER
+
+
+def has_school_access(user, school):
+    if user.is_superuser:
+        return True
+    role = get_user_role(user)
+    if role == settings.ROLE_DIRECTOR:
+        return True
+    user_school = get_user_school(user)
+    return user_school == school
+
+
+def get_user_profile(user):
+    try:
+        return user.userprofile
+    except UserProfile.DoesNotExist:
+        return None
+
+
+def _add_score(totals, key, total, count):
+    if total is None or count is None:
+        return
+    prev = totals.setdefault(key, [0.0, 0])
+    prev[0] += float(total)
+    prev[1] += int(count)
+
+
+def calculate_school_rankings():
+    """Return all schools ranked by average GPA from daily and quarterly grades."""
+    totals = {}
+    for row in Grade.objects.filter(score__isnull=False).values('student__school').annotate(total=Sum('score'), count=Count('score')):
+        _add_score(totals, row['student__school'], row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student__school').annotate(total=Sum('grade'), count=Count('grade')):
+        _add_score(totals, row['student__school'], row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student__school').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+        _add_score(totals, row['student__school'], row['total'], row['count'])
+
+    schools = School.objects.all()
+    data = []
+    for school in schools:
+        total, count = totals.get(school.id, (0.0, 0))
+        gpa = round(total / count, 2) if count else 0.0
+        data.append({'school': school, 'gpa': gpa})
+    data.sort(key=lambda x: x['gpa'], reverse=True)
+    rank = 0
+    prev_gpa = None
+    for idx, item in enumerate(data, 1):
+        if item['gpa'] != prev_gpa:
+            rank = idx
+            prev_gpa = item['gpa']
+        item['rank'] = rank
+    return data
+
+
+def calculate_class_rankings(school_filter=None):
+    """Return class rankings with district and school ranks from all grade records."""
+    entries = {}
+
+    # Seed with every school/class combination that has students
+    for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
+        sid = row['school_id']
+        cname = normalize_class_name(row['class_name'])
+        sname = row['school__name'] or ''
+        key = (sid, cname)
+        entries[key] = {'school_id': sid, 'school_name': sname, 'class_name': cname, 'total': 0.0, 'count': 0}
+
+    # Daily grades
+    for row in Grade.objects.filter(score__isnull=False).values('student__school', 'student__class_name').annotate(total=Sum('score'), count=Count('score')):
+        key = (row['student__school'], normalize_class_name(row['student__class_name']))
+        if key not in entries:
+            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
+        entries[key]['total'] += float(row['total'] or 0)
+        entries[key]['count'] += int(row['count'])
+
+    # Quarterly grades
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student__school', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
+        key = (row['student__school'], normalize_class_name(row['class_name']))
+        if key not in entries:
+            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
+        entries[key]['total'] += float(row['total'] or 0)
+        entries[key]['count'] += int(row['count'])
+
+    # Attestation grades
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student__school', 'class_name').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+        key = (row['student__school'], normalize_class_name(row['class_name']))
+        if key not in entries:
+            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
+        entries[key]['total'] += float(row['total'] or 0)
+        entries[key]['count'] += int(row['count'])
+
+    # Resolve any missing school names
+    missing_ids = {e['school_id'] for e in entries.values() if not e['school_name']}
+    if missing_ids:
+        name_map = {s.id: s.name for s in School.objects.filter(id__in=missing_ids)}
+        for e in entries.values():
+            if not e['school_name']:
+                e['school_name'] = name_map.get(e['school_id'], '')
+
+    data = [
+        {
+            'school_id': e['school_id'],
+            'school_name': e['school_name'],
+            'class_name': e['class_name'],
+            'gpa': round(e['total'] / e['count'], 2) if e['count'] else 0.0,
+        }
+        for e in entries.values()
+    ]
+    data.sort(key=lambda x: x['gpa'], reverse=True)
+
+    rank = 0
+    prev_gpa = None
+    for idx, item in enumerate(data, 1):
+        if item['gpa'] != prev_gpa:
+            rank = idx
+            prev_gpa = item['gpa']
+        item['district_rank'] = rank
+
+    school_state = {}
+    for item in data:
+        school = item['school_name']
+        gpa = item['gpa']
+        if school not in school_state:
+            school_state[school] = {'rank': 0, 'prev_gpa': None}
+        if gpa != school_state[school]['prev_gpa']:
+            school_state[school]['rank'] += 1
+            school_state[school]['prev_gpa'] = gpa
+        item['school_rank'] = school_state[school]['rank']
+
+    if school_filter:
+        try:
+            sid = int(school_filter)
+            data = [item for item in data if item['school_id'] == sid]
+        except (ValueError, TypeError):
+            data = [item for item in data if school_filter.lower() in item['school_name'].lower()]
+
+    return data
+
+
+def calculate_subject_rankings():
+    """Return subject rankings with normalized subject names from all grade records."""
+    totals = {}
+    for row in Grade.objects.filter(score__isnull=False).values('subject').annotate(total=Sum('score'), count=Count('score')):
+        subj = normalize_subject(row['subject'])
+        _add_score(totals, subj, row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('subject').annotate(total=Sum('grade'), count=Count('grade')):
+        subj = normalize_subject(row['subject'])
+        _add_score(totals, subj, row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('subject').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+        subj = normalize_subject(row['subject'])
+        _add_score(totals, subj, row['total'], row['count'])
+
+    data = [{'subject': subj, 'gpa': round(total / count, 2) if count else 0.0} for subj, (total, count) in totals.items()]
+    data.sort(key=lambda x: x['gpa'], reverse=True)
+    rank = 0
+    prev_gpa = None
+    for idx, item in enumerate(data, 1):
+        if item['gpa'] != prev_gpa:
+            rank = idx
+            prev_gpa = item['gpa']
+        item['rank'] = rank
+    return data
+
+
+@login_required
+def dashboard(request):
+    role = get_user_role(request.user)
+    user_school = get_user_school(request.user)
+
+    # Live rankings from Grade and QuarterGrade records
+    all_school_ranking = calculate_school_rankings()
+    all_subject_ranking = calculate_subject_rankings()
+
+    if role == settings.ROLE_DIRECTOR:
+        schools = School.objects.all()
+        school_ranking = all_school_ranking
+        subject_ranking = all_subject_ranking
+    else:
+        schools = School.objects.filter(id=user_school.id) if user_school else School.objects.none()
+        school_ranking = [s for s in all_school_ranking if s['school'] == user_school] if user_school else []
+        subject_ranking = []
+
+    # Optional school filter for class ranking dropdown
+    selected_school = request.GET.get('school', '')
+    class_ranking = calculate_class_rankings()
+    if selected_school:
+        try:
+            sid = int(selected_school)
+            class_ranking = [c for c in class_ranking if c['school_id'] == sid]
+        except (ValueError, TypeError):
+            class_ranking = []
+    elif role != settings.ROLE_DIRECTOR and user_school:
+        class_ranking = [c for c in class_ranking if c['school_id'] == user_school.id]
+
+    total_schools = School.objects.count()
+    total_students = Student.objects.count()
+    total_teachers = Teacher.objects.count()
+    try:
+        ratio = round(total_students / total_teachers, 1) if total_teachers else 0.0
+    except ZeroDivisionError:
+        ratio = 0.0
+
+    context = {
+        'role': role,
+        'schools': schools,
+        'school_ranking': school_ranking,
+        'class_ranking': class_ranking,
+        'subject_ranking': subject_ranking,
+        'total_schools': total_schools,
+        'total_students': total_students,
+        'total_teachers': total_teachers,
+        'ratio': ratio,
+        'user_school': user_school,
+        'selected_school': selected_school,
+    }
+    return render(request, 'portal/dashboard.html', context)
+
+
+def login_view(request):
+    if request.method == 'POST':
+        form = LoginForm(request.POST)
+        if form.is_valid():
+            username = form.cleaned_data['username']
+            password = form.cleaned_data['password']
+            user = authenticate(request, username=username, password=password)
+            if user:
+                login(request, user)
+                return redirect('dashboard')
+            else:
+                form.add_error(None, 'Номи корбар ёки рамз нодуруст')
+    else:
+        form = LoginForm()
+    return render(request, 'portal/login.html', {'form': form})
+
+
+def logout_view(request):
+    logout(request)
+    return redirect('login')
+
+
+@login_required
+def school_list(request):
+    role = get_user_role(request.user)
+    if role == settings.ROLE_DIRECTOR:
+        schools = School.objects.all()
+    else:
+        user_school = get_user_school(request.user)
+        schools = School.objects.filter(id=user_school.id) if user_school else School.objects.none()
+    return render(request, 'portal/school_list.html', {'schools': schools, 'role': role})
+
+
+@login_required
+def school_add(request):
+    if get_user_role(request.user) != settings.ROLE_DIRECTOR:
+        return redirect('school_list')
+    if request.method == 'POST':
+        form = SchoolForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('school_list')
+    else:
+        form = SchoolForm()
+    return render(request, 'portal/school_form.html', {'form': form})
+
+
+@login_required
+def class_list(request, school_id=None):
+    user_school = get_user_school(request.user)
+    role = get_user_role(request.user)
+    if school_id:
+        school = get_object_or_404(School, id=school_id)
+    else:
+        school = user_school
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+
+    classes = Student.objects.filter(school=school).values('class_name').distinct().order_by('class_name')
+    return render(request, 'portal/class_list.html', {'school': school, 'classes': classes, 'role': role})
+
+
+@login_required
+def class_detail(request, school_id, class_name):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+    ensure_class_subjects(school, class_name)
+    students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
+    subjects = ClassSubject.objects.filter(school=school, class_name=class_name, is_active=True).order_by('subject')
+    non_graded = is_non_graded(class_name)
+    return render(request, 'portal/class_detail.html', {
+        'school': school,
+        'class_name': class_name,
+        'students': students,
+        'subjects': subjects,
+        'non_graded': non_graded,
+    })
+
+
+@login_required
+def grade_entry(request, school_id, class_name, subject):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    role = get_user_role(request.user)
+    if role == settings.ROLE_TEACHER:
+        profile = get_user_profile(request.user)
+        if profile:
+            if profile.assigned_class and normalize_class_name(profile.assigned_class) != normalize_class_name(class_name):
+                return redirect('dashboard')
+            if profile.assigned_subject and normalize_subject(profile.assigned_subject) != normalize_subject(subject):
+                return redirect('dashboard')
+
+    class_name = normalize_class_name(class_name)
+    subject = normalize_subject(subject)
+    students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
+
+    if request.method == 'POST':
+        date_str = request.POST.get('date', '')
+        try:
+            date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+        except ValueError:
+            date = datetime.date.today()
+
+        daily_q = get_date_quarter(date)
+        daily_locked = is_quarter_locked(school, class_name, subject, daily_q)
+
+        for student in students:
+            # daily grade fallback (skip if quarter is locked)
+            if not daily_locked:
+                grade, _ = Grade.objects.get_or_create(
+                    student=student,
+                    subject=subject,
+                    period='Холҳои ҷорӣ (Онлайн)',
+                    date=date,
+                    defaults={'score': None, 'attendance': None, 'behavior_score': None}
+                )
+
+                key = f"score_{student.id}"
+                val = request.POST.get(key, '').strip()
+                if val:
+                    try:
+                        score = float(val)
+                        if not score.is_integer():
+                            score = None
+                        else:
+                            score = int(score)
+                            if not (1 <= score <= 10):
+                                score = None
+                    except ValueError:
+                        score = None
+                else:
+                    score = None
+                grade.score = score
+
+                att = request.POST.get(f"attendance_{student.id}", '').strip()
+                grade.attendance = att if att in ('+', '-') else None
+
+                beh = request.POST.get(f"behavior_{student.id}", '').strip()
+                if beh:
+                    try:
+                        b = int(beh)
+                        grade.behavior_score = b if 1 <= b <= 5 else None
+                    except ValueError:
+                        grade.behavior_score = None
+                else:
+                    grade.behavior_score = None
+
+                if grade.score is None and not grade.attendance and grade.behavior_score is None:
+                    grade.delete()
+                else:
+                    grade.save()
+
+            # quarterly grade fallback (skip locked quarters)
+            for q in (1, 2, 3, 4, 0):
+                if is_quarter_locked(school, class_name, subject, q):
+                    continue
+                if q == 0:
+                    qkey = f"att_{student.id}"
+                else:
+                    qkey = f"q_{q}_{student.id}"
+                qval = request.POST.get(qkey, '').strip()
+                if qval:
+                    try:
+                        qscore = float(qval)
+                        if 1 <= qscore <= 10:
+                            if q == 0:
+                                QuarterGrade.objects.update_or_create(
+                                    student=student,
+                                    class_name=class_name,
+                                    subject=subject,
+                                    quarter=0,
+                                    defaults={'att_grade': int(qscore)}
+                                )
+                            else:
+                                QuarterGrade.objects.update_or_create(
+                                    student=student,
+                                    class_name=class_name,
+                                    subject=subject,
+                                    quarter=q,
+                                    defaults={'grade': int(qscore)}
+                                )
+                    except ValueError:
+                        pass
+                else:
+                    if q == 0:
+                        QuarterGrade.objects.filter(
+                            student=student, class_name=class_name, subject=subject, quarter=0
+                        ).delete()
+                    else:
+                        QuarterGrade.objects.filter(
+                            student=student, class_name=class_name, subject=subject, quarter=q
+                        ).delete()
+        return redirect('grade_entry', school_id=school.id, class_name=class_name, subject=subject)
+
+    date_str = request.GET.get('date', '')
+    try:
+        selected_date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+    except ValueError:
+        selected_date = datetime.date.today()
+
+    daily_grades = {}
+    daily_attendance = {}
+    daily_behavior = {}
+    for g in Grade.objects.filter(
+        student__school=school,
+        student__class_name=class_name,
+        subject=subject,
+        period='Холҳои ҷорӣ (Онлайн)',
+        date=selected_date
+    ):
+        if g.score is not None:
+            daily_grades[g.student_id] = int(g.score) if g.score.is_integer() else g.score
+        if g.attendance:
+            daily_attendance[g.student_id] = g.attendance
+        if g.behavior_score is not None:
+            daily_behavior[g.student_id] = g.behavior_score
+
+    # Most recent prior behavior score per student (carry-over default)
+    prior_behavior = {}
+    for g in Grade.objects.filter(
+        student__in=students,
+        behavior_score__isnull=False,
+        date__lt=selected_date
+    ).order_by('student_id', '-date'):
+        if g.student_id not in prior_behavior:
+            prior_behavior[g.student_id] = g.behavior_score
+
+    behavior_default = {}
+    for s in students:
+        if s.id in daily_behavior:
+            behavior_default[s.id] = daily_behavior[s.id]
+        elif s.id in prior_behavior:
+            behavior_default[s.id] = prior_behavior[s.id]
+        else:
+            behavior_default[s.id] = 5
+
+    q_grades = QuarterGrade.objects.filter(
+        student__school=school,
+        class_name=class_name,
+        subject=subject
+    ).select_related('student')
+    qmap_by_student = {}
+    for g in q_grades:
+        sid = g.student_id
+        if sid not in qmap_by_student:
+            qmap_by_student[sid] = {}
+        if g.quarter == 0 and g.att_grade is not None:
+            qmap_by_student[sid]['att'] = g.att_grade
+        elif g.grade is not None:
+            qmap_by_student[sid][g.quarter] = g.grade
+
+    quarter_grades = {}
+    calculated = {}
+    for student in students:
+        qmap = qmap_by_student.get(student.id, {})
+        quarter_grades[student.id] = qmap
+        calculated[student.id] = calc_quarterly(qmap)
+
+    non_graded = is_non_graded(class_name)
+
+    locked_quarters = set(
+        QuarterLock.objects.filter(
+            school=school,
+            class_name=class_name,
+            subject=subject,
+            locked=True
+        ).values_list('quarter', flat=True)
+    )
+    daily_quarter_locked = is_quarter_locked(school, class_name, subject, get_date_quarter(selected_date))
+
+    return render(request, 'portal/grade_entry.html', {
+        'school': school,
+        'class_name': class_name,
+        'subject': subject,
+        'students': students,
+        'date': selected_date,
+        'daily_grades': daily_grades,
+        'daily_attendance': daily_attendance,
+        'daily_behavior': daily_behavior,
+        'behavior_default': behavior_default,
+        'quarter_grades': quarter_grades,
+        'calculated': calculated,
+        'non_graded': non_graded,
+        'qualitative_choices': QUALITATIVE_CHOICES,
+        'quarter_numbers': [1, 2, 3, 4],
+        'locked_quarters': locked_quarters,
+        'daily_quarter_locked': daily_quarter_locked,
+    })
+
+
+@login_required
+def add_remove_subject(request, school_id, class_name):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        subject = request.POST.get('subject', '').strip()
+        subject = normalize_subject(subject)
+        if action == 'add' and subject:
+            ClassSubject.objects.get_or_create(
+                school=school,
+                class_name=class_name,
+                subject=subject,
+                defaults={'is_active': True, 'is_default': False}
+            )
+        elif action == 'remove' and subject:
+            ClassSubject.objects.filter(
+                school=school,
+                class_name=class_name,
+                subject=subject
+            ).update(is_active=False)
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+@login_required
+def download_template(request, class_name):
+    class_name = normalize_class_name(class_name)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Хонандагон'
+
+    headers = ['№ мактаб', '№ синф', 'Ному насаб', 'Синф']
+    header_align = Alignment(horizontal='center', vertical='center')
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = Font(bold=True)
+        cell.alignment = header_align
+
+    for i in range(2, 1001):
+        ws.cell(row=i, column=1, value=f'=IF(D{i}<>"", COUNTA($D$2:D{i}), "")')
+        ws.cell(row=i, column=2, value=f'=IF(D{i}<>"", COUNTIF($D$2:D{i}, D{i}), "")')
+
+    ws.column_dimensions['A'].width = 12
+    ws.column_dimensions['B'].width = 10
+    ws.column_dimensions['C'].width = 35
+    ws.column_dimensions['D'].width = 12
+
+    # Align all data cells and unlock only C and D for data entry
+    for row in ws.iter_rows(min_row=2, max_row=1000, min_col=1, max_col=4):
+        for cell in row:
+            if cell.column == 3:
+                cell.alignment = Alignment(horizontal='left', vertical='center')
+                cell.protection = Protection(locked=False)
+            else:
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                if cell.column in (3, 4):
+                    cell.protection = Protection(locked=False)
+
+    ws.protection.sheet = True
+    ws.protection.set_password('')
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = 'attachment; filename="Шаблони_Хонандагон.xlsx"'
+    return response
+
+
+@login_required
+def import_excel(request, class_name):
+    school = get_user_school(request.user)
+    if not school:
+        return redirect('dashboard')
+
+    if request.method != 'POST' or 'excel' not in request.FILES:
+        return redirect('class_list', school_id=school.id)
+
+    class_name = normalize_class_name(class_name)
+    df = pd.read_excel(request.FILES['excel'])
+    df.columns = [str(c).strip() for c in df.columns]
+
+    name_col = 'Ному насаб' if 'Ному насаб' in df.columns else None
+    class_col = 'Синф' if 'Синф' in df.columns else None
+    if name_col is None:
+        messages.error(request, 'Сутуни "Ному насаб" ёфт нашуд.')
+        return redirect('class_list', school_id=school.id)
+
+    fixed_cols = {name_col, class_col} if class_col else {name_col}
+
+    imported = 0
+    for _, row in df.iterrows():
+        full_name = str(row.get(name_col, '')).strip()
+        if not full_name or full_name.lower() in ('nan', 'none'):
+            continue
+
+        c_name = str(row.get(class_col, class_name)).strip() if class_col else class_name
+        if not c_name or c_name.lower() in ('nan', 'none'):
+            c_name = class_name
+        c_name = normalize_class_name(c_name)
+
+        student_id = f"{school.name}__{c_name}__{full_name}"
+        student, _ = Student.objects.update_or_create(
+            id=student_id,
+            defaults={'full_name': full_name, 'class_name': c_name, 'school': school}
+        )
+
+        for col in df.columns:
+            if col in fixed_cols:
+                continue
+            low = col.lower()
+            if 'unnamed' in low or 'жами' in low or 'рейтинг' in low or '№' in col or col.strip() == '':
+                continue
+            subj = normalize_subject(col)
+            val = row.get(col)
+            if val is None or str(val).lower() in ('nan', 'none', ''):
+                continue
+            try:
+                score = float(val)
+                if 1 <= score <= 10:
+                    Grade.objects.update_or_create(
+                        student=student,
+                        subject=subj,
+                        period='Холҳои ҷорӣ (Онлайн)',
+                        defaults={'score': score}
+                    )
+                    imported += 1
+            except (ValueError, TypeError):
+                continue
+
+    messages.success(request, f'{imported} хол(ҳо) ворид карда шуд.')
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+@login_required
+@require_POST
+def save_grade_ajax(request):
+    try:
+        student_id = request.POST.get('student_id', '').strip()
+        subject = normalize_subject(request.POST.get('subject', ''))
+        date_str = request.POST.get('date', '').strip()
+        score_raw = request.POST.get('score', '')
+        if score_raw is not None:
+            score_raw = score_raw.strip().replace(',', '.')
+            if score_raw == '':
+                score_raw = None
+        grade_type = request.POST.get('type', 'daily')
+        quarter_str = request.POST.get('quarter', '').strip()
+
+        if not student_id or not subject:
+            return JsonResponse({'success': False, 'message': 'Далелҳои нокифоя.'}, status=200)
+
+        try:
+            student = Student.objects.get(id=student_id)
+        except Student.DoesNotExist:
+            return JsonResponse({'success': False, 'message': 'Хонанда ёфт нашуд.'}, status=200)
+
+        class_name = normalize_class_name(student.class_name)
+
+        def parse_score(raw):
+            if not raw:
+                return None
+            try:
+                score = float(raw)
+            except ValueError:
+                raise ValueError('Хол бояд рақам бошад.')
+            return int(score)
+
+        if grade_type == 'daily':
+            try:
+                date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+            except ValueError:
+                return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
+
+            if is_quarter_locked(student.school, class_name, subject, get_date_quarter(date)):
+                return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
+
+            grade, _ = Grade.objects.get_or_create(
+                student=student,
+                subject=subject,
+                period='Холҳои ҷорӣ (Онлайн)',
+                date=date,
+                defaults={'score': None, 'attendance': None, 'behavior_score': None}
+            )
+
+            if 'score' in request.POST:
+                raw = request.POST.get('score', '').strip().replace(',', '.')
+                if raw == '':
+                    raw = None
+                try:
+                    score = parse_score(raw)
+                except ValueError as e:
+                    return JsonResponse({'success': False, 'message': str(e)}, status=200)
+                grade.score = score
+
+            if 'attendance' in request.POST:
+                att = request.POST.get('attendance', '').strip()
+                grade.attendance = att if att in ('+', '-') else None
+
+            if 'behavior_score' in request.POST:
+                beh_raw = request.POST.get('behavior_score', '').strip()
+                if beh_raw:
+                    try:
+                        b = int(beh_raw)
+                        grade.behavior_score = b if 1 <= b <= 5 else None
+                    except ValueError:
+                        grade.behavior_score = None
+                else:
+                    grade.behavior_score = None
+
+            if grade.score is None and not grade.attendance and grade.behavior_score is None:
+                grade.delete()
+            else:
+                grade.save()
+            return JsonResponse({'success': True, 'saved': True}, status=200)
+
+        elif grade_type == 'quarterly':
+            try:
+                quarter = int(quarter_str)
+            except ValueError:
+                return JsonResponse({'success': False, 'message': 'Чораки нодуруст.'}, status=200)
+
+            if is_quarter_locked(student.school, class_name, subject, quarter):
+                return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
+
+            try:
+                score = parse_score(score_raw)
+            except ValueError as e:
+                return JsonResponse({'success': False, 'message': str(e)}, status=200)
+
+            if score is not None and 1 <= score <= 10:
+                if quarter == 0:
+                    QuarterGrade.objects.update_or_create(
+                        student=student,
+                        class_name=class_name,
+                        subject=subject,
+                        quarter=0,
+                        defaults={'att_grade': score}
+                    )
+                else:
+                    QuarterGrade.objects.update_or_create(
+                        student=student,
+                        class_name=class_name,
+                        subject=subject,
+                        quarter=quarter,
+                        defaults={'grade': score}
+                    )
+            else:
+                QuarterGrade.objects.filter(
+                    student=student,
+                    class_name=class_name,
+                    subject=subject,
+                    quarter=quarter
+                ).delete()
+
+            qmap = {}
+            for g in QuarterGrade.objects.filter(student=student, class_name=class_name, subject=subject):
+                if g.quarter == 0 and g.att_grade is not None:
+                    qmap['att'] = g.att_grade
+                elif g.grade is not None:
+                    qmap[g.quarter] = g.grade
+            calc = calc_quarterly(qmap)
+            return JsonResponse({'success': True, 'saved': True, **calc}, status=200)
+
+        return JsonResponse({'success': False, 'message': 'Навъи нодуруст.'}, status=200)
+    except Exception as e:
+        return JsonResponse({'success': False, 'message': str(e)}, status=200)
+
+
+@login_required
+@require_POST
+def calc_quarter_from_daily(request, school_id, class_name, subject):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+    subject = normalize_subject(subject)
+
+    students = Student.objects.filter(school=school, class_name=class_name)
+    for student in students:
+        grades = Grade.objects.filter(
+            student=student,
+            subject=subject,
+            period='Холҳои ҷорӣ (Онлайн)',
+            score__isnull=False
+        )
+        sums = {1: [0.0, 0], 2: [0.0, 0], 3: [0.0, 0], 4: [0.0, 0]}
+        for g in grades:
+            m = g.date.month
+            if m in (9, 10, 11):
+                q = 1
+            elif m in (12, 1, 2):
+                q = 2
+            elif m in (3, 4, 5):
+                q = 3
+            elif m in (6, 7, 8):
+                q = 4
+            else:
+                continue
+            sums[q][0] += g.score
+            sums[q][1] += 1
+        for q, (s, c) in sums.items():
+            if c and not is_quarter_locked(school, class_name, subject, q):
+                avg = std_round(s / c)
+                QuarterGrade.objects.update_or_create(
+                    student=student,
+                    class_name=class_name,
+                    subject=subject,
+                    quarter=q,
+                    defaults={'grade': avg}
+                )
+    return redirect('grade_entry', school_id=school.id, class_name=class_name, subject=subject)
+
+
+def _student_subject_scores(student):
+    """Return a dict of {normalized_subject: average_score} for a student."""
+    totals = {}
+    for row in Grade.objects.filter(student=student, score__isnull=False).values('subject').annotate(total=Sum('score'), count=Count('score')):
+        subj = normalize_subject(row['subject'])
+        _add_score(totals, subj, row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(student=student, quarter__in=(1, 2, 3, 4), grade__isnull=False).values('subject').annotate(total=Sum('grade'), count=Count('grade')):
+        subj = normalize_subject(row['subject'])
+        _add_score(totals, subj, row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(student=student, quarter=0, att_grade__isnull=False).values('subject').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+        subj = normalize_subject(row['subject'])
+        _add_score(totals, subj, row['total'], row['count'])
+    return {subj: round(total / count, 2) if count else 0.0 for subj, (total, count) in totals.items()}
+
+
+def _all_student_gpas():
+    """Return {student_id: overall_gpa} for every student using Grade and QuarterGrade."""
+    totals = {}
+    for row in Grade.objects.filter(score__isnull=False).values('student_id').annotate(total=Sum('score'), count=Count('score')):
+        _add_score(totals, row['student_id'], row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student_id').annotate(total=Sum('grade'), count=Count('grade')):
+        _add_score(totals, row['student_id'], row['total'], row['count'])
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student_id').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+        _add_score(totals, row['student_id'], row['total'], row['count'])
+
+    gpas = {}
+    for student in Student.objects.all():
+        total, count = totals.get(student.id, (0.0, 0))
+        gpas[student.id] = round(total / count, 2) if count else 0.0
+    return gpas
+
+
+@login_required
+def student_detail(request, student_id):
+    student = get_object_or_404(Student, id=student_id)
+    if not has_school_access(request.user, student.school):
+        return redirect('dashboard')
+
+    subject_scores = _student_subject_scores(student)
+    subjects = sorted(subject_scores.keys())
+    scores = [subject_scores[s] for s in subjects]
+
+    all_gpas = _all_student_gpas()
+    student_gpa = all_gpas.get(student.id, 0.0)
+
+    class_gpas = []
+    school_gpas = []
+    district_gpas = []
+    for s in Student.objects.all():
+        g = all_gpas.get(s.id, 0.0)
+        district_gpas.append(g)
+        if s.school_id == student.school_id:
+            school_gpas.append(g)
+        if s.school_id == student.school_id and s.class_name == student.class_name:
+            class_gpas.append(g)
+
+    class_rank = len({g for g in class_gpas if g > student_gpa}) + 1
+    school_rank = len({g for g in school_gpas if g > student_gpa}) + 1
+    district_rank = len({g for g in district_gpas if g > student_gpa}) + 1
+
+    context = {
+        'student': student,
+        'gpa': student_gpa,
+        'class_rank': class_rank,
+        'school_rank': school_rank,
+        'district_rank': district_rank,
+        'subjects': subjects,
+        'scores': scores,
+    }
+    return render(request, 'portal/student_detail.html', context)
+
+
+@login_required
+def teacher_list(request, school_id=None):
+    role = get_user_role(request.user)
+    user_school = get_user_school(request.user)
+    if school_id:
+        school = get_object_or_404(School, id=school_id)
+    else:
+        school = user_school
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    teachers = Teacher.objects.filter(school=school).order_by('name')
+    return render(request, 'portal/teacher_list.html', {'school': school, 'teachers': teachers, 'role': role})

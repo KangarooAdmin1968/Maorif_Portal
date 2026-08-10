@@ -1,0 +1,23 @@
+{% extends 'portal/base.html' %}
+{% block title %}Синфҳо — {{ school.name }}{% endblock %}
+{% block content %}
+<h1>{{ school.name }} — Синфҳо</h1>
+<table class="data-table">
+    <thead>
+        <tr><th>№</th><th>Синф</th><th>Амал</th></tr>
+    </thead>
+    <tbody>
+        {% for c in classes %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ c.class_name }}</td>
+            <td>
+                <a href="{% url 'class_detail' school.id c.class_name %}" class="btn btn-sm">Холҳо</a>
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="3">Синф ёфт нашуд. Иловаи хонанда ё боргирории шаблони Excel лозим аст.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

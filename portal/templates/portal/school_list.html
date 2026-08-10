@@ -1,0 +1,30 @@
+{% extends 'portal/base.html' %}
+{% block title %}Муассисаҳо{% endblock %}
+{% block content %}
+<h1>Рӯйхати муассисаҳо</h1>
+{% if role == 'director' %}
+<a href="{% url 'school_add' %}" class="btn btn-primary">+ Иловаи муассиса</a>
+{% endif %}
+<table class="data-table">
+    <thead>
+        <tr><th>№</th><th>Ном</th><th>Намуд</th><th>Директор</th><th>Забон</th><th>Хонандагон</th><th>Синфҳо</th><th>Амал</th></tr>
+    </thead>
+    <tbody>
+        {% for school in schools %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ school.name }}</td>
+            <td>{{ school.type }}</td>
+            <td>{{ school.director }}</td>
+            <td>{{ school.language }}</td>
+            <td>{{ school.students_count }}</td>
+            <td>{{ school.classes_count }}</td>
+            <td>
+                <a href="{% url 'class_list' school.id %}" class="btn btn-sm">Синфҳо</a>
+                <a href="{% url 'teacher_list' school.id %}" class="btn btn-sm">Муаллимон</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

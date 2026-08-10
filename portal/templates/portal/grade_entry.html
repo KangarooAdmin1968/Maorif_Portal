@@ -1,0 +1,288 @@
+{% extends 'portal/base.html' %}
+{% load portal_extras %}
+{% block title %}Холҳо — {{ class_name }} — {{ subject }}{% endblock %}
+{% block content %}
+<h1>{{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}</h1>
+
+<a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
+
+<style>
+.tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 2px solid #e5e7eb; }
+.tab-btn { padding: 0.6rem 1.2rem; background: #f3f4f6; border: none; border-radius: 0.375rem 0.375rem 0 0; cursor: pointer; font-weight: 600; }
+.tab-btn.active { background: #003366; color: #fff; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.save-status { color: #16a34a; font-size: 0.85rem; margin-left: 0.5rem; opacity: 0; transition: opacity 0.3s; }
+.save-status.show { opacity: 1; }
+.grade-select { width: 100px; padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; }
+.quarter-wrapper { overflow-x: auto; }
+.q-input, .att-input { width: 70px; padding: 0.35rem; border: 1px solid #d1d5db; border-radius: 0.25rem; text-align: center; }
+#daily-date { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; }
+</style>
+
+<form method="post" action="{% url 'grade_entry' school.id class_name subject %}">
+{% csrf_token %}
+<div class="tabs">
+  <button type="button" class="tab-btn active" onclick="openTab('daily', this)">Холҳои ҳаррӯза</button>
+  <button type="button" class="tab-btn" onclick="openTab('quarterly', this)">Ҷадвали чорякҳо</button>
+</div>
+
+<div id="daily" class="tab-content active">
+  <div class="toolbar" style="margin-bottom:1rem;">
+    <label for="daily-date">Сана:</label>
+    <input type="date" id="daily-date" name="date" value="{{ date|date:'Y-m-d' }}" onchange="window.location.href='?date='+this.value">
+  </div>
+  {% if daily_quarter_locked %}
+  <div class="alert alert-error">Ин чоряк баста шудааст. Холҳои ҳаррӯзагӣ тағйир дода намешаванд.</div>
+  {% endif %}
+  <table class="data-table editable">
+    <thead>
+      <tr><th>№</th><th>Ному насаб</th><th>Хол</th><th>Давомат</th><th>Тарбия (Хулқ)</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for s in students %}
+      <tr>
+        <td>{{ forloop.counter }}</td>
+        <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a></td>
+        <td>
+          {% if non_graded %}
+          <select name="score_{{ s.id }}" class="daily-input grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score" {% if daily_quarter_locked %}disabled{% endif %}>
+            {% for val, label in qualitative_choices %}
+            <option value="{{ val }}" {% if daily_grades|dict_key:s.id|stringformat:"s" == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input type="number" name="score_{{ s.id }}" min="1" max="10" step="1"
+                 value="{{ daily_grades|dict_key:s.id }}" class="daily-input grade-input"
+                 data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score"
+                 {% if daily_quarter_locked %}disabled{% endif %}>
+          {% endif %}
+        </td>
+        <td>
+          <select name="attendance_{{ s.id }}" class="daily-att grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="attendance" {% if daily_quarter_locked %}disabled{% endif %}>
+            <option value="" {% if not daily_attendance|dict_key:s.id %}selected{% endif %}></option>
+            <option value="+" {% if daily_attendance|dict_key:s.id == '+' %}selected{% endif %}>+ (босабаб)</option>
+            <option value="-" {% if daily_attendance|dict_key:s.id == '-' %}selected{% endif %}>- (бесабаб)</option>
+          </select>
+        </td>
+        <td>
+          <select name="behavior_{{ s.id }}" class="daily-behavior grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="behavior_score" {% if daily_quarter_locked %}disabled{% endif %}>
+            <option value="" {% if not behavior_default|dict_key:s.id %}selected{% endif %}></option>
+            {% for val in "12345" %}
+            <option value="{{ val }}" {% if behavior_default|dict_key:s.id|stringformat:"s" == val %}selected{% endif %}>{{ val }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td><span class="save-status" id="daily-status-{{ forloop.counter }}"></span></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6">Хонанда ёфт нашуд.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div id="quarterly" class="tab-content">
+  <div class="quarter-wrapper">
+    <table class="data-table editable">
+      <thead>
+        <tr>
+          <th>№</th>
+          <th>Ному насаб</th>
+          <th>Ч1</th>
+          <th>Ч2</th>
+          {% if not non_graded %}
+          <th>Нимсола 1</th>
+          {% endif %}
+          <th>Ч3</th>
+          <th>Ч4</th>
+          {% if not non_graded %}
+          <th>Нимсола 2</th>
+          <th>Солона</th>
+          {% endif %}
+          <th>Атт.</th>
+          {% if not non_graded %}
+          <th>Ҷамъбастӣ</th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in students %}
+        <tr>
+          <td>{{ forloop.counter }}</td>
+          <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a></td>
+          {% for q in quarter_numbers %}
+          <td>
+            {% if non_graded %}
+            <select name="q_{{ q }}_{{ s.id }}" class="q-input grade-select" data-row-id="{{ forloop.parentloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="{{ q }}" {% if q in locked_quarters %}disabled{% endif %}>
+              {% for val, label in qualitative_choices %}
+              <option value="{{ val }}" {% if quarter_grades|dict_key:s.id|dict_key:q|stringformat:"s" == val %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="number" name="q_{{ q }}_{{ s.id }}" min="1" max="10" step="1"
+                   value="{{ quarter_grades|dict_key:s.id|dict_key:q }}" class="q-input"
+                   data-row-id="{{ forloop.parentloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="{{ q }}"
+                   {% if q in locked_quarters %}disabled{% endif %}>
+            {% endif %}
+          </td>
+          {% if q == 2 and not non_graded %}
+          <td><span id="sa1-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"semi_annual_1"|default:"-" }}</span></td>
+          {% endif %}
+          {% if q == 4 and not non_graded %}
+          <td><span id="sa2-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"semi_annual_2"|default:"-" }}</span></td>
+          <td><span id="annual-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"annual"|default:"-" }}</span></td>
+          {% endif %}
+          {% endfor %}
+          <td>
+            {% if non_graded %}
+            <select name="att_{{ s.id }}" class="att-input grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="0" {% if 0 in locked_quarters %}disabled{% endif %}>
+              {% for val, label in qualitative_choices %}
+              <option value="{{ val }}" {% if quarter_grades|dict_key:s.id|dict_key:"att"|stringformat:"s" == val %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="number" name="att_{{ s.id }}" min="1" max="10" step="1"
+                   value="{{ quarter_grades|dict_key:s.id|dict_key:'att' }}" class="att-input"
+                   data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="0"
+                   {% if 0 in locked_quarters %}disabled{% endif %}>
+            {% endif %}
+          </td>
+          {% if not non_graded %}
+          <td><span id="final-{{ forloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"final"|default:"-" }}</span></td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if non_graded %}7{% else %}11{% endif %}">Хонанда ёфт нашуд.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="toolbar" style="margin-top:1rem;">
+    <button type="submit" class="btn btn-secondary" formaction="{% url 'calc_quarter_from_daily' school.id class_name subject %}">🔄 Ҳисоблаш аз холҳои ҷорӣ</button>
+  </div>
+</div>
+
+<div style="margin-top:1rem;">
+  <button type="submit" class="btn btn-primary">Сабт кардан</button>
+</div>
+</form>
+
+<script>
+function openTab(id, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+const saveUrl = "{% url 'save_grade_ajax' %}";
+function showStatus(el, text) {
+  el.textContent = text;
+  el.classList.add('show');
+  setTimeout(() => { el.textContent = ''; el.classList.remove('show'); }, 1500);
+}
+function toCleanInt(raw) {
+  const v = String(raw).trim();
+  if (v === '') return '';
+  const n = Number(v);
+  if (!Number.isInteger(n)) return null;
+  return String(n);
+}
+function saveDaily(input) {
+  const field = input.dataset.field || 'score';
+  let value = input.value;
+  if (field === 'score') {
+    value = toCleanInt(input.value);
+    if (value === null) return;
+  } else if (field === 'behavior_score') {
+    if (value && !Number.isInteger(Number(value))) return;
+  }
+  if (value === input.dataset.origValue) return;
+  const status = document.getElementById('daily-status-' + input.dataset.rowId);
+  const data = new URLSearchParams();
+  data.append('student_id', input.dataset.studentId);
+  data.append('subject', input.dataset.subject);
+  data.append('date', document.getElementById('daily-date').value);
+  data.append(field, value);
+  data.append('type', 'daily');
+  fetch(saveUrl, {
+    method: 'POST',
+    headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
+    body: data
+  })
+  .then(r => r.json())
+  .then(resp => {
+    if (resp.success) {
+      input.value = value;
+      input.dataset.origValue = value;
+      showStatus(status, '✔ Сабт шуд!');
+    } else {
+      showStatus(status, resp.message || 'Хатo');
+    }
+  })
+  .catch(() => showStatus(status, 'Хатo'));
+}
+function saveQuarter(input) {
+  const scoreVal = toCleanInt(input.value);
+  if (scoreVal === null) return;
+  if (scoreVal === input.dataset.origValue) return;
+  const rowId = input.dataset.rowId;
+  const data = new URLSearchParams();
+  data.append('student_id', input.dataset.studentId);
+  data.append('subject', input.dataset.subject);
+  data.append('quarter', input.dataset.quarter);
+  data.append('score', scoreVal);
+  data.append('type', 'quarterly');
+  fetch(saveUrl, {
+    method: 'POST',
+    headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
+    body: data
+  })
+  .then(r => r.json())
+  .then(resp => {
+    if (!resp.success) return;
+    input.value = scoreVal;
+    input.dataset.origValue = scoreVal;
+    if (document.getElementById('sa1-' + rowId)) {
+      document.getElementById('sa1-' + rowId).textContent = resp.semi_annual_1 ?? '-';
+      document.getElementById('sa2-' + rowId).textContent = resp.semi_annual_2 ?? '-';
+      document.getElementById('annual-' + rowId).textContent = resp.annual ?? '-';
+      document.getElementById('final-' + rowId).textContent = resp.final ?? '-';
+    }
+  })
+  .catch(() => {});
+}
+function moveFocus(input, direction) {
+  const inputs = Array.from(document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input')).filter(el => !el.disabled);
+  const idx = inputs.indexOf(input);
+  const next = inputs[idx + direction];
+  if (next) next.focus();
+}
+function onGradeKeydown(e) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  moveFocus(this, e.shiftKey ? -1 : 1);
+}
+document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
+  el.addEventListener('focus', () => {
+    if (el.tagName === 'INPUT' && el.value && Number.isInteger(Number(el.value))) {
+      el.value = String(Number(el.value));
+    }
+    el.dataset.origValue = el.value;
+    if (el.tagName === 'INPUT') el.select();
+  });
+});
+document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
+  el.addEventListener('keydown', onGradeKeydown);
+});
+document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => {
+  el.addEventListener('change', () => saveDaily(el));
+  el.addEventListener('blur', () => saveDaily(el));
+});
+document.querySelectorAll('.q-input, .att-input').forEach(el => {
+  el.addEventListener('change', () => saveQuarter(el));
+  el.addEventListener('blur', () => saveQuarter(el));
+});
+</script>
+{% endblock %}

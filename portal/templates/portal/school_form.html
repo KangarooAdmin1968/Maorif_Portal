@@ -1,0 +1,10 @@
+{% extends 'portal/base.html' %}
+{% block title %}Иловаи муассиса{% endblock %}
+{% block content %}
+<h1>Иловаи муассиса</h1>
+<form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn-primary">Сабт кардан</button>
+</form>
+{% endblock %}

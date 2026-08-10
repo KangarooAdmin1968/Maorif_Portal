@@ -1,0 +1,12 @@
+{% extends 'portal/base.html' %}
+{% block title %}Вуруд — Портали маориф{% endblock %}
+{% block content %}
+<div class="login-card">
+    <h1>Вуруд</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="btn btn-primary">Вуруд</button>
+    </form>
+</div>
+{% endblock %}

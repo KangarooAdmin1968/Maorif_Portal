@@ -66,7 +66,9 @@
                         <a href="{% url 'class_list' user.userprofile.school.id %}">Синфҳо</a>
                         <a href="{% url 'teacher_list' user.userprofile.school.id %}">Муаллимон</a>
                     {% endif %}
-                    <span class="user">{{ user.username }}</span>
+                    {% if not user.is_superuser %}
+                        <span class="user">{{ user.username }}</span>
+                    {% endif %}
                     {% if user.is_authenticated and user.is_superuser %}
                         <a href="/admin/" class="nav-link text-white mx-2" style="text-decoration: none;">admin</a>
                     {% endif %}

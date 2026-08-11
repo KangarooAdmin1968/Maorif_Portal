@@ -714,7 +714,18 @@ def download_template(request, class_name):
 
 @login_required
 def import_excel(request, class_name):
-    school = get_user_school(request.user)
+    user_school = get_user_school(request.user)
+
+    if request.user.is_superuser and not user_school:
+        class_name = normalize_class_name(class_name)
+        sample_student = Student.objects.filter(class_name=class_name).first()
+        if sample_student:
+            school = sample_student.school
+        else:
+            school = School.objects.filter(id=24).first() or School.objects.first()
+    else:
+        school = user_school
+
     if not school:
         return redirect('dashboard')
 

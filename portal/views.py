@@ -395,7 +395,7 @@ def school_list(request):
 
         if 'идор' in type_lower:
             group_priority = 4
-        elif 'кӯд' in type_lower or 'куд' in type_lower:
+        elif 'томактаб' in type_lower:
             group_priority = 3
         elif 'лит' in type_lower or 'лиц' in type_lower:
             group_priority = 2

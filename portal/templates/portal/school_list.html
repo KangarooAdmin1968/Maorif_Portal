@@ -20,18 +20,14 @@
             <td>{{ school.students_count }}</td>
             <td>{{ school.classes_count }}</td>
             <td>
-                {% with stype=school.type|lower %}
-                    {% if 'идора' not in stype and 'кӯдакистон' not in stype and 'кудакистон' not in stype %}
-                        <a href="{% url 'class_list' school.id %}" class="btn btn-sm">Синфҳо</a>
-                    {% endif %}
-                    {% if 'идора' in stype %}
-                        <a href="{% url 'teacher_list' school.id %}" class="btn btn-sm">Кормандон</a>
-                    {% elif 'кӯдакистон' in stype or 'кудакистон' in stype %}
-                        <a href="{% url 'teacher_list' school.id %}" class="btn btn-sm">Мураббиён</a>
-                    {% else %}
-                        <a href="{% url 'teacher_list' school.id %}" class="btn btn-sm">Муаллимон</a>
-                    {% endif %}
-                {% endwith %}
+                {% if school.type == 'Идораи маориф' %}
+                    <a href="{% url 'teacher_list' school.id %}" class="btn btn-primary btn-sm">Кормандон</a>
+                {% elif school.type == 'Кӯдакистон' %}
+                    <a href="{% url 'teacher_list' school.id %}" class="btn btn-primary btn-sm">Мураббиён</a>
+                {% else %}
+                    <a href="{% url 'class_list' school.id %}" class="btn btn-primary btn-sm">Синфҳо</a>
+                    <a href="{% url 'teacher_list' school.id %}" class="btn btn-primary btn-sm">Омӯзгорон</a>
+                {% endif %}
             </td>
         </tr>
         {% endfor %}

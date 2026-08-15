@@ -91,11 +91,11 @@ class Teacher(models.Model):
     phone = models.CharField('Телефон', max_length=50, blank=True)
     education = models.CharField('Маълумот', max_length=255, blank=True)
     photo = models.ImageField('Акс', upload_to='teachers/', blank=True, null=True)
-    is_teacher = models.BooleanField('Муаллим?', default=True)
+    is_teacher = models.BooleanField('Омӯзгор?', default=True)
 
     class Meta:
-        verbose_name = 'Муаллим ё кадр'
-        verbose_name_plural = 'Муаллимон ва кадрҳо'
+        verbose_name = 'Омӯзгор ва кадр'
+        verbose_name_plural = 'Омӯзгорон ва кадрҳо'
         ordering = ['name']
 
     def __str__(self):
@@ -186,6 +186,7 @@ class ClassSubject(models.Model):
     school = models.ForeignKey(School, on_delete=models.CASCADE, verbose_name='Муассиса')
     class_name = models.CharField('Синф', max_length=20)
     subject = models.CharField('Фан', max_length=100)
+    teacher = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, verbose_name='Омӯзгор')
     is_default = models.BooleanField('Стандарт?', default=False)
     is_active = models.BooleanField('Фаъол?', default=True)
 

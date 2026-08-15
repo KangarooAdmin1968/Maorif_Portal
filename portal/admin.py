@@ -42,9 +42,10 @@ class QuarterGradeAdmin(admin.ModelAdmin):
 
 @admin.register(ClassSubject)
 class ClassSubjectAdmin(admin.ModelAdmin):
-    list_display = ['school', 'class_name', 'subject', 'is_default', 'is_active']
+    list_display = ['school', 'class_name', 'subject', 'teacher', 'is_default', 'is_active']
     list_filter = ['school', 'is_default', 'is_active']
-    search_fields = ['subject', 'class_name']
+    search_fields = ['subject', 'class_name', 'teacher__username']
+    list_editable = ['teacher', 'is_active']
 
 
 @admin.register(QuarterLock)

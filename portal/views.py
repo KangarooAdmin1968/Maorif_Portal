@@ -120,6 +120,47 @@ def get_user_profile(user):
         return None
 
 
+def can_edit_grade_journal(user, school, class_name, subject):
+    """Return True if the user may save grades for this school, class and subject."""
+    if user.is_superuser:
+        return True
+    role = get_user_role(user)
+    if role == settings.ROLE_DIRECTOR:
+        return has_school_access(user, school)
+    if role == settings.ROLE_PRINCIPAL:
+        return False
+    if role != settings.ROLE_TEACHER:
+        return False
+    if not has_school_access(user, school):
+        return False
+    profile = get_user_profile(user)
+    if not profile:
+        return False
+    # Zavuchs (no specific class/subject assigned) can edit all classes/subjects in their school
+    if not profile.assigned_class and not profile.assigned_subject:
+        return True
+    # Teachers must be explicitly assigned to this class/subject via ClassSubject
+    return ClassSubject.objects.filter(
+        school=school,
+        class_name=normalize_class_name(class_name),
+        subject=normalize_subject(subject),
+        teacher=user,
+        is_active=True,
+    ).exists()
+
+
+def can_view_grade_journal(user, school, class_name, subject):
+    """Return True if the user may view this grade journal."""
+    if user.is_superuser:
+        return True
+    role = get_user_role(user)
+    if role in (settings.ROLE_DIRECTOR, settings.ROLE_PRINCIPAL):
+        return has_school_access(user, school)
+    if role == settings.ROLE_TEACHER:
+        return can_edit_grade_journal(user, school, class_name, subject)
+    return False
+
+
 def _add_score(totals, key, total, count):
     if total is None or count is None:
         return
@@ -428,20 +469,19 @@ def grade_entry(request, school_id, class_name, subject):
     school = get_object_or_404(School, id=school_id)
     if not has_school_access(request.user, school):
         return redirect('dashboard')
-    role = get_user_role(request.user)
-    if role == settings.ROLE_TEACHER:
-        profile = get_user_profile(request.user)
-        if profile:
-            if profile.assigned_class and normalize_class_name(profile.assigned_class) != normalize_class_name(class_name):
-                return redirect('dashboard')
-            if profile.assigned_subject and normalize_subject(profile.assigned_subject) != normalize_subject(subject):
-                return redirect('dashboard')
 
     class_name = normalize_class_name(class_name)
     subject = normalize_subject(subject)
+
+    if not can_view_grade_journal(request.user, school, class_name, subject):
+        return redirect('dashboard')
+
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
 
     if request.method == 'POST':
+        if not can_edit_grade_journal(request.user, school, class_name, subject):
+            return redirect('dashboard')
+
         date_str = request.POST.get('date', '')
         try:
             date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
@@ -812,6 +852,9 @@ def save_grade_ajax(request):
             return JsonResponse({'success': False, 'message': 'Хонанда ёфт нашуд.'}, status=200)
 
         class_name = normalize_class_name(student.class_name)
+
+        if not can_edit_grade_journal(request.user, student.school, class_name, subject):
+            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=200)
 
         def parse_score(raw):
             if not raw:

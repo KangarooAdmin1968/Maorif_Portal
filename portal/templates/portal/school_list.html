@@ -22,7 +22,7 @@
             <td>
                 {% if school.type == 'Идораи маориф' %}
                     <a href="{% url 'teacher_list' school.id %}" class="btn btn-primary btn-sm">Кормандон</a>
-                {% elif school.type == 'Кӯдакистон' %}
+                {% elif school.type == 'Муассисаи давлатии таълимии томактабӣ' %}
                     <a href="{% url 'teacher_list' school.id %}" class="btn btn-primary btn-sm">Мураббиён</a>
                 {% else %}
                     <a href="{% url 'class_list' school.id %}" class="btn btn-primary btn-sm">Синфҳо</a>

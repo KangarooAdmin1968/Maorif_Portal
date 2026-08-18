@@ -5,7 +5,7 @@
 
 <div class="toolbar">
     <a href="{% url 'download_template' class_name %}" class="btn btn-secondary">📥 Боргирории шаблон</a>
-    <form action="{% url 'import_excel' class_name %}" method="post" enctype="multipart/form-data" class="inline-form">
+    <form action="{% url 'import_excel_class' class_name %}" method="post" enctype="multipart/form-data" class="inline-form">
         {% csrf_token %}
         <input type="file" name="excel" accept=".xlsx,.xls" required>
         <button type="submit" class="btn btn-secondary">📤 Воридоти Excel</button>

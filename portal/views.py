@@ -753,18 +753,20 @@ def download_template(request, class_name):
 
 
 @login_required
-def import_excel(request, class_name):
-    user_school = get_user_school(request.user)
-
-    if request.user.is_superuser and not user_school:
-        class_name = normalize_class_name(class_name)
-        sample_student = Student.objects.filter(class_name=class_name).first()
-        if sample_student:
-            school = sample_student.school
-        else:
-            school = School.objects.filter(id=24).first() or School.objects.first()
+def import_excel(request, class_name=None, school_id=None):
+    if school_id is not None:
+        school = get_object_or_404(School, id=school_id)
     else:
-        school = user_school
+        user_school = get_user_school(request.user)
+        if request.user.is_superuser and not user_school:
+            class_name = normalize_class_name(class_name or '')
+            sample_student = Student.objects.filter(class_name=class_name).first()
+            if sample_student:
+                school = sample_student.school
+            else:
+                school = School.objects.filter(id=24).first() or School.objects.first()
+        else:
+            school = user_school
 
     if not school:
         return redirect('dashboard')
@@ -772,7 +774,7 @@ def import_excel(request, class_name):
     if request.method != 'POST' or 'excel' not in request.FILES:
         return redirect('class_list', school_id=school.id)
 
-    class_name = normalize_class_name(class_name)
+    target_class = normalize_class_name(class_name) if class_name else None
     df = pd.read_excel(request.FILES['excel'])
     df.columns = [str(c).strip() for c in df.columns]
 
@@ -790,10 +792,17 @@ def import_excel(request, class_name):
         if not full_name or full_name.lower() in ('nan', 'none'):
             continue
 
-        c_name = str(row.get(class_col, class_name)).strip() if class_col else class_name
-        if not c_name or c_name.lower() in ('nan', 'none'):
-            c_name = class_name
-        c_name = normalize_class_name(c_name)
+        if class_col:
+            c_name = str(row.get(class_col, '')).strip()
+            if not c_name or c_name.lower() in ('nan', 'none'):
+                c_name = target_class
+            if not c_name:
+                continue
+            c_name = normalize_class_name(c_name)
+        else:
+            if not target_class:
+                continue
+            c_name = target_class
 
         student_id = f"{school.name}__{c_name}__{full_name}"
         student, _ = Student.objects.update_or_create(
@@ -825,7 +834,9 @@ def import_excel(request, class_name):
                 continue
 
     messages.success(request, f'{imported} хол(ҳо) ворид карда шуд.')
-    return redirect('class_detail', school_id=school.id, class_name=class_name)
+    if target_class:
+        return redirect('class_detail', school_id=school.id, class_name=target_class)
+    return redirect('class_list', school_id=school.id)
 
 
 @login_required

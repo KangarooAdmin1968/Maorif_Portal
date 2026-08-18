@@ -2,6 +2,15 @@
 {% block title %}Синфҳо — {{ school.name }}{% endblock %}
 {% block content %}
 <h1>{{ school.name }} — Синфҳо</h1>
+
+<div class="toolbar">
+    <form action="{% url 'import_excel' school.id %}" method="post" enctype="multipart/form-data" class="inline-form">
+        {% csrf_token %}
+        <input type="file" name="excel" accept=".xlsx,.xls" required>
+        <button type="submit" class="btn btn-secondary">📤 Воридоти Excel</button>
+    </form>
+</div>
+
 <table class="data-table">
     <thead>
         <tr><th>№</th><th>Синф</th><th>Амал</th></tr>

@@ -17,5 +17,7 @@ urlpatterns = [
     path('class/<str:class_name>/import/', views.import_excel, name='import_excel_class'),
     path('school/<int:school_id>/import_excel/', views.import_excel, name='import_excel'),
     path('school/<int:school_id>/teachers/', views.teacher_list, name='teacher_list'),
+    path('teachers/template/download/', views.download_teacher_template, name='download_teacher_template'),
+    path('teachers/import/', views.import_teachers, name='import_teachers'),
     path('student/<str:student_id>/', views.student_detail, name='student_detail'),
 ]

@@ -281,3 +281,19 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} — {self.get_role_display()}"
+
+
+class TeacherProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, verbose_name='Корбар')
+    school = models.ForeignKey(School, on_delete=models.CASCADE, verbose_name='Муассиса')
+    full_name = models.CharField('Ному насаб', max_length=255)
+    phone = models.CharField('Телефон', max_length=50, blank=True, null=True)
+    education = models.CharField('Маълумот', max_length=255, blank=True, null=True)
+    specialty = models.CharField('Ихтисос', max_length=255, blank=True, null=True)
+
+    class Meta:
+        verbose_name = 'Профили омӯзгор'
+        verbose_name_plural = 'Профилҳои омӯзгорон'
+
+    def __str__(self):
+        return f"{self.full_name} — {self.school}"

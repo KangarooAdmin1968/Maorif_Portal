@@ -1,7 +1,17 @@
 {% extends 'portal/base.html' %}
-{% block title %}Муаллимон — {{ school.name }}{% endblock %}
+{% block title %}Омӯзгорон — {{ school.name }}{% endblock %}
 {% block content %}
-<h1>{{ school.name }} — Муаллимон</h1>
+<h1>{{ school.name }} — Омӯзгорон ва кадрҳо</h1>
+
+<div class="toolbar">
+    <a href="{% url 'download_teacher_template' %}" class="btn btn-secondary">📥 Шаблони омӯзгорон</a>
+    <form action="{% url 'import_teachers' %}" method="post" enctype="multipart/form-data" class="inline-form">
+        {% csrf_token %}
+        <input type="file" name="excel" accept=".xlsx,.xls" required>
+        <button type="submit" class="btn btn-secondary">📤 Воридоти омӯзгорон</button>
+    </form>
+</div>
+
 <table class="data-table">
     <thead>
         <tr><th>№</th><th>Ному насаб</th><th>Фан</th><th>Таҷриба</th><th>Телефон</th></tr>
@@ -16,7 +26,7 @@
             <td>{{ t.phone }}</td>
         </tr>
         {% empty %}
-        <tr><td colspan="5">Муаллим ёфт нашуд.</td></tr>
+        <tr><td colspan="5">Омӯзгор ёфт нашуд.</td></tr>
         {% endfor %}
     </tbody>
 </table>

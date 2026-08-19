@@ -8,14 +8,14 @@ import json
 import re
 import datetime
 import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, Protection
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, Alignment, Protection, PatternFill
 from django.http import HttpResponse, JsonResponse
 from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -1106,3 +1106,111 @@ def teacher_list(request, school_id=None):
         return redirect('dashboard')
     teachers = Teacher.objects.filter(school=school).order_by('name')
     return render(request, 'portal/teacher_list.html', {'school': school, 'teachers': teachers, 'role': role})
+
+
+@login_required
+def download_teacher_template(request):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Омӯзгорон'
+
+    headers = ['№', 'Ному насаби омӯзгор', 'Рақами телефон', 'Маълумот', 'Ихтисос']
+    header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    header_align = Alignment(horizontal='center', vertical='center')
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+
+    ws.cell(row=2, column=1, value=1)
+    ws.cell(row=2, column=2, value='Намуна: Раҷабов А.')
+    ws.cell(row=2, column=3, value='+992901234567')
+    ws.cell(row=2, column=4, value='Олии педагогӣ')
+    ws.cell(row=2, column=5, value='Математика')
+
+    ws.column_dimensions['A'].width = 5
+    ws.column_dimensions['B'].width = 35
+    ws.column_dimensions['C'].width = 20
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 25
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = 'attachment; filename="Shabloni_Omuzgoron.xlsx"'
+    return response
+
+
+@login_required
+def import_teachers(request):
+    school = get_user_school(request.user)
+    if not school:
+        messages.error(request, 'Муассисаи шумо муайян карда нашуд.')
+        return redirect('dashboard')
+
+    if request.method != 'POST' or 'excel' not in request.FILES:
+        return redirect('teacher_list', school_id=school.id)
+
+    wb = load_workbook(request.FILES['excel'], data_only=True)
+    ws = wb.active
+
+    created_teachers = []
+    existing = TeacherProfile.objects.filter(school=school).count()
+
+    for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=1):
+        full_name = str(row[1] or '').strip() if len(row) > 1 else ''
+        if not full_name or full_name.lower() in ('nan', 'none', ''):
+            continue
+
+        phone = str(row[2] or '').strip() if len(row) > 2 else ''
+        education = str(row[3] or '').strip() if len(row) > 3 else ''
+        specialty = str(row[4] or '').strip() if len(row) > 4 else ''
+
+        counter = existing + idx
+        username = f'teacher_M{school.id}_{counter}'
+        password = f'Teacher_M{school.id}_{counter}@2026'
+
+        try:
+            user = User.objects.create_user(
+                username=username,
+                password=password,
+                first_name=full_name,
+            )
+        except Exception:
+            continue
+
+        TeacherProfile.objects.create(
+            user=user,
+            school=school,
+            full_name=full_name,
+            phone=phone,
+            education=education,
+            specialty=specialty,
+        )
+
+        UserProfile.objects.update_or_create(
+            user=user,
+            defaults={
+                'role': settings.ROLE_TEACHER,
+                'school': school,
+            },
+        )
+
+        created_teachers.append({
+            'full_name': full_name,
+            'username': username,
+            'password': password,
+        })
+
+    return render(request, 'portal/imported_teachers_list.html', {
+        'school': school,
+        'created_teachers': created_teachers,
+    })

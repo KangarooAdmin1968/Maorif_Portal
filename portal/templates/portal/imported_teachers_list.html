@@ -1,0 +1,40 @@
+{% extends 'portal/base.html' %}
+{% block title %}Омӯзгорони воридшуда — {{ school.name }}{% endblock %}
+{% block content %}
+<h1>{{ school.name }} — Омӯзгорони нав воридшуда</h1>
+
+<div class="toolbar no-print">
+    <button class="btn btn-secondary" onclick="window.print()">🖨️ Чоп кардани рӯйхат</button>
+    <a href="{% url 'teacher_list' school.id %}" class="btn btn-outline">Бозгашт</a>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>№</th>
+            <th>Ному насаб</th>
+            <th>Логин</th>
+            <th>Парол</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for t in created_teachers %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ t.full_name }}</td>
+            <td>{{ t.username }}</td>
+            <td>{{ t.password }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4">Ягон омӯзгор ворид карда нашуд.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<style>
+    @media print {
+        .no-print { display: none !important; }
+        .btn { display: none !important; }
+    }
+</style>
+{% endblock %}

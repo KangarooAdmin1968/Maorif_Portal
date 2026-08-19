@@ -1165,7 +1165,7 @@ def import_teachers(request):
     created_teachers = []
     existing = TeacherProfile.objects.filter(school=school).count()
 
-    for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=1):
+    for row in ws.iter_rows(min_row=2, values_only=True):
         full_name = str(row[1] or '').strip() if len(row) > 1 else ''
         if not full_name or full_name.lower() in ('nan', 'none', ''):
             continue
@@ -1174,7 +1174,7 @@ def import_teachers(request):
         education = str(row[3] or '').strip() if len(row) > 3 else ''
         specialty = str(row[4] or '').strip() if len(row) > 4 else ''
 
-        counter = existing + idx
+        counter = existing + len(created_teachers) + 1
         username = f'teacher_M{school.id}_{counter}'
         password = f'Teacher_M{school.id}_{counter}@2026'
 

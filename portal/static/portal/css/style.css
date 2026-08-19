@@ -65,6 +65,15 @@ body {
 .btn-secondary:hover { background: #059669; }
 .btn-danger { background: #ef4444; }
 .btn-danger:hover { background: #dc2626; }
+.btn-success { background: #10b981; }
+.btn-success:hover { background: #059669; }
+.btn-outline-success { background: #fff; color: #10b981; border: 1px solid #10b981; }
+.btn-outline-success:hover { background: #10b981; color: #fff; }
+
+.modal { position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; }
+.modal-content { background: #fff; width: 90%; max-width: 500px; }
+
+@media print { .no-print, .btn, .navbar, footer, .toolbar { display: none !important; } }
 .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.85rem; }
 .btn-xs { padding: 0.15rem 0.35rem; font-size: 0.75rem; }
 

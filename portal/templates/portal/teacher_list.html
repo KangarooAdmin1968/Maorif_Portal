@@ -4,13 +4,31 @@
 <h1>{{ school.name }} — Омӯзгорон ва кадрҳо</h1>
 
 <div class="toolbar">
-    <a href="{% url 'download_teacher_template' %}" class="btn btn-secondary">📥 Шаблони омӯзгорон</a>
-    <form action="{% url 'import_teachers' %}" method="post" enctype="multipart/form-data" class="inline-form">
-        {% csrf_token %}
-        <input type="file" name="excel" accept=".xlsx,.xls" required>
-        <button type="submit" class="btn btn-secondary">📤 Воридоти омӯзгорон</button>
-    </form>
+    <a href="{% url 'download_teacher_template' %}" class="btn btn-outline-success">📥 Шаблони омӯзгорон</a>
+    <button class="btn btn-success" onclick="openImportModal()">📤 Воридоти омӯзгорон</button>
 </div>
+
+<div id="importModal" class="modal">
+    <div class="modal-content card">
+        <h3>Воридоти омӯзгорон аз Excel</h3>
+        <form action="{% url 'import_teachers' %}" method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div style="margin-bottom:1rem;">
+                <input type="file" name="excel" accept=".xlsx,.xls" required>
+            </div>
+            <div class="toolbar" style="margin-bottom:0;">
+                <button type="button" class="btn" onclick="closeImportModal()">Бекор</button>
+                <button type="submit" class="btn btn-success">Ворид кардан</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openImportModal() { document.getElementById('importModal').style.display = 'flex'; }
+function closeImportModal() { document.getElementById('importModal').style.display = 'none'; }
+window.onclick = function(e) { var m = document.getElementById('importModal'); if (e.target == m) { m.style.display = 'none'; } }
+</script>
 
 <table class="data-table">
     <thead>

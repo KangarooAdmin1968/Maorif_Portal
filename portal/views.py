@@ -703,42 +703,44 @@ def add_remove_subject(request, school_id, class_name):
 
 
 @login_required
-def download_template(request, class_name):
-    class_name = normalize_class_name(class_name)
+def download_template(request, class_name=None, school_id=None):
+    if class_name:
+        class_name = normalize_class_name(class_name)
 
     wb = Workbook()
     ws = wb.active
     ws.title = 'Хонандагон'
 
     headers = ['№ мактаб', '№ синф', 'Ному насаб', 'Синф']
+    header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
     header_align = Alignment(horizontal='center', vertical='center')
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
-        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.font = header_font
         cell.alignment = header_align
 
     for i in range(2, 1001):
-        ws.cell(row=i, column=1, value=f'=IF(D{i}<>"", COUNTA($D$2:D{i}), "")')
-        ws.cell(row=i, column=2, value=f'=IF(D{i}<>"", COUNTIF($D$2:D{i}, D{i}), "")')
+        ws.cell(row=i, column=1, value=f'=IF(C{i}<>"", COUNTA($C$2:C{i}), "")')
+        ws.cell(row=i, column=2, value=f'=IF(C{i}<>"", COUNTIF($D$2:D{i}, D{i}), "")')
 
     ws.column_dimensions['A'].width = 12
-    ws.column_dimensions['B'].width = 10
+    ws.column_dimensions['B'].width = 12
     ws.column_dimensions['C'].width = 35
-    ws.column_dimensions['D'].width = 12
+    ws.column_dimensions['D'].width = 15
 
-    # Align all data cells and unlock only C and D for data entry
+    # Unlock C (Ному насаб) and D (Синф) for data entry; A and B stay locked
     for row in ws.iter_rows(min_row=2, max_row=1000, min_col=1, max_col=4):
         for cell in row:
-            if cell.column == 3:
+            if cell.column in (3, 4):
                 cell.alignment = Alignment(horizontal='left', vertical='center')
                 cell.protection = Protection(locked=False)
             else:
                 cell.alignment = Alignment(horizontal='center', vertical='center')
-                if cell.column in (3, 4):
-                    cell.protection = Protection(locked=False)
 
     ws.protection.sheet = True
-    ws.protection.set_password('')
+    ws.protection.set_password('maorif_zafarobod')
 
     output = io.BytesIO()
     wb.save(output)
@@ -1125,17 +1127,28 @@ def download_teacher_template(request):
         cell.font = header_font
         cell.alignment = header_align
 
-    ws.cell(row=2, column=1, value=1)
+    # Sample data row (B-E unlocked for editing; A is formula-driven and locked)
     ws.cell(row=2, column=2, value='Намуна: Раҷабов А.')
     ws.cell(row=2, column=3, value='+992901234567')
     ws.cell(row=2, column=4, value='Олии педагогӣ')
     ws.cell(row=2, column=5, value='Математика')
+
+    for i in range(2, 1001):
+        ws.cell(row=i, column=1, value=f'=IF(B{i}<>"", COUNTA($B$2:B{i}), "")')
 
     ws.column_dimensions['A'].width = 5
     ws.column_dimensions['B'].width = 35
     ws.column_dimensions['C'].width = 20
     ws.column_dimensions['D'].width = 20
     ws.column_dimensions['E'].width = 25
+
+    # Leave A locked with formulas; unlock B, C, D, E for data entry
+    for row in ws.iter_rows(min_row=2, max_row=1000, min_col=2, max_col=5):
+        for cell in row:
+            cell.protection = Protection(locked=False)
+
+    ws.protection.sheet = True
+    ws.protection.set_password('maorif_zafarobod')
 
     output = io.BytesIO()
     wb.save(output)

@@ -4,6 +4,7 @@
 <h1>{{ school.name }} — Синфҳо</h1>
 
 <div class="toolbar">
+    <a href="{% url 'download_template_school' school.id %}" class="btn btn-secondary">📥 Боргирии шаблон</a>
     <form action="{% url 'import_excel' school.id %}" method="post" enctype="multipart/form-data" class="inline-form">
         {% csrf_token %}
         <input type="file" name="excel" accept=".xlsx,.xls" required>

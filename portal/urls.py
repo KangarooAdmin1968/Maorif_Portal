@@ -16,6 +16,7 @@ urlpatterns = [
     path('class/<str:class_name>/download-template/', views.download_template, name='download_template'),
     path('class/<str:class_name>/import/', views.import_excel, name='import_excel_class'),
     path('school/<int:school_id>/import_excel/', views.import_excel, name='import_excel'),
+    path('school/<int:school_id>/download-template/', views.download_template, name='download_template_school'),
     path('school/<int:school_id>/teachers/', views.teacher_list, name='teacher_list'),
     path('teachers/template/download/', views.download_teacher_template, name='download_teacher_template'),
     path('teachers/import/', views.import_teachers, name='import_teachers'),

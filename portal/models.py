@@ -187,6 +187,7 @@ class ClassSubject(models.Model):
     class_name = models.CharField('Синф', max_length=20)
     subject = models.CharField('Фан', max_length=100)
     teacher = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, verbose_name='Омӯзгор')
+    allocated_teacher = models.ForeignKey('TeacherProfile', on_delete=models.SET_NULL, blank=True, null=True, related_name='allocated_subjects', verbose_name='Омӯзгори масъул')
     is_default = models.BooleanField('Стандарт?', default=False)
     is_active = models.BooleanField('Фаъол?', default=True)
 

@@ -19,5 +19,7 @@ urlpatterns = [
     path('school/<int:school_id>/teachers/', views.teacher_list, name='teacher_list'),
     path('teachers/template/download/', views.download_teacher_template, name='download_teacher_template'),
     path('teachers/import/', views.import_teachers, name='import_teachers'),
+    path('schools/allocation/', views.lesson_allocation, name='lesson_allocation'),
+    path('schools/allocation/save/', views.save_lesson_allocation, name='save_lesson_allocation'),
     path('student/<str:student_id>/', views.student_detail, name='student_detail'),
 ]

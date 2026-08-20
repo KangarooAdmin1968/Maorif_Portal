@@ -65,6 +65,7 @@
                     {% if user.userprofile.school %}
                         <a href="{% url 'class_list' user.userprofile.school.id %}">Синфҳо</a>
                         <a href="{% url 'teacher_list' user.userprofile.school.id %}">Омӯзгорон</a>
+                        <a href="{% url 'lesson_allocation' %}">Тақсимоти дарсҳо</a>
                     {% endif %}
                     {% if not user.is_superuser %}
                         <span class="user">{{ user.username }}</span>

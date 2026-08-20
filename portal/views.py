@@ -1214,3 +1214,83 @@ def import_teachers(request):
         'school': school,
         'created_teachers': created_teachers,
     })
+
+
+@login_required
+def lesson_allocation(request):
+    school = get_user_school(request.user)
+    if not school:
+        messages.error(request, 'Муассисаи шумо муайян карда нашуд.')
+        return redirect('dashboard')
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+
+    class_subjects = ClassSubject.objects.filter(
+        school=school, is_active=True
+    ).select_related('allocated_teacher', 'teacher').order_by('class_name', 'subject')
+    teachers = TeacherProfile.objects.filter(school=school).select_related('user').order_by('full_name')
+
+    user_to_profile = {tp.user_id: tp.id for tp in teachers}
+    for cs in class_subjects:
+        cs.selected_profile_id = cs.allocated_teacher_id or user_to_profile.get(cs.teacher_id)
+
+    return render(request, 'school/lesson_allocation.html', {
+        'school': school,
+        'class_subjects': class_subjects,
+        'teachers': teachers,
+    })
+
+
+@login_required
+@require_POST
+def save_lesson_allocation(request):
+    school = get_user_school(request.user)
+    if not school or not has_school_access(request.user, school):
+        return redirect('dashboard')
+
+    cs_keys = [k for k in request.POST if k.startswith('alloc_')]
+    cs_ids = []
+    for k in cs_keys:
+        try:
+            cs_ids.append(int(k.split('_', 1)[1]))
+        except (ValueError, IndexError):
+            continue
+
+    class_subject_map = {
+        cs.id: cs for cs in ClassSubject.objects.filter(id__in=cs_ids, school=school)
+    }
+    teacher_map = {
+        tp.id: tp for tp in TeacherProfile.objects.filter(school=school)
+    }
+
+    updated = []
+    for key in cs_keys:
+        try:
+            cs_id = int(key.split('_', 1)[1])
+        except (ValueError, IndexError):
+            continue
+        cs = class_subject_map.get(cs_id)
+        if not cs:
+            continue
+
+        val = request.POST.get(key, '').strip()
+        if not val:
+            cs.allocated_teacher_id = None
+            cs.teacher_id = None
+        else:
+            try:
+                profile_id = int(val)
+            except ValueError:
+                continue
+            profile = teacher_map.get(profile_id)
+            if not profile:
+                continue
+            cs.allocated_teacher_id = profile.id
+            cs.teacher_id = profile.user_id
+        updated.append(cs)
+
+    if updated:
+        ClassSubject.objects.bulk_update(updated, ['allocated_teacher', 'teacher'], batch_size=100)
+
+    messages.success(request, 'Тақсимоти дарсҳо ба омӯзгорон бо муваффақият сабт шуд.')
+    return redirect('lesson_allocation')

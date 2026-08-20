@@ -736,6 +736,7 @@ def download_template(request, class_name=None, school_id=None):
             if cell.column in (3, 4):
                 cell.alignment = Alignment(horizontal='left', vertical='center')
                 cell.protection = Protection(locked=False)
+                cell.number_format = '@'
             else:
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
@@ -1146,6 +1147,7 @@ def download_teacher_template(request):
     for row in ws.iter_rows(min_row=2, max_row=1000, min_col=2, max_col=5):
         for cell in row:
             cell.protection = Protection(locked=False)
+            cell.number_format = '@'
 
     ws.protection.sheet = True
     ws.protection.set_password('maorif_zafarobod')

@@ -88,6 +88,14 @@ def main():
         dst = f'{PROJECT_DIR}/{f}'
         run(client, f'test -f {backup} && cp -p {backup} {dst} || echo "no backup for {f}"')
 
+    # Ensure venv uses the system python and install dependencies
+    print('\n--- Preparing Python environment ---', flush=True)
+    pyvenv_cfg = f'{PROJECT_DIR}/venv/pyvenv.cfg'
+    run(client, f'python3 --version')
+    run(client, f'cat > {pyvenv_cfg} <<EOF\nhome = /usr/bin\ninclude-system-site-packages = false\nversion = 3.12.3\nEOF')
+    run(client, f'cd {PROJECT_DIR} && python3 -m pip --version 2>/dev/null || apt-get update -qq && apt-get install -y -qq python3-pip')
+    run(client, f'cd {PROJECT_DIR} && python3 -m pip install --prefix {PROJECT_DIR}/venv -r {PROJECT_DIR}/requirements.txt')
+
     # Apply any new Django migrations
     print('\n--- Applying Django migrations ---', flush=True)
     run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py migrate')

@@ -19,7 +19,8 @@ from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, 
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
-    default_subjects_for_class, ensure_class_subjects, is_non_graded
+    default_subjects_for_class, ensure_class_subjects, is_non_graded,
+    get_school_number
 )
 
 
@@ -1190,8 +1191,9 @@ def import_teachers(request):
         specialty = str(row[4] or '').strip() if len(row) > 4 else ''
 
         counter = existing + len(created_teachers) + 1
-        username = f'teacher_M{school.id}_{counter}'
-        password = f'Teacher_M{school.id}_{counter}@2026'
+        school_num = get_school_number(school)
+        username = f'teacher_M{school_num}_{counter}'
+        password = f'Teacher_M{school_num}_{counter}@2026'
 
         try:
             user = User.objects.create_user(

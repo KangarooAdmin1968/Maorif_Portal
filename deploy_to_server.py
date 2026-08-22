@@ -100,6 +100,10 @@ def main():
     print('\n--- Applying Django migrations ---', flush=True)
     run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py migrate')
 
+    # Align director/zavuch usernames to physical school numbers
+    print('\n--- Aligning usernames ---', flush=True)
+    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} update_usernames.py')
+
     # Kill gunicorn
     print('\n--- Restarting Gunicorn ---', flush=True)
     run(client, 'pkill -f gunicorn || true')

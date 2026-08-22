@@ -12,6 +12,56 @@ TJC_SUBJECTS = settings.TJC_SUBJECTS
 NON_GRADED_CLASSES = settings.NON_GRADED_CLASSES
 
 
+def get_school_number(school):
+    """Return the physical school number/slug for a School, e.g. '20', 'g1', 'l1', 'mdtt4', '0'."""
+    name = (school.name or '').strip()
+    type_ = (school.type or '').lower()
+    name_lower = name.lower()
+
+    # Try to find an explicit №N number in the name
+    m = re.search(r'№\s*(\d+)', name)
+    if m:
+        num = m.group(1)
+        if 'лит' in type_ or 'литсей' in name_lower or 'лицей' in name_lower:
+            return f'l{num}'
+        if 'гимн' in name_lower:
+            return f'g{num}'
+        if 'томактаб' in type_ or 'кӯдакистон' in name_lower or 'mdtt' in name_lower or 'мдтт' in name_lower:
+            return f'mdtt{num}'
+        return num
+
+    # Gymnasium fallback
+    if 'гимн' in name_lower:
+        return 'g1'
+
+    # Litsey fallback
+    if 'лит' in type_ or 'литсей' in name_lower or 'лицей' in name_lower:
+        return 'l1'
+
+    # Kindergarten / MDITT fallback
+    if 'томактаб' in type_ or 'кӯдакистон' in name_lower or 'mdtt' in name_lower or 'мдтт' in name_lower:
+        return 'mdtt0'
+
+    # Unknown / private kindergartens
+    return '0'
+
+
+def get_school_password_base(school):
+    """Return the password base for a School, e.g. 'M20', 'G1', 'L1', 'Mdtt4', '0'."""
+    number = get_school_number(school)
+    if number == '0':
+        return '0'
+    if number.startswith('mdtt'):
+        return 'Mdtt' + number[4:]
+    if number.startswith('g'):
+        return 'G' + number[1:]
+    if number.startswith('l'):
+        return 'L' + number[1:]
+    if number.isdigit():
+        return 'M' + number
+    return number.capitalize()
+
+
 def class_numeric_part(class_name):
     m = re.search(r'(\d+)', str(class_name))
     return int(m.group(1)) if m else 0

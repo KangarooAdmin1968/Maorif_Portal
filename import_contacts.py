@@ -16,6 +16,7 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from django.conf import settings
 from portal.models import School, UserProfile
+from portal.utils import get_school_number, get_school_password_base
 
 RAW_CONTACTS = """1	МТМУ 1	Бобозода Гавҳар	600-22-14	Ҳоҷимуродова Гулҷаҳон	802-34-54
 2	МТМУ 2	Усмонова Ойсара	110-08-85-87	Темирова Гулмира	765-10-55
@@ -191,15 +192,13 @@ def main():
         else:
             print(f"{row['idx']}: no director name for {school.name}, skipping school update")
 
-        password_base, username_abbr = make_ids(raw_school)
-        if not username_abbr:
-            print(f"{row['idx']}: could not derive username for '{raw_school}'")
-            continue
+        slug = get_school_number(school)
+        base = get_school_password_base(school)
 
         # Director user
         if director_name:
-            director_username = f'director_{username_abbr}'
-            director_password = f'Director_{password_base}_2026@'
+            director_username = f'director_{slug}'
+            director_password = f'Director_{base}_2026@'
             user = get_or_create_user(
                 director_username,
                 director_password,
@@ -214,8 +213,8 @@ def main():
         # Zavuch user
         zavuch_name = row['zavuch_name'].strip()
         if zavuch_name:
-            zavuch_username = f'zavuch_{username_abbr}'
-            zavuch_password = f'Zavuch_{password_base}_2026@'
+            zavuch_username = f'zavuch_{slug}'
+            zavuch_password = f'Zavuch_{base}@2026'
             user = get_or_create_user(
                 zavuch_username,
                 zavuch_password,

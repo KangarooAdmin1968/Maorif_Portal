@@ -46,9 +46,8 @@ def update_or_warn(profile, expected_username, expected_password, expected_role,
     user.set_password(expected_password)
     user.save()
 
-    if profile.role != expected_role or profile.school_id != school.id:
+    if profile.role != expected_role:
         profile.role = expected_role
-        profile.school = school
         profile.save()
 
     print(f'  [UPDATED] {old_username} -> {expected_username}  (role={expected_role})')

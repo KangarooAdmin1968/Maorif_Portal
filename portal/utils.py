@@ -28,6 +28,10 @@ def get_school_number(school):
     if name_lower in NAME_TO_NUMBER:
         return NAME_TO_NUMBER[name_lower]
 
+    # Kindergarten #4 in the village of Lojin has no visible number
+    if 'кӯдакистон' in name_lower and 'ло' in name_lower and 'ин' in name_lower:
+        return 'mdtt4'
+
     # Try to find an explicit №N number in the name
     m = re.search(r'№\s*(\d+)', name)
     if m:

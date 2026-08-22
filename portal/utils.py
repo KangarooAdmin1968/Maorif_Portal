@@ -20,13 +20,13 @@ def get_school_number(school):
 
     # Explicit name-to-number overrides for schools without a visible № in their name
     NAME_TO_NUMBER = {
-        'Кӯдакистони деҳаи Лоҷин': 'mdtt4',
-        'Гимназияи ноҳияи Зафаробод': 'g1',
-        'Афсона хусусӣ': '0',
-        'Табассум': '0',
+        'кӯдакистони деҳаи лоҷин': 'mdtt4',
+        'гимназияи ноҳияи зафаробод': 'g1',
+        'афсона хусусӣ': '0',
+        'табассум': '0',
     }
-    if name in NAME_TO_NUMBER:
-        return NAME_TO_NUMBER[name]
+    if name_lower in NAME_TO_NUMBER:
+        return NAME_TO_NUMBER[name_lower]
 
     # Try to find an explicit №N number in the name
     m = re.search(r'№\s*(\d+)', name)

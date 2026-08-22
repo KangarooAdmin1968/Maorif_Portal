@@ -61,19 +61,8 @@ def get_school_number(school):
 
 
 def get_school_password_base(school):
-    """Return the password base for a School, e.g. 'M20', 'G1', 'L1', 'Mdtt4', '0'."""
-    number = get_school_number(school)
-    if number == '0':
-        return '0'
-    if number.startswith('mdtt'):
-        return 'Mdtt' + number[4:]
-    if number.startswith('g'):
-        return 'G' + number[1:]
-    if number.startswith('l'):
-        return 'L' + number[1:]
-    if number.isdigit():
-        return 'M' + number
-    return number.capitalize()
+    """Return the password base for a School (same as the number slug, no M/G/L prefix)."""
+    return get_school_number(school)
 
 
 def class_numeric_part(class_name):

@@ -25,7 +25,7 @@ def expected_users(school):
     base = get_school_password_base(school)
     return [
         (f'director_{slug}', f'Director_{base}_2026@', settings.ROLE_PRINCIPAL),
-        (f'zavuch_{slug}', f'Zavuch_{base}@2026', settings.ROLE_TEACHER),
+        (f'zavuch_{slug}', f'Zavuch_{base}_2026@', settings.ROLE_TEACHER),
     ]
 
 

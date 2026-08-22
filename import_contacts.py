@@ -214,7 +214,7 @@ def main():
         zavuch_name = row['zavuch_name'].strip()
         if zavuch_name:
             zavuch_username = f'zavuch_{slug}'
-            zavuch_password = f'Zavuch_{base}@2026'
+            zavuch_password = f'Zavuch_{base}_2026@'
             user = get_or_create_user(
                 zavuch_username,
                 zavuch_password,

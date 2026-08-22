@@ -137,6 +137,19 @@ def main():
     run(client, 'date')
     print('\nDeployment completed successfully.', flush=True)
 
+    # Generate and download master keys table
+    print('\n--- Generating master keys table ---', flush=True)
+    remote_master = '/tmp/Zafarobod_Maorif_Master_Keys.html'
+    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} generate_master_keys.py --output {remote_master}')
+    local_master = r'D:\Loihalar\Zafarobod_Maorif_Master_Keys.html'
+    try:
+        sftp = client.open_sftp()
+        sftp.get(remote_master, local_master)
+        sftp.close()
+        print(f'Master keys downloaded to {local_master}', flush=True)
+    except Exception as exc:
+        print(f'Could not download master keys: {exc}', file=sys.stderr)
+
     client.close()
     return 0
 

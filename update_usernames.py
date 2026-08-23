@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """Align Director and Zavuch usernames/passwords to physical school numbers."""
 import os
+import re
 import sys
 import argparse
 
@@ -15,7 +16,7 @@ django.setup()
 
 from django.contrib.auth.models import User
 from django.conf import settings
-from portal.models import School, UserProfile
+from portal.models import School, UserProfile, TeacherProfile
 from portal.utils import get_school_number, get_school_password_base
 
 
@@ -94,6 +95,38 @@ def main():
                 updated += 1
         else:
             print('  [WARN] zavuch user not found')
+
+    print('\n--- Updating teacher accounts ---\n')
+    for profile in TeacherProfile.objects.select_related('user', 'school').all():
+        school = profile.school
+        if not school:
+            continue
+        num = get_school_number(school)
+        user = profile.user
+        old_username = user.username
+        match = re.search(r'teacher_(?:M?)([^_]+)_(\d+)$', old_username)
+        if not match:
+            continue
+        counter = match.group(2)
+        expected_username = f'teacher_{num}_{counter}'
+        expected_password = f'Teacher_{num}_{counter}@2026'
+
+        if old_username != expected_username:
+            if User.objects.filter(username=expected_username).exclude(pk=user.pk).exists():
+                print(f'  [CONFLICT] {expected_username} already exists; cannot rename {old_username}')
+                continue
+            if args.dry_run:
+                print(f'  [DRY-RUN] {old_username} -> {expected_username}')
+            else:
+                user.username = expected_username
+
+        if not args.dry_run:
+            user.set_password(expected_password)
+            user.save()
+            print(f'  [UPDATED TEACHER] {old_username} -> {expected_username}')
+        else:
+            print(f'  [DRY-RUN] {old_username} -> {expected_username}')
+        updated += 1
 
     print(f'\nDone. Profiles updated/planned: {updated}, schools skipped: {skipped}')
 

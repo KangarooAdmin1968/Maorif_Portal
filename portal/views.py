@@ -1192,8 +1192,8 @@ def import_teachers(request):
 
         counter = existing + len(created_teachers) + 1
         school_num = get_school_number(school)
-        username = f'teacher_M{school_num}_{counter}'
-        password = f'Teacher_M{school_num}_{counter}@2026'
+        username = f'teacher_{school_num}_{counter}'
+        password = f'Teacher_{school_num}_{counter}@2026'
 
         try:
             user = User.objects.create_user(

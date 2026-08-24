@@ -282,7 +282,7 @@ def calculate_class_rankings(school_filter=None):
 
 
 def calculate_subject_rankings():
-    """Return subject rankings with normalized subject names from all grade records."""
+    """Return subject rankings including all default subjects with 0.0 GPA if no grades exist."""
     totals = {}
     for row in Grade.objects.filter(score__isnull=False).values('subject').annotate(total=Sum('score'), count=Count('score')):
         subj = normalize_subject(row['subject'])
@@ -294,7 +294,20 @@ def calculate_subject_rankings():
         subj = normalize_subject(row['subject'])
         _add_score(totals, subj, row['total'], row['count'])
 
-    data = [{'subject': subj, 'gpa': round(total / count, 2) if count else 0.0} for subj, (total, count) in totals.items()]
+    # Build a complete set of default subjects from ClassSubject and TJC defaults
+    all_subjects = set()
+    for subj in ClassSubject.objects.values_list('subject', flat=True).distinct():
+        all_subjects.add(normalize_subject(subj))
+    for subject_list in settings.TJC_SUBJECTS.values():
+        for subj in subject_list:
+            all_subjects.add(normalize_subject(subj))
+
+    data = []
+    for subj in all_subjects:
+        total, count = totals.get(subj, (0.0, 0))
+        gpa = round(total / count, 2) if count else 0.0
+        data.append({'subject': subj, 'gpa': gpa})
+
     data.sort(key=lambda x: x['gpa'], reverse=True)
     rank = 0
     prev_gpa = None
@@ -323,6 +336,8 @@ def dashboard(request):
         school_ranking = [s for s in all_school_ranking if s['school'] == user_school] if user_school else []
         subject_ranking = []
 
+    schools_dropdown = School.objects.all().order_by('name')
+
     # Optional school filter for class ranking dropdown
     selected_school = request.GET.get('school', '')
     class_ranking = calculate_class_rankings()
@@ -346,6 +361,7 @@ def dashboard(request):
     context = {
         'role': role,
         'schools': schools,
+        'schools_dropdown': schools_dropdown,
         'school_ranking': school_ranking,
         'class_ranking': class_ranking,
         'subject_ranking': subject_ranking,

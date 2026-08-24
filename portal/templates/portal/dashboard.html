@@ -119,7 +119,7 @@
                 <label for="school-filter">Муассиса:</label>
                 <select id="school-filter" name="school" onchange="this.form.submit()">
                     <option value="" {% if not selected_school %}selected{% endif %}>Ҳама муассисаҳо</option>
-                    {% for s in schools %}
+                    {% for s in schools_dropdown %}
                     <option value="{{ s.id }}" {% if selected_school == s.id|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>
                     {% endfor %}
                 </select>

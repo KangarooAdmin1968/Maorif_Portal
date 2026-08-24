@@ -327,7 +327,7 @@ def dashboard(request):
     all_school_ranking = calculate_school_rankings()
     all_subject_ranking = calculate_subject_rankings()
 
-    if role == settings.ROLE_DIRECTOR:
+    if not request.user.is_authenticated or request.user.is_superuser or role == settings.ROLE_DIRECTOR:
         schools = School.objects.all()
         school_ranking = all_school_ranking
         subject_ranking = all_subject_ranking

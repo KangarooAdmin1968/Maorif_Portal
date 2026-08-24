@@ -20,7 +20,7 @@ from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, C
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
     default_subjects_for_class, ensure_class_subjects, is_non_graded,
-    get_school_number
+    get_school_number, is_academic_school, official_subjects
 )
 
 
@@ -180,7 +180,7 @@ def calculate_school_rankings():
     for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student__school').annotate(total=Sum('att_grade'), count=Count('att_grade')):
         _add_score(totals, row['student__school'], row['total'], row['count'])
 
-    schools = School.objects.all()
+    schools = [s for s in School.objects.all() if is_academic_school(s)]
     data = []
     for school in schools:
         total, count = totals.get(school.id, (0.0, 0))
@@ -200,10 +200,13 @@ def calculate_school_rankings():
 def calculate_class_rankings(school_filter=None):
     """Return class rankings with district and school ranks from all grade records."""
     entries = {}
+    academic_school_ids = {s.id for s in School.objects.all() if is_academic_school(s)}
 
     # Seed with every school/class combination that has students
     for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
         sid = row['school_id']
+        if sid not in academic_school_ids:
+            continue
         cname = normalize_class_name(row['class_name'])
         sname = row['school__name'] or ''
         key = (sid, cname)
@@ -211,7 +214,10 @@ def calculate_class_rankings(school_filter=None):
 
     # Daily grades
     for row in Grade.objects.filter(score__isnull=False).values('student__school', 'student__class_name').annotate(total=Sum('score'), count=Count('score')):
-        key = (row['student__school'], normalize_class_name(row['student__class_name']))
+        sid = row['student__school']
+        if sid not in academic_school_ids:
+            continue
+        key = (sid, normalize_class_name(row['student__class_name']))
         if key not in entries:
             entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
@@ -219,7 +225,10 @@ def calculate_class_rankings(school_filter=None):
 
     # Quarterly grades
     for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student__school', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
-        key = (row['student__school'], normalize_class_name(row['class_name']))
+        sid = row['student__school']
+        if sid not in academic_school_ids:
+            continue
+        key = (sid, normalize_class_name(row['class_name']))
         if key not in entries:
             entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
@@ -227,7 +236,10 @@ def calculate_class_rankings(school_filter=None):
 
     # Attestation grades
     for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student__school', 'class_name').annotate(total=Sum('att_grade'), count=Count('att_grade')):
-        key = (row['student__school'], normalize_class_name(row['class_name']))
+        sid = row['student__school']
+        if sid not in academic_school_ids:
+            continue
+        key = (sid, normalize_class_name(row['class_name']))
         if key not in entries:
             entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
@@ -302,8 +314,11 @@ def calculate_subject_rankings():
         for subj in subject_list:
             all_subjects.add(normalize_subject(subj))
 
+    official = official_subjects()
     data = []
     for subj in all_subjects:
+        if subj not in official:
+            continue
         total, count = totals.get(subj, (0.0, 0))
         gpa = round(total / count, 2) if count else 0.0
         data.append({'subject': subj, 'gpa': gpa})
@@ -470,7 +485,9 @@ def class_detail(request, school_id, class_name):
     class_name = normalize_class_name(class_name)
     ensure_class_subjects(school, class_name)
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
-    subjects = ClassSubject.objects.filter(school=school, class_name=class_name, is_active=True).order_by('subject')
+    subjects = ClassSubject.objects.filter(
+        school=school, class_name=class_name, is_active=True, subject__in=official_subjects()
+    ).order_by('subject')
     non_graded = is_non_graded(class_name)
     return render(request, 'portal/class_detail.html', {
         'school': school,

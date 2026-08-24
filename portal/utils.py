@@ -12,6 +12,32 @@ TJC_SUBJECTS = settings.TJC_SUBJECTS
 NON_GRADED_CLASSES = settings.NON_GRADED_CLASSES
 
 
+def is_academic_school(school):
+    """Return True for schools that participate in academic GPA rankings."""
+    type_lower = (school.type or '').lower()
+    name_lower = (school.name or '').lower()
+    if 'идор' in name_lower or 'идор' in type_lower:
+        return False
+    if 'томактаб' in name_lower or 'томактаб' in type_lower:
+        return False
+    if 'гимн' in type_lower or 'лит' in type_lower or 'лиц' in type_lower:
+        return True
+    if 'муассисаи таҳсилоти умумии' in type_lower or 'мактаб' in type_lower:
+        return True
+    if 'гимн' in name_lower or 'лит' in name_lower or 'лиц' in name_lower:
+        return True
+    return False
+
+
+def official_subjects():
+    """Return a set of all normalized official subjects across all grades."""
+    subjects = set()
+    for subject_list in TJC_SUBJECTS.values():
+        for subj in subject_list:
+            subjects.add(normalize_subject(subj))
+    return subjects
+
+
 def get_school_number(school):
     """Return the physical school number/slug for a School, e.g. '20', 'g1', 'l1', 'mdtt4', '0'."""
     name = (school.name or '').strip()
@@ -82,9 +108,10 @@ def is_non_graded(class_name):
 
 
 def ensure_class_subjects(school, class_name):
-    """Create default ClassSubject records for a school/class if missing."""
+    """Create default ClassSubject records for a school/class and deactivate non-official ones."""
     class_name = normalize_class_name(class_name)
     subjects = default_subjects_for_class(class_name)
+    official = {normalize_subject(s) for s in subjects}
     created = 0
     for subj in subjects:
         subj = normalize_subject(subj)
@@ -96,6 +123,13 @@ def ensure_class_subjects(school, class_name):
         )
         if c:
             created += 1
+        elif not obj.is_active:
+            obj.is_active = True
+            obj.is_default = True
+            obj.save()
+
+    # Deactivate any class subjects that are not part of the official curriculum
+    ClassSubject.objects.filter(school=school, class_name=class_name).exclude(subject__in=official).update(is_active=False)
     return created
 
 

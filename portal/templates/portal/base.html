@@ -73,6 +73,7 @@
                     {% if user.is_authenticated and user.is_superuser %}
                         <a href="/admin/" class="nav-link text-white mx-2" style="text-decoration: none;">admin</a>
                     {% endif %}
+                    <a href="{% url 'password_change' %}" class="btn btn-sm">Ивази рамз</a>
                     <a href="{% url 'logout' %}" class="btn btn-outline">Баромад</a>
                 {% else %}
                     <a href="{% url 'login' %}" class="btn">Вуруд</a>

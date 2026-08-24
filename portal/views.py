@@ -349,9 +349,9 @@ def dashboard(request):
     else:
         schools = School.objects.filter(id=user_school.id) if user_school else School.objects.none()
         school_ranking = [s for s in all_school_ranking if s['school'] == user_school] if user_school else []
-        subject_ranking = []
+        subject_ranking = all_subject_ranking
 
-    schools_dropdown = School.objects.all().order_by('name')
+    schools_dropdown = [s for s in School.objects.all().order_by('name') if is_academic_school(s)]
 
     # Optional school filter for class ranking dropdown
     selected_school = request.GET.get('school', '')

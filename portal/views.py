@@ -6,6 +6,7 @@ from django.db.models import Avg, Count, Sum
 import io
 import json
 import re
+import urllib.parse
 import datetime
 import pandas as pd
 from openpyxl import Workbook, load_workbook
@@ -741,6 +742,12 @@ def download_template(request, class_name=None, school_id=None):
     if class_name:
         class_name = normalize_class_name(class_name)
 
+    if school_id:
+        school = get_object_or_404(School, id=school_id)
+    else:
+        school = get_user_school(request.user)
+    school_number = get_school_number(school) if school else 'unknown'
+
     wb = Workbook()
     ws = wb.active
     ws.title = 'Хонандагон'
@@ -785,7 +792,9 @@ def download_template(request, class_name=None, school_id=None):
         output.read(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
-    response['Content-Disposition'] = 'attachment; filename="Шаблони_Хонандагон.xlsx"'
+    filename = f"Шаблони_Синфҳо_Мактаби_{school_number}.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
+    response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
     return response
 
 
@@ -1147,6 +1156,8 @@ def teacher_list(request, school_id=None):
 
 @login_required
 def download_teacher_template(request):
+    school = get_user_school(request.user)
+    school_number = get_school_number(school) if school else 'unknown'
     wb = Workbook()
     ws = wb.active
     ws.title = 'Омӯзгорон'
@@ -1194,7 +1205,9 @@ def download_teacher_template(request):
         output.read(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
-    response['Content-Disposition'] = 'attachment; filename="Shabloni_Omuzgoron.xlsx"'
+    filename = f"Шаблони_Омӯзгорон_Мактаби_{school_number}.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
+    response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
     return response
 
 

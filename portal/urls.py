@@ -24,6 +24,7 @@ urlpatterns = [
     path('schools/allocation/', views.lesson_allocation, name='lesson_allocation'),
     path('schools/allocation/save/', views.save_lesson_allocation, name='save_lesson_allocation'),
     path('student/<str:student_id>/', views.student_detail, name='student_detail'),
+    path('google3c6e6431fb434e83.html', views.google_verification, name='google_verification'),
     path('password_change/', auth_views.PasswordChangeView.as_view(
         template_name='registration/password_change_form.html',
         success_url='/password_change/done/'

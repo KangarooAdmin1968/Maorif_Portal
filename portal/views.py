@@ -1344,3 +1344,11 @@ def save_lesson_allocation(request):
 
     messages.success(request, 'Тақсимоти дарсҳо ба омӯзгорон бо муваффақият сабт шуд.')
     return redirect('lesson_allocation')
+
+
+def google_verification(request):
+    """Return the Google Search Console verification file content."""
+    return HttpResponse(
+        'google-site-verification: google3c6e6431fb434e83.html',
+        content_type='text/html'
+    )

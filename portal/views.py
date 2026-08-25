@@ -500,6 +500,49 @@ def class_detail(request, school_id, class_name):
 
 
 @login_required
+@require_POST
+def add_student(request, school_id, class_name):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+    full_name = request.POST.get('full_name', '').strip()
+    if not full_name:
+        messages.error(request, 'Номи хонанда ворид карда шавад.')
+        return redirect('class_detail', school_id=school.id, class_name=class_name)
+    student_id = f"{school.name}__{class_name}__{full_name}"
+    if Student.objects.filter(id=student_id).exists():
+        messages.warning(request, 'Хонанда бо ин ном аллакай вуҷуд дорад.')
+    else:
+        Student.objects.create(
+            id=student_id,
+            full_name=full_name,
+            class_name=class_name,
+            school=school
+        )
+        messages.success(request, 'Хонанда илова шуд.')
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+@login_required
+@require_POST
+def remove_student(request, school_id, class_name):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+    student_id = request.POST.get('student_id', '').strip()
+    if student_id:
+        try:
+            student = Student.objects.get(id=student_id, school=school, class_name=class_name)
+            student.delete()
+            messages.success(request, 'Хонанда хориҷ карда шуд.')
+        except Student.DoesNotExist:
+            messages.error(request, 'Хонанда ёфт нашуд.')
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+@login_required
 def grade_entry(request, school_id, class_name, subject):
     school = get_object_or_404(School, id=school_id)
     if not has_school_access(request.user, school):

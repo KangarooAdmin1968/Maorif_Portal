@@ -4,12 +4,22 @@
 <h1>{{ school.name }} — Синф {{ class_name }}</h1>
 
 <div class="toolbar">
-    <a href="{% url 'download_template' class_name %}" class="btn btn-secondary">📥 Боргирории шаблон</a>
-    <form action="{% url 'import_excel_class' class_name %}" method="post" enctype="multipart/form-data" class="inline-form">
-        {% csrf_token %}
-        <input type="file" name="excel" accept=".xlsx,.xls" required>
-        <button type="submit" class="btn btn-secondary">📤 Воридоти Excel</button>
-    </form>
+    <button type="button" class="btn btn-success" onclick="openAddStudentModal()">+ Илова кардани хонанда</button>
+</div>
+
+<div id="add-student-modal" class="modal" style="display:none;">
+    <div class="modal-content" style="padding:1.5rem; border-radius:0.5rem;">
+        <h3>Илова кардани хонанда</h3>
+        <form action="{% url 'add_student' school.id class_name %}" method="post">
+            {% csrf_token %}
+            <label for="full_name" style="display:block; margin-top:0.5rem;">Ному насаби хонанда</label>
+            <input type="text" id="full_name" name="full_name" placeholder="Номи хонандаро ворид кунед" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="closeAddStudentModal()">Бекор</button>
+                <button type="submit" class="btn btn-success">Илова</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <section class="card">
@@ -50,15 +60,22 @@
         {% endif %}
     </div>
     <table class="data-table">
-        <thead><tr><th>№</th><th>Ному насаб</th></tr></thead>
+        <thead><tr><th>№</th><th>Ному насаб</th><th>Амал</th></tr></thead>
         <tbody>
             {% for s in students %}
             <tr>
                 <td>{{ forloop.counter }}</td>
                 <td><a href="{% url 'student_detail' s.id %}">{{ s.full_name }}</a></td>
+                <td>
+                    <form action="{% url 'remove_student' school.id class_name %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед хонандаро хориҷ кунед?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="student_id" value="{{ s.id }}">
+                        <button type="submit" class="btn btn-danger btn-sm">Хориҷ кардан</button>
+                    </form>
+                </td>
             </tr>
             {% empty %}
-            <tr><td colspan="2">Хонанда ёфт нашуд.</td></tr>
+            <tr><td colspan="3">Хонанда ёфт нашуд.</td></tr>
             {% endfor %}
         </tbody>
     </table>
@@ -155,5 +172,18 @@ document.addEventListener('click', function(e) {
         document.getElementById('subject-menu').classList.remove('show');
     }
 });
+function openAddStudentModal() {
+    document.getElementById('add-student-modal').style.display = 'flex';
+    document.getElementById('full_name').focus();
+}
+function closeAddStudentModal() {
+    document.getElementById('add-student-modal').style.display = 'none';
+}
+window.onclick = function(e) {
+    const modal = document.getElementById('add-student-modal');
+    if (e.target === modal) {
+        modal.style.display = 'none';
+    }
+}
 </script>
 {% endblock %}

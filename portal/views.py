@@ -126,22 +126,24 @@ def can_edit_grade_journal(user, school, class_name, subject):
     """Return True if the user may save grades for this school, class and subject."""
     if user.is_superuser:
         return True
-    role = get_user_role(user)
-    if role == settings.ROLE_DIRECTOR:
-        return has_school_access(user, school)
-    if role == settings.ROLE_PRINCIPAL:
-        return False
-    if role != settings.ROLE_TEACHER:
-        return False
     if not has_school_access(user, school):
         return False
     profile = get_user_profile(user)
-    if not profile:
+    if not profile or profile.school != school:
         return False
-    # Zavuchs (no specific class/subject assigned) can edit all classes/subjects in their school
+    role = get_user_role(user)
+    # District/department-level director has master access to any school they can reach
+    if role == settings.ROLE_DIRECTOR:
+        return True
+    # School director (principal) can edit anything in their own school
+    if role == settings.ROLE_PRINCIPAL:
+        return True
+    if role != settings.ROLE_TEACHER:
+        return False
+    # Zavuchs are teachers with no specific class/subject assigned: full school editing rights
     if not profile.assigned_class and not profile.assigned_subject:
         return True
-    # Teachers must be explicitly assigned to this class/subject via ClassSubject
+    # Regular teachers must be explicitly allocated to this ClassSubject in "Тақсимоти дарсҳо"
     return ClassSubject.objects.filter(
         school=school,
         class_name=normalize_class_name(class_name),
@@ -156,12 +158,12 @@ def can_view_grade_journal(user, school, class_name, subject):
     """Return True if the user may view this grade journal."""
     if user.is_superuser:
         return True
+    if not has_school_access(user, school):
+        return False
     role = get_user_role(user)
     if role in (settings.ROLE_DIRECTOR, settings.ROLE_PRINCIPAL):
-        return has_school_access(user, school)
-    if role == settings.ROLE_TEACHER:
-        return can_edit_grade_journal(user, school, class_name, subject)
-    return False
+        return True
+    return can_edit_grade_journal(user, school, class_name, subject)
 
 
 def _add_score(totals, key, total, count):

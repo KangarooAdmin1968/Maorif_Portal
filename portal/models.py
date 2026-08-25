@@ -213,6 +213,7 @@ class Grade(models.Model):
     date = models.DateField('Сана', default=datetime.date.today)
     attendance = models.CharField('Давомат', max_length=10, blank=True, null=True, choices=[('+', '+ (босабаб)'), ('-', '- (бесабаб)')])
     behavior_score = models.IntegerField('Хулқ-атвор', blank=True, null=True, choices=[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)])
+    sticker = models.CharField('Стикер', max_length=10, blank=True, null=True, choices=[('⭐', 'Ситора'), ('☀️', 'Офтобак'), ('🌸', 'Гул'), ('📖', 'Китоб')])
 
     class Meta:
         verbose_name = 'Хол'

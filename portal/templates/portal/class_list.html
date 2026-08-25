@@ -14,19 +14,21 @@
 
 <table class="data-table">
     <thead>
-        <tr><th>№</th><th>Синф</th><th>Амал</th></tr>
+        <tr><th>№</th><th>Синф</th><th>Ўрин</th><th>Холи миёна</th><th>Амал</th></tr>
     </thead>
     <tbody>
-        {% for c in classes %}
+        {% for c in class_stats %}
         <tr>
             <td>{{ forloop.counter }}</td>
             <td>{{ c.class_name }}</td>
+            <td>{{ c.school_rank }}</td>
+            <td>{{ c.gpa }}</td>
             <td>
                 <a href="{% url 'class_detail' school.id c.class_name %}" class="btn btn-sm">Холҳо</a>
             </td>
         </tr>
         {% empty %}
-        <tr><td colspan="3">Синф ёфт нашуд. Иловаи хонанда ё боргирории шаблони Excel лозим аст.</td></tr>
+        <tr><td colspan="5">Синф ёфт нашуд. Иловаи хонанда ё боргирории шаблони Excel лозим аст.</td></tr>
         {% endfor %}
     </tbody>
 </table>

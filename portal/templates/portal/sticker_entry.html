@@ -1,0 +1,148 @@
+{% extends 'portal/base.html' %}
+{% load portal_extras %}
+{% block title %}Стикерҳо — {{ class_name }}{% endblock %}
+{% block content %}
+<h1>{{ school.name }} — Синф {{ class_name }} — Стикерҳо, давомат ва рафтор</h1>
+
+<a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
+
+<style>
+.save-status { color: #16a34a; font-size: 0.85rem; margin-left: 0.5rem; opacity: 0; transition: opacity 0.3s; }
+.save-status.show { opacity: 1; }
+.sticker-select, .behavior-select, .attendance-select { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; min-width: 120px; }
+#daily-date { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; }
+.sticker-option { font-size: 1.2rem; }
+.sticker-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; font-size: 0.95rem; }
+.sticker-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+</style>
+
+<div class="toolbar" style="margin-bottom:1rem;">
+    <label for="daily-date">Сана:</label>
+    <input type="date" id="daily-date" name="date" value="{{ date|date:'Y-m-d' }}" onchange="window.location.href='?date='+this.value">
+</div>
+
+{% if daily_quarter_locked %}
+<div class="alert alert-error">Ин чоряк баста шудааст. Тағйирот имконнопазир аст.</div>
+{% endif %}
+
+<div class="sticker-legend">
+    <span><span class="sticker-option">⭐</span> Ситора — Аъло</span>
+    <span><span class="sticker-option">☀️</span> Офтобак — Хуб</span>
+    <span><span class="sticker-option">🌸</span> Гул — Нозук/Тартиб</span>
+    <span><span class="sticker-option">📖</span> Китоб — Фаъоли хонанда</span>
+</div>
+
+<table class="data-table editable">
+    <thead>
+        <tr>
+            <th>№</th>
+            <th>Ному насаб</th>
+            <th>Давомат</th>
+            <th>Рафтор (1–5)</th>
+            <th>Стикер</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in students %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ s.full_name }}</td>
+            <td>
+                <select name="attendance_{{ s.id }}" class="attendance-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="attendance" {% if daily_quarter_locked %}disabled{% endif %}>
+                    <option value="" {% if not daily_attendance|dict_key:s.id %}selected{% endif %}></option>
+                    <option value="+" {% if daily_attendance|dict_key:s.id == '+' %}selected{% endif %}>+ (босабаб)</option>
+                    <option value="-" {% if daily_attendance|dict_key:s.id == '-' %}selected{% endif %}>- (бесабаб)</option>
+                </select>
+            </td>
+            <td>
+                <select name="behavior_{{ s.id }}" class="behavior-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="behavior_score" {% if daily_quarter_locked %}disabled{% endif %}>
+                    <option value="" {% if not behavior_default|dict_key:s.id %}selected{% endif %}></option>
+                    {% for val in "12345" %}
+                    <option value="{{ val }}" {% if behavior_default|dict_key:s.id|stringformat:"s" == val %}selected{% endif %}>{{ val }}</option>
+                    {% endfor %}
+                </select>
+            </td>
+            <td>
+                <select name="sticker_{{ s.id }}" class="sticker-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="sticker" {% if daily_quarter_locked %}disabled{% endif %}>
+                    <option value="" {% if not daily_stickers|dict_key:s.id %}selected{% endif %}></option>
+                    {% for symbol, label in sticker_choices.items %}
+                    <option value="{{ symbol }}" class="sticker-option" {% if daily_stickers|dict_key:s.id == symbol %}selected{% endif %}>{{ symbol }} {{ label }}</option>
+                    {% endfor %}
+                </select>
+            </td>
+            <td><span class="save-status" id="daily-status-{{ forloop.counter }}"></span></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6">Хонанда ёфт нашуд.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<script>
+const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value;
+const saveUrl = "{% url 'save_grade_ajax' %}";
+function showStatus(el, text) {
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add('show');
+    setTimeout(() => { el.textContent = ''; el.classList.remove('show'); }, 1500);
+}
+function saveInput(input) {
+    const field = input.dataset.field;
+    let value = input.value;
+    if (field === 'behavior_score') {
+        if (value && !Number.isInteger(Number(value))) return;
+    }
+    if (value === input.dataset.origValue) return;
+    const status = document.getElementById('daily-status-' + input.dataset.rowId);
+    const data = new URLSearchParams();
+    data.append('student_id', input.dataset.studentId);
+    data.append('subject', input.dataset.subject);
+    data.append('date', document.getElementById('daily-date').value);
+    data.append('type', 'daily');
+    if (field === 'attendance') {
+        data.append('attendance', value);
+    } else if (field === 'behavior_score') {
+        data.append('behavior_score', value);
+    } else if (field === 'sticker') {
+        data.append('sticker', value);
+    }
+    fetch(saveUrl, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
+        body: data
+    })
+    .then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t || 'Хатo'); });
+        return r.json();
+    })
+    .then(resp => {
+        if (resp.success) {
+            input.dataset.origValue = value;
+            showStatus(status, '✔ Сабт шуд!');
+        } else {
+            showStatus(status, resp.message || 'Хатo');
+        }
+    })
+    .catch(e => showStatus(status, 'Хатo: ' + e.message));
+}
+function moveFocus(input, direction) {
+    const inputs = Array.from(document.querySelectorAll('.daily-input')).filter(el => !el.disabled);
+    const idx = inputs.indexOf(input);
+    const next = inputs[idx + direction];
+    if (next) next.focus();
+}
+function onKeydown(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    moveFocus(this, e.shiftKey ? -1 : 1);
+}
+document.querySelectorAll('.daily-input').forEach(el => {
+    el.addEventListener('focus', () => { el.dataset.origValue = el.value; });
+    el.addEventListener('keydown', onKeydown);
+    el.addEventListener('change', () => saveInput(el));
+    el.addEventListener('blur', () => saveInput(el));
+});
+</script>
+{% endblock %}

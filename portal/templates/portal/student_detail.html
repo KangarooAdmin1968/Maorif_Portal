@@ -1,5 +1,6 @@
 {% extends 'portal/base.html' %}
 {% load static %}
+{% load portal_extras %}
 {% block title %}{{ student.full_name }}{% endblock %}
 {% block content %}
 
@@ -268,5 +269,28 @@ new Chart(ctx, {
     }
 });
 </script>
+
+{% if recent_stickers %}
+<section class="chart-card" style="margin-top:1.5rem;">
+    <h2>⭐ Стикерҳо</h2>
+    <div style="width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+        <table class="data-table">
+            <thead>
+                <tr><th>Сана</th><th>Фан</th><th>Стикер</th><th>Маъно</th></tr>
+            </thead>
+            <tbody>
+                {% for g in recent_stickers %}
+                <tr>
+                    <td>{{ g.date|date:"d.m.Y" }}</td>
+                    <td>{{ g.subject }}</td>
+                    <td style="font-size: 1.6rem; text-align: center;">{{ g.sticker }}</td>
+                    <td>{{ sticker_labels|dict_key:g.sticker }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
 
 {% endblock %}

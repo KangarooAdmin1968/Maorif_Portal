@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.db.models import Avg, Count, Sum
+from django.db.models import Avg, Count, Sum, Q
 import io
 import json
 import re
@@ -146,8 +146,9 @@ def can_edit_grade_journal(user, school, class_name, subject):
         school=school,
         class_name=normalize_class_name(class_name),
         subject=normalize_subject(subject),
-        teacher=user,
         is_active=True,
+    ).filter(
+        Q(teacher=user) | Q(allocated_teacher__user=user)
     ).exists()
 
 
@@ -172,14 +173,23 @@ def _add_score(totals, key, total, count):
 
 
 def calculate_school_rankings():
-    """Return all schools ranked by average GPA from daily and quarterly grades."""
+    """Return all schools ranked by average GPA from daily and quarterly grades (excluding non-graded classes)."""
     totals = {}
-    for row in Grade.objects.filter(score__isnull=False).values('student__school').annotate(total=Sum('score'), count=Count('score')):
-        _add_score(totals, row['student__school'], row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student__school').annotate(total=Sum('grade'), count=Count('grade')):
-        _add_score(totals, row['student__school'], row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student__school').annotate(total=Sum('att_grade'), count=Count('att_grade')):
-        _add_score(totals, row['student__school'], row['total'], row['count'])
+
+    for g in Grade.objects.filter(score__isnull=False).select_related('student'):
+        if is_non_graded(g.student.class_name):
+            continue
+        _add_score(totals, g.student.school_id, g.score, 1)
+
+    for q in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).select_related('student'):
+        if is_non_graded(q.class_name):
+            continue
+        _add_score(totals, q.student.school_id, q.grade, 1)
+
+    for q in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).select_related('student'):
+        if is_non_graded(q.class_name):
+            continue
+        _add_score(totals, q.student.school_id, q.att_grade, 1)
 
     schools = [s for s in School.objects.all() if is_academic_school(s)]
     data = []
@@ -203,12 +213,14 @@ def calculate_class_rankings(school_filter=None):
     entries = {}
     academic_school_ids = {s.id for s in School.objects.all() if is_academic_school(s)}
 
-    # Seed with every school/class combination that has students
+    # Seed with every school/class combination that has students (exclude non-graded classes)
     for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
         sid = row['school_id']
         if sid not in academic_school_ids:
             continue
         cname = normalize_class_name(row['class_name'])
+        if is_non_graded(cname):
+            continue
         sname = row['school__name'] or ''
         key = (sid, cname)
         entries[key] = {'school_id': sid, 'school_name': sname, 'class_name': cname, 'total': 0.0, 'count': 0}
@@ -218,9 +230,12 @@ def calculate_class_rankings(school_filter=None):
         sid = row['student__school']
         if sid not in academic_school_ids:
             continue
-        key = (sid, normalize_class_name(row['student__class_name']))
+        cname = normalize_class_name(row['student__class_name'])
+        if is_non_graded(cname):
+            continue
+        key = (sid, cname)
         if key not in entries:
-            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
+            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
         entries[key]['count'] += int(row['count'])
 
@@ -229,9 +244,12 @@ def calculate_class_rankings(school_filter=None):
         sid = row['student__school']
         if sid not in academic_school_ids:
             continue
-        key = (sid, normalize_class_name(row['class_name']))
+        cname = normalize_class_name(row['class_name'])
+        if is_non_graded(cname):
+            continue
+        key = (sid, cname)
         if key not in entries:
-            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
+            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
         entries[key]['count'] += int(row['count'])
 
@@ -240,9 +258,12 @@ def calculate_class_rankings(school_filter=None):
         sid = row['student__school']
         if sid not in academic_school_ids:
             continue
-        key = (sid, normalize_class_name(row['class_name']))
+        cname = normalize_class_name(row['class_name'])
+        if is_non_graded(cname):
+            continue
+        key = (sid, cname)
         if key not in entries:
-            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': key[1], 'total': 0.0, 'count': 0}
+            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
         entries[key]['count'] += int(row['count'])
 
@@ -475,7 +496,50 @@ def class_list(request, school_id=None):
         return redirect('dashboard')
 
     classes = Student.objects.filter(school=school).values('class_name').distinct().order_by('class_name')
-    return render(request, 'portal/class_list.html', {'school': school, 'classes': classes, 'role': role})
+    graded_stats = []
+    non_graded_stats = []
+    for c in classes:
+        cname = c['class_name']
+        if is_non_graded(cname):
+            label = 'Стикерҳо' if str(class_numeric_part(cname)) == '1' else 'Ғайрибаҳо'
+            non_graded_stats.append({'class_name': cname, 'school_rank': '-', 'gpa': label})
+            continue
+
+        total = 0.0
+        count = 0
+        for g in Grade.objects.filter(student__school=school, student__class_name=cname, score__isnull=False):
+            total += float(g.score)
+            count += 1
+        for q in QuarterGrade.objects.filter(student__school=school, class_name=cname, quarter__in=(1, 2, 3, 4), grade__isnull=False):
+            total += float(q.grade)
+            count += 1
+        for q in QuarterGrade.objects.filter(student__school=school, class_name=cname, quarter=0, att_grade__isnull=False):
+            total += float(q.att_grade)
+            count += 1
+
+        gpa = round(total / count, 2) if count else 0.0
+        graded_stats.append({'class_name': cname, 'school_rank': None, 'gpa': gpa})
+
+    # Assign school rank by GPA (descending)
+    graded_stats.sort(key=lambda x: x['gpa'], reverse=True)
+    for idx, s in enumerate(graded_stats, 1):
+        s['school_rank'] = idx
+
+    # Combine in original class_name order
+    rank_map = {s['class_name']: s['school_rank'] for s in graded_stats}
+    gpa_map = {s['class_name']: s['gpa'] for s in graded_stats}
+    class_stats = []
+    for c in classes:
+        cname = c['class_name']
+        if cname in rank_map:
+            class_stats.append({'class_name': cname, 'school_rank': rank_map[cname], 'gpa': gpa_map[cname]})
+        else:
+            for s in non_graded_stats:
+                if s['class_name'] == cname:
+                    class_stats.append(s)
+                    break
+
+    return render(request, 'portal/class_list.html', {'school': school, 'class_stats': class_stats, 'role': role})
 
 
 @login_required
@@ -496,6 +560,92 @@ def class_detail(request, school_id, class_name):
         'students': students,
         'subjects': subjects,
         'non_graded': non_graded,
+    })
+
+
+@login_required
+def sticker_entry(request, school_id, class_name):
+    """Interactive sticker, attendance and behavior journal for non-graded classes."""
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+
+    class_name = normalize_class_name(class_name)
+    if not is_non_graded(class_name):
+        return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+    subject = normalize_subject('Стикерҳо')
+    # Ensure a ClassSubject record exists for permission control
+    ClassSubject.objects.get_or_create(
+        school=school,
+        class_name=class_name,
+        subject=subject,
+        defaults={'is_default': False, 'is_active': True}
+    )
+
+    if not can_view_grade_journal(request.user, school, class_name, subject):
+        return HttpResponse('Дастрасӣ манъ аст.', status=403)
+
+    students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
+
+    date_str = request.GET.get('date', '')
+    try:
+        selected_date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+    except ValueError:
+        selected_date = datetime.date.today()
+
+    sticker_choices = {'⭐': 'Ситора', '☀️': 'Офтобак', '🌸': 'Гул', '📖': 'Китоб'}
+
+    daily_grades = {}
+    daily_attendance = {}
+    daily_behavior = {}
+    daily_stickers = {}
+    for g in Grade.objects.filter(
+        student__school=school,
+        student__class_name=class_name,
+        subject=subject,
+        period='Холҳои ҷорӣ (Онлайн)',
+        date=selected_date
+    ):
+        if g.attendance:
+            daily_attendance[g.student_id] = g.attendance
+        if g.behavior_score is not None:
+            daily_behavior[g.student_id] = g.behavior_score
+        if g.sticker:
+            daily_stickers[g.student_id] = g.sticker
+
+    # Most recent prior behavior score per student (carry-over default)
+    prior_behavior = {}
+    for g in Grade.objects.filter(
+        student__in=students,
+        behavior_score__isnull=False,
+        date__lt=selected_date
+    ).order_by('student_id', '-date'):
+        if g.student_id not in prior_behavior:
+            prior_behavior[g.student_id] = g.behavior_score
+
+    behavior_default = {}
+    for s in students:
+        if s.id in daily_behavior:
+            behavior_default[s.id] = daily_behavior[s.id]
+        elif s.id in prior_behavior:
+            behavior_default[s.id] = prior_behavior[s.id]
+        else:
+            behavior_default[s.id] = 5
+
+    daily_quarter_locked = is_quarter_locked(school, class_name, subject, get_date_quarter(selected_date))
+
+    return render(request, 'portal/sticker_entry.html', {
+        'school': school,
+        'class_name': class_name,
+        'subject': subject,
+        'students': students,
+        'date': selected_date,
+        'daily_attendance': daily_attendance,
+        'daily_stickers': daily_stickers,
+        'behavior_default': behavior_default,
+        'sticker_choices': sticker_choices,
+        'daily_quarter_locked': daily_quarter_locked,
     })
 
 
@@ -552,13 +702,13 @@ def grade_entry(request, school_id, class_name, subject):
     subject = normalize_subject(subject)
 
     if not can_view_grade_journal(request.user, school, class_name, subject):
-        return redirect('dashboard')
+        return HttpResponse('Дастрасӣ манъ аст.', status=403)
 
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
 
     if request.method == 'POST':
         if not can_edit_grade_journal(request.user, school, class_name, subject):
-            return redirect('dashboard')
+            return HttpResponse('Дастрасӣ барои тағйир додан манъ аст.', status=403)
 
         date_str = request.POST.get('date', '')
         try:
@@ -954,7 +1104,7 @@ def save_grade_ajax(request):
         class_name = normalize_class_name(student.class_name)
 
         if not can_edit_grade_journal(request.user, student.school, class_name, subject):
-            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=200)
+            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
         def parse_score(raw):
             if not raw:
@@ -979,7 +1129,7 @@ def save_grade_ajax(request):
                 subject=subject,
                 period='Холҳои ҷорӣ (Онлайн)',
                 date=date,
-                defaults={'score': None, 'attendance': None, 'behavior_score': None}
+                defaults={'score': None, 'attendance': None, 'behavior_score': None, 'sticker': None}
             )
 
             if 'score' in request.POST:
@@ -1007,7 +1157,11 @@ def save_grade_ajax(request):
                 else:
                     grade.behavior_score = None
 
-            if grade.score is None and not grade.attendance and grade.behavior_score is None:
+            if 'sticker' in request.POST:
+                st = request.POST.get('sticker', '').strip()
+                grade.sticker = st if st in ('⭐', '☀️', '🌸', '📖') else None
+
+            if grade.score is None and not grade.attendance and grade.behavior_score is None and not grade.sticker:
                 grade.delete()
             else:
                 grade.save()
@@ -1071,9 +1225,12 @@ def save_grade_ajax(request):
 def calc_quarter_from_daily(request, school_id, class_name, subject):
     school = get_object_or_404(School, id=school_id)
     if not has_school_access(request.user, school):
-        return redirect('dashboard')
+        return HttpResponse('Дастрасӣ манъ аст.', status=403)
     class_name = normalize_class_name(class_name)
     subject = normalize_subject(subject)
+
+    if not can_edit_grade_journal(request.user, school, class_name, subject):
+        return HttpResponse('Дастрасӣ барои тағйир додан манъ аст.', status=403)
 
     students = Student.objects.filter(school=school, class_name=class_name)
     for student in students:
@@ -1171,6 +1328,11 @@ def student_detail(request, student_id):
     school_rank = len({g for g in school_gpas if g > student_gpa}) + 1
     district_rank = len({g for g in district_gpas if g > student_gpa}) + 1
 
+    recent_stickers = Grade.objects.filter(
+        student=student,
+        sticker__isnull=False
+    ).order_by('-date')[:15]
+
     context = {
         'student': student,
         'gpa': student_gpa,
@@ -1179,6 +1341,8 @@ def student_detail(request, student_id):
         'district_rank': district_rank,
         'subjects': subjects,
         'scores': scores,
+        'recent_stickers': recent_stickers,
+        'sticker_labels': {'⭐': 'Ситора', '☀️': 'Офтобак', '🌸': 'Гул', '📖': 'Китоб'},
     }
     return render(request, 'portal/student_detail.html', context)
 

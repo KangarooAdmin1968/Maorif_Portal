@@ -25,6 +25,9 @@
 <section class="card">
     <div class="class-header-bar">
         <h2 style="margin:0;">Хонандагон</h2>
+        {% if non_graded %}
+        <a href="{% url 'sticker_entry' school.id class_name %}" class="btn btn-success">Сабти давомот, рафтор ва стикерҳо</a>
+        {% endif %}
         {% if not non_graded %}
         <div class="subject-dropdown">
             <button type="button" class="btn btn-secondary dropdown-toggle" onclick="toggleSubjects()">

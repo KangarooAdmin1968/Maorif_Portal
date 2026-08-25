@@ -35,4 +35,5 @@ urlpatterns = [
         template_name='registration/password_change_done.html'
     ), name='password_change_done'),
     path('monitoring-dashboard/', views.monitoring_dashboard, name='monitoring_dashboard'),
+    path('monitoring-dashboard/export/', views.export_monitoring_excel, name='export_monitoring_excel'),
 ]

@@ -10,7 +10,7 @@ import urllib.parse
 import datetime
 import pandas as pd
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, Alignment, Protection, PatternFill
+from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Side
 from django.http import HttpResponse, JsonResponse
 from django.conf import settings
 from django.contrib import messages
@@ -1402,32 +1402,30 @@ def save_lesson_allocation(request):
     return redirect('lesson_allocation')
 
 
-@login_required
-def monitoring_dashboard(request):
-    """Secure monitoring dashboard for superusers and department director."""
-    if not request.user.is_superuser:
-        return redirect('dashboard')
+def _school_sort_key(school):
+    """Standard sort order used for the monitoring dashboard."""
+    name_lower = (school.name or '').lower()
+    type_lower = (school.type or '').lower()
 
-    def _school_sort_key(school):
-        name_lower = (school.name or '').lower()
-        type_lower = (school.type or '').lower()
+    if 'идор' in type_lower:
+        group_priority = 4
+    elif 'томактаб' in type_lower:
+        group_priority = 3
+    elif 'лит' in type_lower or 'лиц' in type_lower:
+        group_priority = 2
+    elif 'гимн' in name_lower:
+        group_priority = 1
+        return (group_priority, 0, school.name)
+    else:
+        group_priority = 1
 
-        if 'идор' in type_lower:
-            group_priority = 4
-        elif 'томактаб' in type_lower:
-            group_priority = 3
-        elif 'лит' in type_lower or 'лиц' in type_lower:
-            group_priority = 2
-        elif 'гимн' in name_lower:
-            group_priority = 1
-            return (group_priority, 0, school.name)
-        else:
-            group_priority = 1
+    nums = re.findall(r'\d+', school.name)
+    num = int(nums[0]) if nums else 999999
+    return (group_priority, num, school.name)
 
-        nums = re.findall(r'\d+', school.name)
-        num = int(nums[0]) if nums else 999999
-        return (group_priority, num, school.name)
 
+def _get_monitoring_stats():
+    """Return the same statistics list used by the dashboard and the Excel export."""
     schools = sorted(School.objects.all(), key=_school_sort_key)
     stats = []
     for school in schools:
@@ -1444,8 +1442,90 @@ def monitoring_dashboard(request):
             'teacher_count': Teacher.objects.filter(school=school).count(),
             'student_count': Student.objects.filter(school=school).count(),
         })
+    return stats
 
-    return render(request, 'portal/monitoring_dashboard.html', {'stats': stats})
+
+@login_required
+def monitoring_dashboard(request):
+    """Secure monitoring dashboard for superusers and department director."""
+    if not request.user.is_superuser:
+        return redirect('dashboard')
+    return render(request, 'portal/monitoring_dashboard.html', {'stats': _get_monitoring_stats()})
+
+
+@login_required
+def export_monitoring_excel(request):
+    """Export the monitoring dashboard data as a styled Excel workbook."""
+    if not request.user.is_superuser:
+        return redirect('dashboard')
+
+    stats = _get_monitoring_stats()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Назорати муассисаҳо'
+
+    headers = [
+        '№',
+        'Муассиса',
+        'Номи корбар',
+        'Воридшавӣ',
+        'Миқдори синфҳо',
+        'Миқдори омӯзгорон',
+        'Миқдори хонандагон',
+    ]
+
+    thin_side = Side(style='thin', color='000000')
+    header_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    header_fill = PatternFill(start_color='B4C7E7', end_color='B4C7E7', fill_type='solid')
+    header_font = Font(bold=True, color='000000')
+    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = header_border
+
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    center_align = Alignment(horizontal='center', vertical='center')
+    left_align = Alignment(horizontal='left', vertical='center')
+
+    for idx, row in enumerate(stats, start=2):
+        ws.cell(row=idx, column=1, value=idx - 1).alignment = center_align
+        ws.cell(row=idx, column=2, value=row['school'].name).alignment = left_align
+        ws.cell(row=idx, column=3, value=row['zavuch_username']).alignment = left_align
+
+        login_status = 'Фаъол' if row['logged_in'] else 'Ғайрифаъол'
+        ws.cell(row=idx, column=4, value=login_status).alignment = center_align
+
+        ws.cell(row=idx, column=5, value=row['class_count']).alignment = center_align
+        ws.cell(row=idx, column=6, value=row['teacher_count']).alignment = center_align
+        ws.cell(row=idx, column=7, value=row['student_count']).alignment = center_align
+
+        for col in range(1, 8):
+            ws.cell(row=idx, column=col).border = thin_border
+
+    column_widths = [6, 45, 18, 16, 20, 22, 25]
+    for i, width in enumerate(column_widths, 1):
+        ws.column_dimensions[chr(64 + i)].width = width
+
+    ws.row_dimensions[1].height = 30
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    today = datetime.date.today().strftime('%Y-%m-%d')
+    filename = f"Гузориши_Назорати_Муассисаҳо_{today}.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
+
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
+    return response
 
 
 def google_verification(request):

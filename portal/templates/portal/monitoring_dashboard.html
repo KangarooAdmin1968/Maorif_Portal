@@ -3,6 +3,10 @@
 {% block content %}
 <h1>Шӯъбаи маориф — Панели назорати худкори фаъолият</h1>
 
+<div class="toolbar" style="margin-bottom: 1rem;">
+    <a href="{% url 'export_monitoring_excel' %}" class="btn">📥 Боргирии гузориш (Excel)</a>
+</div>
+
 <section class="card">
     <div class="table-responsive">
         <table class="data-table monitoring-table">

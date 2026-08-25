@@ -1183,6 +1183,18 @@ def student_detail(request, student_id):
     return render(request, 'portal/student_detail.html', context)
 
 
+def _next_teacher_counter(school_num):
+    """Return the next sequential teacher username counter for a school."""
+    prefix = f'teacher_{school_num}_'
+    pattern = re.compile(rf'^{re.escape(prefix)}(\d+)$')
+    max_counter = 0
+    for username in User.objects.filter(username__startswith=prefix).values_list('username', flat=True):
+        m = pattern.match(username)
+        if m:
+            max_counter = max(max_counter, int(m.group(1)))
+    return max_counter + 1
+
+
 @login_required
 def teacher_list(request, school_id=None):
     role = get_user_role(request.user)
@@ -1195,6 +1207,89 @@ def teacher_list(request, school_id=None):
         return redirect('dashboard')
     teachers = Teacher.objects.filter(school=school).order_by('name')
     return render(request, 'portal/teacher_list.html', {'school': school, 'teachers': teachers, 'role': role})
+
+
+@login_required
+@require_POST
+def add_teacher(request, school_id):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+
+    full_name = request.POST.get('full_name', '').strip()
+    phone = request.POST.get('phone', '').strip()
+    subject = request.POST.get('subject', '').strip()
+
+    if not full_name:
+        messages.error(request, 'Ному насаби омӯзгор бояд ворид карда шавад.')
+        return redirect('teacher_list', school_id=school.id)
+
+    school_num = get_school_number(school)
+    counter = _next_teacher_counter(school_num)
+    username = f'teacher_{school_num}_{counter}'
+    password = f'Teacher_{school_num}_{counter}@2026'
+
+    try:
+        user = User.objects.create_user(
+            username=username,
+            password=password,
+            first_name=full_name,
+        )
+    except Exception:
+        messages.error(request, 'Эҷоди ҳисоби корбар муваффақият амалӣ нагашт.')
+        return redirect('teacher_list', school_id=school.id)
+
+    TeacherProfile.objects.create(
+        user=user,
+        school=school,
+        full_name=full_name,
+        phone=phone,
+        specialty=subject,
+    )
+    UserProfile.objects.update_or_create(
+        user=user,
+        defaults={
+            'role': settings.ROLE_TEACHER,
+            'school': school,
+        },
+    )
+    Teacher.objects.create(
+        school=school,
+        name=full_name,
+        subject=subject,
+        phone=phone,
+    )
+
+    messages.success(request, f'Омӯзгор {full_name} бо муваффақият илова шуд. Логин: {username}')
+    return redirect('teacher_list', school_id=school.id)
+
+
+@login_required
+@require_POST
+def remove_teacher(request, school_id):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+
+    teacher_id = request.POST.get('teacher_id', '').strip()
+    if not teacher_id:
+        messages.error(request, 'ID-и омӯзгор муайян карда нашуд.')
+        return redirect('teacher_list', school_id=school.id)
+
+    try:
+        teacher = Teacher.objects.get(id=teacher_id, school=school)
+    except Teacher.DoesNotExist:
+        messages.error(request, 'Омӯзгор ёфт нашуд.')
+        return redirect('teacher_list', school_id=school.id)
+
+    full_name = teacher.name
+    teacher_profile = TeacherProfile.objects.filter(school=school, full_name=full_name).first()
+    if teacher_profile:
+        teacher_profile.user.delete()
+    teacher.delete()
+
+    messages.success(request, f'Омӯзгор {full_name} хориҷ карда шуд.')
+    return redirect('teacher_list', school_id=school.id)
 
 
 @login_required

@@ -6,6 +6,7 @@
 <div class="toolbar">
     <a href="{% url 'download_teacher_template' %}" class="btn btn-outline-success">📥 Шаблони омӯзгорон</a>
     <button class="btn btn-success" onclick="openImportModal()">📤 Воридоти омӯзгорон</button>
+    <button class="btn btn-success" onclick="openAddTeacherModal()">+ Илова кардани омӯзгор</button>
 </div>
 
 <div id="importModal" class="modal">
@@ -24,15 +25,47 @@
     </div>
 </div>
 
+<div id="addTeacherModal" class="modal">
+    <div class="modal-content card">
+        <h3>Илова кардани омӯзгор</h3>
+        <form action="{% url 'add_teacher' school.id %}" method="post">
+            {% csrf_token %}
+            <div style="margin-bottom:1rem;">
+                <label for="full_name" style="display:block; margin-bottom:0.35rem;">Ному насаби омӯзгор</label>
+                <input type="text" id="full_name" name="full_name" placeholder="Ному насабро ворид кунед" required style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
+            <div style="margin-bottom:1rem;">
+                <label for="phone" style="display:block; margin-bottom:0.35rem;">Телефон</label>
+                <input type="text" id="phone" name="phone" placeholder="Рақами телефон" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
+            <div style="margin-bottom:1rem;">
+                <label for="subject" style="display:block; margin-bottom:0.35rem;">Фанни асосӣ</label>
+                <input type="text" id="subject" name="subject" placeholder="Фан" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
+            <div class="toolbar" style="margin-bottom:0;">
+                <button type="button" class="btn" onclick="closeAddTeacherModal()">Бекор</button>
+                <button type="submit" class="btn btn-success">Илова</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function openImportModal() { document.getElementById('importModal').style.display = 'flex'; }
 function closeImportModal() { document.getElementById('importModal').style.display = 'none'; }
-window.onclick = function(e) { var m = document.getElementById('importModal'); if (e.target == m) { m.style.display = 'none'; } }
+function openAddTeacherModal() { document.getElementById('addTeacherModal').style.display = 'flex'; document.getElementById('full_name').focus(); }
+function closeAddTeacherModal() { document.getElementById('addTeacherModal').style.display = 'none'; }
+window.onclick = function(e) {
+    var importM = document.getElementById('importModal');
+    var addM = document.getElementById('addTeacherModal');
+    if (e.target == importM) { importM.style.display = 'none'; }
+    if (e.target == addM) { addM.style.display = 'none'; }
+}
 </script>
 
 <table class="data-table">
     <thead>
-        <tr><th>№</th><th>Ному насаб</th><th>Фан</th><th>Таҷриба</th><th>Телефон</th></tr>
+        <tr><th>№</th><th>Ному насаб</th><th>Фан</th><th>Таҷриба</th><th>Телефон</th><th>Амал</th></tr>
     </thead>
     <tbody>
         {% for t in teachers %}
@@ -42,9 +75,16 @@ window.onclick = function(e) { var m = document.getElementById('importModal'); i
             <td>{{ t.subject }}</td>
             <td>{{ t.experience }}</td>
             <td>{{ t.phone }}</td>
+            <td>
+                <form action="{% url 'remove_teacher' school.id %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед омӯзгорро хориҷ кунед?');">
+                    {% csrf_token %}
+                    <input type="hidden" name="teacher_id" value="{{ t.id }}">
+                    <button type="submit" class="btn btn-danger btn-sm">Хориҷ кардан</button>
+                </form>
+            </td>
         </tr>
         {% empty %}
-        <tr><td colspan="5">Омӯзгор ёфт нашуд.</td></tr>
+        <tr><td colspan="6">Омӯзгор ёфт нашуд.</td></tr>
         {% endfor %}
     </tbody>
 </table>

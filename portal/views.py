@@ -1402,6 +1402,52 @@ def save_lesson_allocation(request):
     return redirect('lesson_allocation')
 
 
+@login_required
+def monitoring_dashboard(request):
+    """Secure monitoring dashboard for superusers and department director."""
+    if not request.user.is_superuser:
+        return redirect('dashboard')
+
+    def _school_sort_key(school):
+        name_lower = (school.name or '').lower()
+        type_lower = (school.type or '').lower()
+
+        if 'идор' in type_lower:
+            group_priority = 4
+        elif 'томактаб' in type_lower:
+            group_priority = 3
+        elif 'лит' in type_lower or 'лиц' in type_lower:
+            group_priority = 2
+        elif 'гимн' in name_lower:
+            group_priority = 1
+            return (group_priority, 0, school.name)
+        else:
+            group_priority = 1
+
+        nums = re.findall(r'\d+', school.name)
+        num = int(nums[0]) if nums else 999999
+        return (group_priority, num, school.name)
+
+    schools = sorted(School.objects.all(), key=_school_sort_key)
+    stats = []
+    for school in schools:
+        school_num = get_school_number(school)
+        zavuch_username = f'zavuch_{school_num}'
+        zavuch_user = User.objects.filter(username=zavuch_username).first()
+        logged_in = bool(zavuch_user and zavuch_user.last_login)
+        stats.append({
+            'school': school,
+            'zavuch_username': zavuch_username,
+            'zavuch_user': zavuch_user,
+            'logged_in': logged_in,
+            'class_count': Student.objects.filter(school=school).values('class_name').distinct().count(),
+            'teacher_count': Teacher.objects.filter(school=school).count(),
+            'student_count': Student.objects.filter(school=school).count(),
+        })
+
+    return render(request, 'portal/monitoring_dashboard.html', {'stats': stats})
+
+
 def google_verification(request):
     """Return the Google Search Console verification file content."""
     return HttpResponse(

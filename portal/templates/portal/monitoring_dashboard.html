@@ -1,0 +1,109 @@
+{% extends 'portal/base.html' %}
+{% block title %}Панели назорати муассисаҳо{% endblock %}
+{% block content %}
+<h1>Шӯъбаи маориф — Панели назорати худкори фаъолият</h1>
+
+<section class="card">
+    <div class="table-responsive">
+        <table class="data-table monitoring-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Муассиса</th>
+                    <th>Номи корбар</th>
+                    <th>Воридшавӣ</th>
+                    <th>Миқдори синфҳо</th>
+                    <th>Миқдори омӯзгорон</th>
+                    <th>Миқдори хонандагон</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in stats %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ row.school.name }}</td>
+                    <td>{{ row.zavuch_username }}</td>
+                    <td>
+                        {% if row.logged_in %}
+                            <span class="badge badge-green">Фаъол ✅</span>
+                            <small class="login-date">{{ row.zavuch_user.last_login|date:"d.m.Y H:i" }}</small>
+                        {% else %}
+                            <span class="badge badge-red">Ғайрифаъол ❌</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.class_count > 0 %}
+                            <span class="badge badge-green">{{ row.class_count }}</span>
+                        {% else %}
+                            <span class="badge badge-red">0</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.teacher_count > 0 %}
+                            <span class="badge badge-green">{{ row.teacher_count }}</span>
+                        {% else %}
+                            <span class="badge badge-red">0</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.student_count > 0 %}
+                            <span class="badge badge-green">{{ row.student_count }}</span>
+                        {% else %}
+                            <span class="badge badge-red">0</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7">Муассиса ёфт нашуд.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<style>
+.monitoring-table th,
+.monitoring-table td {
+    text-align: center;
+    vertical-align: middle;
+}
+.monitoring-table td:nth-child(2) {
+    text-align: left;
+}
+.badge {
+    display: inline-block;
+    padding: 0.35rem 0.65rem;
+    border-radius: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.badge-green {
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+.badge-red {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+.login-date {
+    display: block;
+    color: #6b7280;
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+}
+@media (max-width: 768px) {
+    .monitoring-table {
+        font-size: 0.85rem;
+    }
+    .badge {
+        font-size: 0.8rem;
+        padding: 0.25rem 0.5rem;
+    }
+}
+</style>
+{% endblock %}

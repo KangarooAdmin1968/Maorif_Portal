@@ -486,7 +486,6 @@ def school_add(request):
     return render(request, 'portal/school_form.html', {'form': form})
 
 
-@login_required
 def class_list(request, school_id=None):
     user_school = get_user_school(request.user)
     role = get_user_role(request.user)
@@ -494,7 +493,7 @@ def class_list(request, school_id=None):
         school = get_object_or_404(School, id=school_id)
     else:
         school = user_school
-    if not has_school_access(request.user, school):
+    if request.user.is_authenticated and not has_school_access(request.user, school):
         return redirect('dashboard')
 
     classes = Student.objects.filter(school=school).values('class_name').distinct().order_by('class_name')
@@ -544,10 +543,9 @@ def class_list(request, school_id=None):
     return render(request, 'portal/class_list.html', {'school': school, 'class_stats': class_stats, 'role': role})
 
 
-@login_required
 def class_detail(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if request.user.is_authenticated and not has_school_access(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
     ensure_class_subjects(school, class_name)
@@ -1302,10 +1300,9 @@ def _all_student_gpas():
     return gpas
 
 
-@login_required
 def student_detail(request, student_id):
     student = get_object_or_404(Student, id=student_id)
-    if not has_school_access(request.user, student.school):
+    if request.user.is_authenticated and not has_school_access(request.user, student.school):
         return redirect('dashboard')
 
     subject_scores = _student_subject_scores(student)

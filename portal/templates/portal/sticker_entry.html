@@ -4,6 +4,8 @@
 {% block content %}
 <h1>{{ school.name }} — Синф {{ class_name }} — Стикерҳо, давомат ва рафтор</h1>
 
+{% csrf_token %}
+
 <a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
 
 <style>
@@ -80,7 +82,13 @@
 </table>
 
 <script>
-const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value;
+function getCsrfToken() {
+    const el = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    if (el) return el.value;
+    const m = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+}
+const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
 function showStatus(el, text) {
     if (!el) return;

@@ -175,7 +175,13 @@ function openTab(id, btn) {
   document.getElementById(id).classList.add('active');
   btn.classList.add('active');
 }
-const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+function getCsrfToken() {
+    const el = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    if (el) return el.value;
+    const m = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/);
+    return m ? decodeURIComponent(m[1]) : '';
+}
+const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
 function showStatus(el, text) {
   el.textContent = text;

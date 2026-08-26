@@ -149,26 +149,43 @@
     <div class="dynamic-badge badge-gray">📚 Дар ҳоли омӯзиш</div>
 {% endif %}
 
+
 <section class="badges-row">
     <div class="badge-card">
         <div class="badge-icon">👥</div>
         <div class="badge-title">Ҷойи синфӣ</div>
-        <div class="badge-value">{{ class_rank }}</div>
+        {% if non_graded %}
+            <div class="badge-value"> - </div>
+        {% else %}
+            <div class="badge-value">{{ class_rank }}</div>
+        {% endif %}
     </div>
     <div class="badge-card">
         <div class="badge-icon">🏢</div>
         <div class="badge-title">Ҷойи мактабӣ</div>
-        <div class="badge-value">{{ school_rank }}</div>
+        {% if non_graded %}
+            <div class="badge-value"> - </div>
+        {% else %}
+            <div class="badge-value">{{ school_rank }}</div>
+        {% endif %}
     </div>
     <div class="badge-card">
         <div class="badge-icon">🏆</div>
         <div class="badge-title">Ҷойи ноҳиявӣ</div>
-        <div class="badge-value">{{ district_rank }}</div>
+        {% if non_graded %}
+            <div class="badge-value"> - </div>
+        {% else %}
+            <div class="badge-value">{{ district_rank }}</div>
+        {% endif %}
     </div>
     <div class="badge-card overall-gpa">
         <div class="badge-icon">📊</div>
         <div class="badge-title">Холи миёнаи умумӣ</div>
-        <div class="badge-value">{{ gpa|floatformat:1 }}</div>
+        {% if non_graded %}
+            <div class="badge-value">Ғайрибаҳо</div>
+        {% else %}
+            <div class="badge-value">{{ gpa|floatformat:1 }}</div>
+        {% endif %}
     </div>
 </section>
 

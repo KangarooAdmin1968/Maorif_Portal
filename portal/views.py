@@ -1330,6 +1330,8 @@ def student_detail(request, student_id):
     school_rank = len({g for g in school_gpas if g > student_gpa}) + 1
     district_rank = len({g for g in district_gpas if g > student_gpa}) + 1
 
+    non_graded = is_non_graded(student.class_name)
+
     recent_stickers = Grade.objects.filter(
         student=student,
         sticker__isnull=False
@@ -1338,6 +1340,7 @@ def student_detail(request, student_id):
     context = {
         'student': student,
         'gpa': student_gpa,
+        'non_graded': non_graded,
         'class_rank': class_rank,
         'school_rank': school_rank,
         'district_rank': district_rank,

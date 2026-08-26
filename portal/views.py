@@ -138,20 +138,20 @@ def can_edit_grade_journal(user, school, class_name, subject):
     # School director (principal) can edit anything in their own school
     if role == settings.ROLE_PRINCIPAL:
         return True
-    if role != settings.ROLE_TEACHER:
-        return False
-    # Zavuchs are teachers with no specific class/subject assigned: full school editing rights
-    if not profile.assigned_class and not profile.assigned_subject:
+    # Zavuchs have full write/edit access to their school's classes
+    if role == getattr(settings, 'ROLE_ZAVUCH', 'zavuch') or user.username.startswith('zavuch_'):
         return True
-    # Regular teachers must be explicitly allocated to this ClassSubject in "Тақсимоти дарсҳо"
-    return ClassSubject.objects.filter(
-        school=school,
-        class_name=normalize_class_name(class_name),
-        subject=normalize_subject(subject),
-        is_active=True,
-    ).filter(
-        Q(teacher=user) | Q(allocated_teacher__user=user)
-    ).exists()
+    if role == settings.ROLE_TEACHER:
+        # Regular teachers must be explicitly allocated to this ClassSubject in "Тақсимоти дарсҳо"
+        return ClassSubject.objects.filter(
+            school=school,
+            class_name=normalize_class_name(class_name),
+            subject=normalize_subject(subject),
+            is_active=True,
+        ).filter(
+            Q(teacher=user) | Q(allocated_teacher__user=user)
+        ).exists()
+    return False
 
 
 def can_view_grade_journal(user, school, class_name, subject):

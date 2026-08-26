@@ -1571,6 +1571,13 @@ def import_teachers(request):
             },
         )
 
+        Teacher.objects.create(
+            school=school,
+            name=full_name,
+            subject=specialty,
+            phone=phone,
+        )
+
         created_teachers.append({
             'full_name': full_name,
             'username': username,

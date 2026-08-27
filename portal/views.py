@@ -1508,6 +1508,7 @@ def edit_teacher(request, school_id):
     full_name = request.POST.get('full_name', '').strip()
     phone = request.POST.get('phone', '').strip()
     subject = request.POST.get('subject', '').strip()
+    new_password = request.POST.get('new_password', '').strip()
 
     if not teacher_id or not full_name:
         messages.error(request, 'Иттилооти нокифоя барои таҳрири омӯзгор.')
@@ -1533,6 +1534,8 @@ def edit_teacher(request, school_id):
         teacher_profile.save()
         if teacher_profile.user:
             teacher_profile.user.first_name = full_name
+            if new_password:
+                teacher_profile.user.set_password(new_password)
             teacher_profile.user.save()
 
     messages.success(request, f'Омӯзгор {full_name} таҳрир шуд.')

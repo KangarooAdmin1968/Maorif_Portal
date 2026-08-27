@@ -31,9 +31,9 @@
         {% if not non_graded %}
         <div class="subject-dropdown">
             <button type="button" class="btn btn-secondary dropdown-toggle" onclick="toggleSubjects()">
-                ⚙️ Интихоби фан барои холгузорӣ
+                ⚙️ Интихоби фан барои холгузорӣ / чорякҳо
             </button>
-            <div class="dropdown-menu" id="subject-menu">
+            <div class="dropdown-menu show" id="subject-menu">
                 {% for s in subjects %}
                 <div class="dropdown-item">
                     <a href="{% url 'grade_entry' school.id class_name s.subject %}">{{ s.subject }}</a>

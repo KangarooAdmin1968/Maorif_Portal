@@ -1398,6 +1398,19 @@ def teacher_list(request, school_id=None):
     if not has_school_access(request.user, school):
         return redirect('dashboard')
     teachers = Teacher.objects.filter(school=school).order_by('name')
+    for teacher in teachers:
+        tp = TeacherProfile.objects.filter(school=school, full_name=teacher.name).select_related('user').first()
+        if tp and tp.user:
+            teacher.username = tp.user.username
+            teacher.is_password_private = tp.user.last_login is not None
+            if teacher.is_password_private:
+                teacher.password_display = 'Рамзи шахсӣ 🔒'
+            else:
+                teacher.password_display = f'{tp.user.username.capitalize()}@2026'
+        else:
+            teacher.username = ''
+            teacher.is_password_private = False
+            teacher.password_display = '—'
     return render(request, 'portal/teacher_list.html', {'school': school, 'teachers': teachers, 'role': role})
 
 

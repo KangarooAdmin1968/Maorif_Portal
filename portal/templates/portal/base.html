@@ -70,8 +70,10 @@
                     {% if not user.is_superuser %}
                         <span class="user">{{ user.username }}</span>
                     {% endif %}
-                    {% if user.is_authenticated and user.is_superuser %}
+                    {% if user.is_superuser %}
                         <a href="/admin/" class="nav-link text-white mx-2" style="text-decoration: none;">admin</a>
+                    {% endif %}
+                    {% if user.is_superuser or user.is_staff %}
                         <a href="{% url 'monitoring_dashboard' %}">Назорати Муассисаҳо</a>
                     {% endif %}
                     <a href="{% url 'password_change' %}" class="btn btn-sm">Ивази рамз</a>

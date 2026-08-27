@@ -50,16 +50,53 @@
     </div>
 </div>
 
+<div id="editTeacherModal" class="modal">
+    <div class="modal-content card">
+        <h3>Таҳрири омӯзгор</h3>
+        <form action="{% url 'edit_teacher' school.id %}" method="post">
+            {% csrf_token %}
+            <input type="hidden" id="edit-teacher-id" name="teacher_id" value="">
+            <div style="margin-bottom:1rem;">
+                <label for="edit-teacher-name" style="display:block; margin-bottom:0.35rem;">Ному насаби омӯзгор</label>
+                <input type="text" id="edit-teacher-name" name="full_name" placeholder="Ному насабро ворид кунед" required style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
+            <div style="margin-bottom:1rem;">
+                <label for="edit-teacher-phone" style="display:block; margin-bottom:0.35rem;">Телефон</label>
+                <input type="text" id="edit-teacher-phone" name="phone" placeholder="Рақами телефон" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
+            <div style="margin-bottom:1rem;">
+                <label for="edit-teacher-subject" style="display:block; margin-bottom:0.35rem;">Фанни асосӣ</label>
+                <input type="text" id="edit-teacher-subject" name="subject" placeholder="Фан" style="width:100%; padding:0.5rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
+            <div class="toolbar" style="margin-bottom:0;">
+                <button type="button" class="btn" onclick="closeEditTeacherModal()">Бекор</button>
+                <button type="submit" class="btn btn-primary">Сабт</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 function openImportModal() { document.getElementById('importModal').style.display = 'flex'; }
 function closeImportModal() { document.getElementById('importModal').style.display = 'none'; }
 function openAddTeacherModal() { document.getElementById('addTeacherModal').style.display = 'flex'; document.getElementById('full_name').focus(); }
 function closeAddTeacherModal() { document.getElementById('addTeacherModal').style.display = 'none'; }
+function openEditTeacherModal(btn) {
+    document.getElementById('edit-teacher-id').value = btn.dataset.id;
+    document.getElementById('edit-teacher-name').value = btn.dataset.name;
+    document.getElementById('edit-teacher-phone').value = btn.dataset.phone;
+    document.getElementById('edit-teacher-subject').value = btn.dataset.subject;
+    document.getElementById('editTeacherModal').style.display = 'flex';
+    document.getElementById('edit-teacher-name').focus();
+}
+function closeEditTeacherModal() { document.getElementById('editTeacherModal').style.display = 'none'; }
 window.onclick = function(e) {
     var importM = document.getElementById('importModal');
     var addM = document.getElementById('addTeacherModal');
+    var editM = document.getElementById('editTeacherModal');
     if (e.target == importM) { importM.style.display = 'none'; }
     if (e.target == addM) { addM.style.display = 'none'; }
+    if (e.target == editM) { editM.style.display = 'none'; }
 }
 </script>
 
@@ -76,7 +113,8 @@ window.onclick = function(e) {
             <td>{{ t.experience }}</td>
             <td>{{ t.phone }}</td>
             <td>
-                <form action="{% url 'remove_teacher' school.id %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед омӯзгорро хориҷ кунед?');">
+                <button type="button" class="btn btn-primary btn-sm" data-id="{{ t.id }}" data-name="{{ t.name }}" data-phone="{{ t.phone }}" data-subject="{{ t.subject }}" onclick="openEditTeacherModal(this)">Таҳрир</button>
+                <form action="{% url 'remove_teacher' school.id %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед омӯзгорро хориҷ кунед?');" style="display:inline;">
                     {% csrf_token %}
                     <input type="hidden" name="teacher_id" value="{{ t.id }}">
                     <button type="submit" class="btn btn-danger btn-sm">Хориҷ кардан</button>

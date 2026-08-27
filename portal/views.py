@@ -693,6 +693,32 @@ def remove_student(request, school_id, class_name):
 
 
 @login_required
+@require_POST
+def edit_student(request, school_id, class_name):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+    student_id = request.POST.get('student_id', '').strip()
+    full_name = request.POST.get('full_name', '').strip()
+
+    if not student_id or not full_name:
+        messages.error(request, 'Иттилооти нокифоя барои таҳрири хонанда.')
+        return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+    try:
+        student = Student.objects.get(id=student_id, school=school, class_name=class_name)
+    except Student.DoesNotExist:
+        messages.error(request, 'Хонанда ёфт нашуд.')
+        return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+    student.full_name = full_name
+    student.save()
+    messages.success(request, f'Хонанда {full_name} таҳрир шуд.')
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+@login_required
 def grade_entry(request, school_id, class_name, subject):
     school = get_object_or_404(School, id=school_id)
     if not has_school_access(request.user, school):
@@ -1455,6 +1481,48 @@ def remove_teacher(request, school_id):
     teacher.delete()
 
     messages.success(request, f'Омӯзгор {full_name} хориҷ карда шуд.')
+    return redirect('teacher_list', school_id=school.id)
+
+
+@login_required
+@require_POST
+def edit_teacher(request, school_id):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+
+    teacher_id = request.POST.get('teacher_id', '').strip()
+    full_name = request.POST.get('full_name', '').strip()
+    phone = request.POST.get('phone', '').strip()
+    subject = request.POST.get('subject', '').strip()
+
+    if not teacher_id or not full_name:
+        messages.error(request, 'Иттилооти нокифоя барои таҳрири омӯзгор.')
+        return redirect('teacher_list', school_id=school.id)
+
+    try:
+        teacher = Teacher.objects.get(id=teacher_id, school=school)
+    except Teacher.DoesNotExist:
+        messages.error(request, 'Омӯзгор ёфт нашуд.')
+        return redirect('teacher_list', school_id=school.id)
+
+    old_name = teacher.name
+    teacher.name = full_name
+    teacher.phone = phone
+    teacher.subject = subject
+    teacher.save()
+
+    teacher_profile = TeacherProfile.objects.filter(school=school, full_name=old_name).first()
+    if teacher_profile:
+        teacher_profile.full_name = full_name
+        teacher_profile.phone = phone
+        teacher_profile.specialty = subject
+        teacher_profile.save()
+        if teacher_profile.user:
+            teacher_profile.user.first_name = full_name
+            teacher_profile.user.save()
+
+    messages.success(request, f'Омӯзгор {full_name} таҳрир шуд.')
     return redirect('teacher_list', school_id=school.id)
 
 

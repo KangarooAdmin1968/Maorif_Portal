@@ -22,6 +22,22 @@
     </div>
 </div>
 
+<div id="edit-student-modal" class="modal" style="display:none;">
+    <div class="modal-content" style="padding:1.5rem; border-radius:0.5rem;">
+        <h3>Таҳрири хонанда</h3>
+        <form action="{% url 'edit_student' school.id class_name %}" method="post">
+            {% csrf_token %}
+            <input type="hidden" id="edit-student-id" name="student_id" value="">
+            <label for="edit-student-name" style="display:block; margin-top:0.5rem;">Ному насаби хонанда</label>
+            <input type="text" id="edit-student-name" name="full_name" placeholder="Номи хонандаро ворид кунед" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="closeEditStudentModal()">Бекор</button>
+                <button type="submit" class="btn btn-primary">Сабт</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <section class="card">
     <div class="class-header-bar">
         <h2 style="margin:0;">Хонандагон</h2>
@@ -70,7 +86,8 @@
                 <td>{{ forloop.counter }}</td>
                 <td><a href="{% url 'student_detail' s.id %}">{{ s.full_name }}</a></td>
                 <td>
-                    <form action="{% url 'remove_student' school.id class_name %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед хонандаро хориҷ кунед?');">
+                    <button type="button" class="btn btn-primary btn-sm" data-id="{{ s.id }}" data-name="{{ s.full_name }}" onclick="openEditStudentModal(this)">Таҳрир</button>
+                    <form action="{% url 'remove_student' school.id class_name %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед хонандаро хориҷ кунед?');" style="display:inline;">
                         {% csrf_token %}
                         <input type="hidden" name="student_id" value="{{ s.id }}">
                         <button type="submit" class="btn btn-danger btn-sm">Хориҷ кардан</button>
@@ -182,10 +199,21 @@ function openAddStudentModal() {
 function closeAddStudentModal() {
     document.getElementById('add-student-modal').style.display = 'none';
 }
+function openEditStudentModal(btn) {
+    document.getElementById('edit-student-id').value = btn.dataset.id;
+    document.getElementById('edit-student-name').value = btn.dataset.name;
+    document.getElementById('edit-student-modal').style.display = 'flex';
+    document.getElementById('edit-student-name').focus();
+}
+function closeEditStudentModal() {
+    document.getElementById('edit-student-modal').style.display = 'none';
+}
 window.onclick = function(e) {
-    const modal = document.getElementById('add-student-modal');
-    if (e.target === modal) {
-        modal.style.display = 'none';
+    if (e.target === document.getElementById('add-student-modal')) {
+        document.getElementById('add-student-modal').style.display = 'none';
+    }
+    if (e.target === document.getElementById('edit-student-modal')) {
+        document.getElementById('edit-student-modal').style.display = 'none';
     }
 }
 </script>

@@ -107,7 +107,7 @@ window.onclick = function(e) {
 
 <table class="data-table">
     <thead>
-        <tr><th>№</th><th>Ному насаб</th><th>Фан</th><th>Таҷриба</th><th>Телефон</th><th>Номи корбар (Логин)</th><th>Рамз (Парол)</th><th>Амал</th></tr>
+        <tr><th>№</th><th>Ному насаб</th><th>Фан</th><th>Телефон</th><th>Номи корбар (Логин)</th><th>Рамз (Парол)</th><th>Амал</th></tr>
     </thead>
     <tbody>
         {% for t in teachers %}
@@ -115,11 +115,10 @@ window.onclick = function(e) {
             <td>{{ forloop.counter }}</td>
             <td>{{ t.name }}</td>
             <td>{{ t.subject }}</td>
-            <td>{{ t.experience }}</td>
             <td>{{ t.phone }}</td>
             <td>{{ t.username|default:'—' }}</td>
             <td>{% if t.is_password_private %}<span style="color:#2563eb;">{{ t.password_display }}</span>{% else %}{{ t.password_display }}{% endif %}</td>
-            <td>
+            <td class="text-nowrap">
                 <button type="button" class="btn btn-primary btn-sm" data-id="{{ t.id }}" data-name="{{ t.name }}" data-phone="{{ t.phone }}" data-subject="{{ t.subject }}" onclick="openEditTeacherModal(this)">Таҳрир</button>
                 <form action="{% url 'remove_teacher' school.id %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед омӯзгорро хориҷ кунед?');" style="display:inline;">
                     {% csrf_token %}
@@ -129,7 +128,7 @@ window.onclick = function(e) {
             </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8">Омӯзгор ёфт нашуд.</td></tr>
+        <tr><td colspan="7">Омӯзгор ёфт нашуд.</td></tr>
         {% endfor %}
     </tbody>
 </table>

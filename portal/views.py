@@ -1829,7 +1829,8 @@ def _get_monitoring_stats():
 @login_required
 def monitoring_dashboard(request):
     """Monitoring dashboard for superusers, staff, and school Zavuchs."""
-    is_zavuch = get_user_role(request.user) == getattr(settings, 'ROLE_ZAVUCH', 'zavuch')
+    role = get_user_role(request.user)
+    is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
     if not (request.user.is_superuser or request.user.is_staff or is_zavuch):
         return redirect('dashboard')
     return render(request, 'portal/monitoring_dashboard.html', {'stats': _get_monitoring_stats()})

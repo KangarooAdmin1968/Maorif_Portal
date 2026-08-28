@@ -1616,7 +1616,9 @@ def import_teachers(request, school_id):
     ws = wb.active
 
     created_teachers = []
-    existing = TeacherProfile.objects.filter(school=school).count()
+    updated_teachers = []
+    school_num = get_school_number(school)
+    counter = _next_teacher_counter(school_num)
 
     for row in ws.iter_rows(min_row=2, values_only=True):
         full_name = str(row[1] or '').strip() if len(row) > 1 else ''
@@ -1627,10 +1629,32 @@ def import_teachers(request, school_id):
         education = str(row[3] or '').strip() if len(row) > 3 else ''
         specialty = str(row[4] or '').strip() if len(row) > 4 else ''
 
-        counter = existing + len(created_teachers) + 1
-        school_num = get_school_number(school)
+        # Avoid creating duplicates: update existing teacher details if found.
+        existing_tp = TeacherProfile.objects.filter(school=school, full_name=full_name).first()
+        existing_teacher = Teacher.objects.filter(school=school, name=full_name).first()
+        if existing_tp or existing_teacher:
+            if existing_tp:
+                existing_tp.phone = phone
+                existing_tp.education = education
+                existing_tp.specialty = specialty
+                existing_tp.save()
+                if existing_tp.user:
+                    existing_tp.user.first_name = full_name
+                    existing_tp.user.save()
+            if existing_teacher:
+                existing_teacher.phone = phone
+                existing_teacher.subject = specialty
+                existing_teacher.save()
+            updated_teachers.append({'full_name': full_name})
+            continue
+
+        # Find the next available username for this school.
         username = f'teacher_{school_num}_{counter}'
         password = f'Teacher_{school_num}_{counter}@2026'
+        while User.objects.filter(username=username).exists():
+            counter += 1
+            username = f'teacher_{school_num}_{counter}'
+            password = f'Teacher_{school_num}_{counter}@2026'
 
         try:
             user = User.objects.create_user(
@@ -1670,10 +1694,12 @@ def import_teachers(request, school_id):
             'username': username,
             'password': password,
         })
+        counter += 1
 
     return render(request, 'portal/imported_teachers_list.html', {
         'school': school,
         'created_teachers': created_teachers,
+        'updated_teachers': updated_teachers,
     })
 
 

@@ -4,7 +4,7 @@
 <h1>{{ school.name }} — Омӯзгорон ва кадрҳо</h1>
 
 <div class="toolbar">
-    <a href="{% url 'download_teacher_template' %}" class="btn btn-outline-success">📥 Шаблони омӯзгорон</a>
+    <a href="{% url 'download_teacher_template' school.id %}" class="btn btn-outline-success">📥 Шаблони омӯзгорон</a>
     <button class="btn btn-success" onclick="openImportModal()">📤 Воридоти омӯзгорон</button>
     <button class="btn btn-success" onclick="openAddTeacherModal()">+ Илова кардани омӯзгор</button>
 </div>
@@ -12,7 +12,7 @@
 <div id="importModal" class="modal">
     <div class="modal-content card">
         <h3>Воридоти омӯзгорон аз Excel</h3>
-        <form action="{% url 'import_teachers' %}" method="post" enctype="multipart/form-data">
+        <form action="{% url 'import_teachers' school.id %}" method="post" enctype="multipart/form-data">
             {% csrf_token %}
             <div style="margin-bottom:1rem;">
                 <input type="file" name="excel" accept=".xlsx,.xls" required>

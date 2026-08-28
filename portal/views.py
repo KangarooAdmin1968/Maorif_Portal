@@ -1543,9 +1543,12 @@ def edit_teacher(request, school_id):
 
 
 @login_required
-def download_teacher_template(request):
-    school = get_user_school(request.user)
-    school_number = get_school_number(school) if school else 'unknown'
+def download_teacher_template(request, school_id):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        messages.error(request, 'Дастрасӣ ба ин муассиса манъ аст.')
+        return redirect('dashboard')
+    school_number = get_school_number(school)
     wb = Workbook()
     ws = wb.active
     ws.title = 'Омӯзгорон'
@@ -1600,10 +1603,10 @@ def download_teacher_template(request):
 
 
 @login_required
-def import_teachers(request):
-    school = get_user_school(request.user)
-    if not school:
-        messages.error(request, 'Муассисаи шумо муайян карда нашуд.')
+def import_teachers(request, school_id):
+    school = get_object_or_404(School, id=school_id)
+    if not has_school_access(request.user, school):
+        messages.error(request, 'Дастрасӣ ба ин муассиса манъ аст.')
         return redirect('dashboard')
 
     if request.method != 'POST' or 'excel' not in request.FILES:

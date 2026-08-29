@@ -1,8 +1,8 @@
 {% extends 'portal/base.html' %}
 {% load portal_extras %}
-{% can_manage_school school as can_manage %}
 {% block title %}{{ school.name }} — {{ class_name }}{% endblock %}
 {% block content %}
+{% can_manage_school school as can_manage %}
 <h1>{{ school.name }} — Синф {{ class_name }}</h1>
 
 {% if can_manage %}

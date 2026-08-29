@@ -396,6 +396,22 @@ def dashboard(request):
         except (ValueError, TypeError):
             class_ranking = []
 
+    # Grade 1 (non-graded) classes grouped by school for the homepage widget
+    grade1_map = {}
+    for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
+        if class_numeric_part(row['class_name']) == 1:
+            sid = row['school_id']
+            if sid not in grade1_map:
+                grade1_map[sid] = {'school_id': sid, 'school_name': row['school__name'], 'classes': set()}
+            grade1_map[sid]['classes'].add(row['class_name'])
+    grade1_schools = sorted(
+        [
+            {'school_id': sid, 'school_name': data['school_name'], 'classes': sorted(data['classes'])}
+            for sid, data in grade1_map.items()
+        ],
+        key=lambda x: x['school_name']
+    )
+
     total_schools = School.objects.count()
     total_students = Student.objects.count()
     total_teachers = Teacher.objects.count()
@@ -411,6 +427,7 @@ def dashboard(request):
         'school_ranking': school_ranking,
         'class_ranking': class_ranking,
         'subject_ranking': subject_ranking,
+        'grade1_schools': grade1_schools,
         'total_schools': total_schools,
         'total_students': total_students,
         'total_teachers': total_teachers,
@@ -1341,30 +1358,36 @@ def student_detail(request, student_id):
     subjects = sorted(subject_scores.keys())
     scores = [subject_scores[s] for s in subjects]
 
-    all_gpas = _all_student_gpas()
-    student_gpa = all_gpas.get(student.id, 0.0)
-
-    class_gpas = []
-    school_gpas = []
-    district_gpas = []
-    for s in Student.objects.all():
-        g = all_gpas.get(s.id, 0.0)
-        district_gpas.append(g)
-        if s.school_id == student.school_id:
-            school_gpas.append(g)
-        if s.school_id == student.school_id and s.class_name == student.class_name:
-            class_gpas.append(g)
-
-    class_rank = len({g for g in class_gpas if g > student_gpa}) + 1
-    school_rank = len({g for g in school_gpas if g > student_gpa}) + 1
-    district_rank = len({g for g in district_gpas if g > student_gpa}) + 1
-
     non_graded = is_non_graded(student.class_name)
 
-    recent_stickers = Grade.objects.filter(
-        student=student,
-        sticker__isnull=False
-    ).order_by('-date')[:15]
+    if non_graded:
+        student_gpa = None
+        class_rank = None
+        school_rank = None
+        district_rank = None
+    else:
+        all_gpas = _all_student_gpas()
+        student_gpa = all_gpas.get(student.id, 0.0)
+
+        class_gpas = []
+        school_gpas = []
+        district_gpas = []
+        for s in Student.objects.all():
+            g = all_gpas.get(s.id, 0.0)
+            district_gpas.append(g)
+            if s.school_id == student.school_id:
+                school_gpas.append(g)
+            if s.school_id == student.school_id and s.class_name == student.class_name:
+                class_gpas.append(g)
+
+        class_rank = len({g for g in class_gpas if g > student_gpa}) + 1
+        school_rank = len({g for g in school_gpas if g > student_gpa}) + 1
+        district_rank = len({g for g in district_gpas if g > student_gpa}) + 1
+
+    if non_graded:
+        recent_stickers = Grade.objects.filter(student=student, sticker__isnull=False).order_by('-date')
+    else:
+        recent_stickers = Grade.objects.filter(student=student, sticker__isnull=False).order_by('-date')[:15]
 
     context = {
         'student': student,

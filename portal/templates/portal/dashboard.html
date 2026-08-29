@@ -146,4 +146,22 @@
         </section>
     </div>
 </div>
+
+<section class="card" style="margin-top:1.5rem;">
+    <h2>🎒 Синфҳои 1-ум (ғайрибаҳодиҳӣ)</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+        {% for g in grade1_schools %}
+        <div class="card" style="padding:1rem;">
+            <strong><a href="{% url 'class_list' school_id=g.school_id %}" class="dashboard-link">{{ g.school_name }}</a></strong>
+            <div style="margin-top:0.5rem;">
+                {% for c in g.classes %}
+                <a href="{% url 'class_detail' school_id=g.school_id class_name=c %}" class="btn btn-sm" style="margin:0.25rem;">{{ c }}</a>
+                {% endfor %}
+            </div>
+        </div>
+        {% empty %}
+        <p>Синфҳои 1-ум ёфт нашуд.</p>
+        {% endfor %}
+    </div>
+</section>
 {% endblock %}

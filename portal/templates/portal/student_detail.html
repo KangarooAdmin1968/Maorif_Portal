@@ -135,18 +135,22 @@
         <h1>{{ student.full_name }}</h1>
         <div class="profile-meta">🏫 {{ student.school.name }} &nbsp;|&nbsp; 🎓 Синф {{ student.class_name }}</div>
     </div>
+    {% if not non_graded %}
     <div class="profile-gpa">
         <div class="gpa-value">{{ gpa }}</div>
         <div class="gpa-label">Холи миёна</div>
     </div>
+    {% endif %}
 </section>
 
+{% if not non_graded %}
 {% if gpa >= 9.0 %}
     <div class="dynamic-badge badge-green">🌟 АЪЛОЧӢ</div>
 {% elif gpa >= 7.0 %}
     <div class="dynamic-badge badge-blue">👍 ХУБ</div>
 {% else %}
     <div class="dynamic-badge badge-gray">📚 Дар ҳоли омӯзиш</div>
+{% endif %}
 {% endif %}
 
 
@@ -212,6 +216,7 @@
     </div>
 </section>
 
+{% if not non_graded %}
 <section class="chart-card">
     <h2>📊 Холҳо аз рӯи фанҳо</h2>
     <div class="chart-wrapper">
@@ -286,22 +291,27 @@ new Chart(ctx, {
     }
 });
 </script>
+{% endif %}
 
 {% if recent_stickers %}
 <section class="chart-card" style="margin-top:1.5rem;">
-    <h2>⭐ Стикерҳо</h2>
+    <h2>⭐ Таърихи стикерҳо</h2>
     <div style="width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
         <table class="data-table">
             <thead>
-                <tr><th>Сана</th><th>Фан</th><th>Стикер</th><th>Маъно</th></tr>
+                <tr><th>Сана</th><th>Стикерҳо</th></tr>
             </thead>
             <tbody>
-                {% for g in recent_stickers %}
+                {% regroup recent_stickers by date as sticker_days %}
+                {% for day in sticker_days %}
                 <tr>
-                    <td>{{ g.date|date:"d.m.Y" }}</td>
-                    <td>{{ g.subject }}</td>
-                    <td style="font-size: 1.6rem; text-align: center;">{{ g.sticker }}</td>
-                    <td>{{ sticker_labels|dict_key:g.sticker }}</td>
+                    <td>{{ day.grouper|date:"d.m.Y" }}</td>
+                    <td>
+                        {% for g in day.list %}
+                            <span style="font-size: 1.4rem;" title="{{ g.subject }}: {{ sticker_labels|dict_key:g.sticker }}">{{ g.sticker }}</span>
+                            {% if not forloop.last %}, {% endif %}
+                        {% endfor %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>

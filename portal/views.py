@@ -202,9 +202,9 @@ def calculate_school_rankings():
     data.sort(key=lambda x: x['gpa'], reverse=True)
     rank = 0
     prev_gpa = None
-    for idx, item in enumerate(data, 1):
+    for item in data:
         if item['gpa'] != prev_gpa:
-            rank = idx
+            rank += 1
             prev_gpa = item['gpa']
         item['rank'] = rank
     return data
@@ -290,9 +290,9 @@ def calculate_class_rankings(school_filter=None):
 
     rank = 0
     prev_gpa = None
-    for idx, item in enumerate(data, 1):
+    for item in data:
         if item['gpa'] != prev_gpa:
-            rank = idx
+            rank += 1
             prev_gpa = item['gpa']
         item['district_rank'] = rank
 
@@ -350,9 +350,9 @@ def calculate_subject_rankings():
     data.sort(key=lambda x: x['gpa'], reverse=True)
     rank = 0
     prev_gpa = None
-    for idx, item in enumerate(data, 1):
+    for item in data:
         if item['gpa'] != prev_gpa:
-            rank = idx
+            rank += 1
             prev_gpa = item['gpa']
         item['rank'] = rank
     return data
@@ -378,16 +378,20 @@ def dashboard(request):
     schools_dropdown = [s for s in School.objects.all().order_by('name') if is_academic_school(s)]
 
     # Optional school filter for class ranking dropdown
-    selected_school = request.GET.get('school', '')
+    selected_school = request.GET.get('school')
+    if selected_school is None:
+        # Default to the user's own school on first load
+        selected_school = str(user_school.id) if user_school else '0'
+    else:
+        selected_school = selected_school.strip() or '0'
+
     class_ranking = calculate_class_rankings()
-    if selected_school:
+    if selected_school != '0':
         try:
             sid = int(selected_school)
             class_ranking = [c for c in class_ranking if c['school_id'] == sid]
         except (ValueError, TypeError):
             class_ranking = []
-    elif role != settings.ROLE_DIRECTOR and user_school:
-        class_ranking = [c for c in class_ranking if c['school_id'] == user_school.id]
 
     total_schools = School.objects.count()
     total_students = Student.objects.count()

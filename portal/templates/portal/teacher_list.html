@@ -9,11 +9,11 @@
 <div class="toolbar">
     <a href="{% url 'download_teacher_template' school.id %}" class="btn btn-outline-success">📥 Шаблони омӯзгорон</a>
     <button class="btn btn-success" onclick="openImportModal()">📤 Воридоти омӯзгорон</button>
-    <button class="btn btn-success" onclick="openAddTeacherModal()">+ Илова кардани омӯзгор</button>
+    <button class="btn btn-primary" onclick="toggleAddTeacherModal()">+ Иловаи омӯзгор</button>
 </div>
 {% endif %}
 
-<div id="importModal" class="modal">
+<div id="importModal" class="modal" style="display:none;">
     <div class="modal-content card">
         <h3>Воридоти омӯзгорон аз Excel</h3>
         <form action="{% url 'import_teachers' school.id %}" method="post" enctype="multipart/form-data">
@@ -29,7 +29,7 @@
     </div>
 </div>
 
-<div id="addTeacherModal" class="modal">
+<div id="addTeacherModal" class="modal" style="display:none;">
     <div class="modal-content card">
         <h3>Илова кардани омӯзгор</h3>
         <form action="{% url 'add_teacher' school.id %}" method="post">
@@ -54,7 +54,7 @@
     </div>
 </div>
 
-<div id="editTeacherModal" class="modal">
+<div id="editTeacherModal" class="modal" style="display:none;">
     <div class="modal-content card">
         <h3>Таҳрири омӯзгор</h3>
         <form action="{% url 'edit_teacher' school.id %}" method="post">
@@ -88,7 +88,15 @@
 <script>
 function openImportModal() { document.getElementById('importModal').style.display = 'flex'; }
 function closeImportModal() { document.getElementById('importModal').style.display = 'none'; }
-function openAddTeacherModal() { document.getElementById('addTeacherModal').style.display = 'flex'; document.getElementById('full_name').focus(); }
+function toggleAddTeacherModal() {
+    var m = document.getElementById('addTeacherModal');
+    if (m.style.display === 'flex') {
+        m.style.display = 'none';
+    } else {
+        m.style.display = 'flex';
+        document.getElementById('full_name').focus();
+    }
+}
 function closeAddTeacherModal() { document.getElementById('addTeacherModal').style.display = 'none'; }
 function openEditTeacherModal(btn) {
     document.getElementById('edit-teacher-id').value = btn.dataset.id;

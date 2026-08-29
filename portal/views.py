@@ -481,7 +481,7 @@ def school_list(request):
 
 @login_required
 def school_add(request):
-    if get_user_role(request.user) != settings.ROLE_DIRECTOR:
+    if not request.user.is_superuser:
         return redirect('school_list')
     if request.method == 'POST':
         form = SchoolForm(request.POST)

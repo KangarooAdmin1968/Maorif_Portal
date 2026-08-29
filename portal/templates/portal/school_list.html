@@ -2,7 +2,7 @@
 {% block title %}Муассисаҳо{% endblock %}
 {% block content %}
 <h1>Рӯйхати муассисаҳо</h1>
-{% if role == 'director' %}
+{% if user.is_superuser %}
 <a href="{% url 'school_add' %}" class="btn btn-primary">+ Иловаи муассиса</a>
 {% endif %}
 <table class="data-table">

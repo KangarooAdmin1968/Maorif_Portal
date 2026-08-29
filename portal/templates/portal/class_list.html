@@ -1,8 +1,11 @@
 {% extends 'portal/base.html' %}
+{% load portal_extras %}
+{% can_manage_school school as can_manage %}
 {% block title %}Синфҳо — {{ school.name }}{% endblock %}
 {% block content %}
 <h1>{{ school.name }} — Синфҳо</h1>
 
+{% if can_manage %}
 <div class="toolbar">
     <a href="{% url 'download_template_school' school.id %}" class="btn btn-secondary">📥 Боргирии шаблон</a>
     <form action="{% url 'import_excel' school.id %}" method="post" enctype="multipart/form-data" class="inline-form">
@@ -11,10 +14,11 @@
         <button type="submit" class="btn btn-secondary">📤 Воридоти Excel</button>
     </form>
 </div>
+{% endif %}
 
 <table class="data-table">
     <thead>
-        <tr><th>№</th><th>Синф</th><th>Ўрин</th><th>Холи миёна</th><th>Амал</th></tr>
+        <tr><th>№</th><th>Синф</th><th>Ҷой</th><th>Холи миёна</th><th>Амал</th></tr>
     </thead>
     <tbody>
         {% for c in class_stats %}

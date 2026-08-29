@@ -93,7 +93,10 @@ def get_user_school(user):
     try:
         return user.userprofile.school
     except UserProfile.DoesNotExist:
-        return None
+        try:
+            return user.teacherprofile.school
+        except TeacherProfile.DoesNotExist:
+            return None
 
 
 def get_user_role(user):

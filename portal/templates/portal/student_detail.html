@@ -184,7 +184,7 @@
     </div>
     <div class="badge-card overall-gpa">
         <div class="badge-icon">📊</div>
-        <div class="badge-title">Холи миёнаи умумӣ</div>
+        <div class="badge-title">{% if non_graded %}Системаи баҳодиҳӣ{% else %}Холи миёнаи умумӣ{% endif %}</div>
         {% if non_graded %}
             <div class="badge-value">Ғайрибаҳо</div>
         {% else %}

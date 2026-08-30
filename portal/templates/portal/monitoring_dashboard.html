@@ -140,7 +140,7 @@ document.getElementById('btn-copy-whatsapp').addEventListener('click', async fun
         const isActive = statusText.indexOf('Фаъол') !== -1 && classCount > 0 && studentCount > 0;
         if (isActive) {
             const praise = praises[idx % praises.length];
-            leaders.push((idx + 1) + '. ' + school + ' — воридшавӣ: ' + loginDate + ' — ' + praise);
+            leaders.push((idx + 1) + '. ' + school + ' — вақти охирини воридшавӣ ба сомона: ' + loginDate + ' — ' + praise);
         } else {
             laggards.push((idx + 1) + '. ' + school + ' — ' + username + ' — Фаъолият 0%! Суст!');
         }

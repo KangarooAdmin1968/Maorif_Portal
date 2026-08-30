@@ -544,10 +544,15 @@ def class_list(request, school_id=None):
         gpa = round(total / count, 2) if count else 0.0
         graded_stats.append({'class_name': cname, 'school_rank': None, 'gpa': gpa})
 
-    # Assign school rank by GPA (descending)
+    # Assign school rank by GPA (descending) using dense ranking
     graded_stats.sort(key=lambda x: x['gpa'], reverse=True)
-    for idx, s in enumerate(graded_stats, 1):
-        s['school_rank'] = idx
+    rank = 0
+    prev_gpa = None
+    for s in graded_stats:
+        if s['gpa'] != prev_gpa:
+            rank += 1
+            prev_gpa = s['gpa']
+        s['school_rank'] = rank
 
     # Combine in original class_name order
     rank_map = {s['class_name']: s['school_rank'] for s in graded_stats}

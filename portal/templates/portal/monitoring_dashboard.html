@@ -5,6 +5,9 @@
 
 <div class="toolbar" style="margin-bottom: 1rem;">
     <a href="{% url 'export_monitoring_excel' %}" class="btn">📥 Боргирии гузориш (Excel)</a>
+    {% if user.is_superuser %}
+    <button id="btn-copy-whatsapp" class="btn btn-info"><i class="fab fa-whatsapp"></i> Нусхабардории гузориш барои Ватсап</button>
+    {% endif %}
 </div>
 
 <section class="card">
@@ -23,7 +26,7 @@
             </thead>
             <tbody>
                 {% for row in stats %}
-                <tr>
+                <tr class="{% if not row.logged_in or row.class_count == 0 or row.student_count == 0 %}table-danger{% else %}table-success{% endif %}">
                     <td>{{ forloop.counter }}</td>
                     <td>{{ row.school.name }}</td>
                     <td>{{ row.zavuch_username }}</td>
@@ -100,6 +103,12 @@
     margin-top: 0.25rem;
     font-size: 0.8rem;
 }
+.table-danger {
+    background-color: #f8d7da !important;
+}
+.table-success {
+    background-color: #d1fae5 !important;
+}
 @media (max-width: 768px) {
     .monitoring-table {
         font-size: 0.85rem;
@@ -110,4 +119,54 @@
     }
 }
 </style>
+
+{% if user.is_superuser %}
+<script>
+document.getElementById('btn-copy-whatsapp').addEventListener('click', async function() {
+    const rows = document.querySelectorAll('.monitoring-table tbody tr');
+    const leaders = [];
+    const laggards = [];
+    const praises = ['АҲСАН!', 'БАЛЛИ!', 'ТАШАККУР!'];
+    rows.forEach(function(row, idx) {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 7) return;
+        const school = cells[1].textContent.trim();
+        const username = cells[2].textContent.trim();
+        const statusText = cells[3].textContent.trim();
+        const classCount = parseInt(cells[4].textContent.trim()) || 0;
+        const studentCount = parseInt(cells[6].textContent.trim()) || 0;
+        const loginDateEl = cells[3].querySelector('.login-date');
+        const loginDate = loginDateEl ? loginDateEl.textContent.trim() : '—';
+        const isActive = statusText.indexOf('Фаъол') !== -1 && classCount > 0 && studentCount > 0;
+        if (isActive) {
+            const praise = praises[idx % praises.length];
+            leaders.push((idx + 1) + '. ' + school + ' — воридшавӣ: ' + loginDate + ' — ' + praise);
+        } else {
+            laggards.push((idx + 1) + '. ' + school + ' — ' + username + ' — Фаъолият 0%! Суст!');
+        }
+    });
+    const today = new Date().toLocaleDateString('ru-RU');
+    let text = '📊 РЕЙТИНГИ РӮЗОНАИ ВОРИДСОЗИИ МАЪЛУМОТ БА ПОРТАЛ (Сана: ' + today + ')\n\n';
+    text += '🏆 МАКТАБҲОИ ПЕШҚАДАМ (КОРИ ФАЪОЛ ВА ИҶРОШУДА - ЯШИЛ):\n';
+    if (leaders.length) {
+        text += leaders.join('\n') + '\n\n';
+    } else {
+        text += 'Мактабҳои пешқадам мавҷуд нест.\n\n';
+    }
+    text += '⚠️ МАКТАБҲОЕ, КИ КОРРО ҲАТТО САР НАКАРДААНД (СУСТ ВА ФАЪОЛ НАШУДААСТ - ҚИЗИЛ):\n';
+    if (laggards.length) {
+        text += laggards.join('\n') + '\n\n';
+    } else {
+        text += 'Мактабҳои ақибмонда мавҷуд нест.\n\n';
+    }
+    text += 'Эслатма: Мувофиқи супориши Мудири маорифи ноҳия, муҳлати охирин то 5-уми сентябр муайян карда шудааст. Лутфан, корро тезтар кунед!';
+    try {
+        await navigator.clipboard.writeText(text);
+        alert('Гузориш бо муваффақият барои Ватсап нусхабардорӣ шуд!');
+    } catch (err) {
+        alert('Нусхабардории гузориш номуввафақ шуд: ' + err);
+    }
+});
+</script>
+{% endif %}
 {% endblock %}

@@ -1836,7 +1836,12 @@ def _school_sort_key(school):
 
 def _get_monitoring_stats():
     """Return the same statistics list used by the dashboard and the Excel export."""
-    schools = sorted(School.objects.all(), key=_school_sort_key)
+    schools = sorted(
+        School.objects.exclude(
+            Q(name__icontains='Кӯдакистон') | Q(type__icontains='Кӯдакистон')
+        ),
+        key=_school_sort_key
+    )
     stats = []
     for school in schools:
         school_num = get_school_number(school)

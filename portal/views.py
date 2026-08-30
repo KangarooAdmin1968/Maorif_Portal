@@ -412,7 +412,7 @@ def dashboard(request):
         key=lambda x: x['school_name']
     )
 
-    total_schools = School.objects.count()
+    total_schools = School.objects.exclude(name__icontains='Кӯдакистон').exclude(name__icontains='Идораи маориф').count()
     total_students = Student.objects.count()
     total_teachers = Teacher.objects.count()
     try:

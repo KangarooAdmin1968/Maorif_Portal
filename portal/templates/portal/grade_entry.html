@@ -18,10 +18,14 @@
 .quarter-wrapper { overflow-x: auto; }
 .q-input, .att-input { width: 70px; padding: 0.35rem; border: 1px solid #d1d5db; border-radius: 0.25rem; text-align: center; }
 #daily-date { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; }
+.offline-banner { background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 0.75rem 1rem; border-radius: 0.5rem; margin: 1rem 0; display: none; }
+.sync-toast { background: #f0fdf4; border: 1px solid #22c55e; color: #166534; padding: 0.75rem 1rem; border-radius: 0.5rem; margin: 1rem 0; display: none; }
 </style>
 
-<form method="post" action="{% url 'grade_entry' school.id class_name subject %}">
+<form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
 {% csrf_token %}
+<div id="offline-banner" class="offline-banner">⚠️ Алоқа бо сомона канда шуд. Маълумот дар хотираи телефон ҳифз шуд ва ба таври автоматикӣ ҳангоми пайдо шудани интернет сабт мешавад.</div>
+<div id="sync-toast" class="sync-toast">✅ Маълумоти ҳифзшуда ба таври автоматикӣ бо сомона ҳамоҳанг ва сабт карда шуд!</div>
 <div class="tabs">
   <button type="button" class="tab-btn active" onclick="openTab('daily', this)">Холҳои ҳаррӯза</button>
   <button type="button" class="tab-btn" onclick="openTab('quarterly', this)">Ҷадвали чорякҳо</button>
@@ -183,7 +187,17 @@ function getCsrfToken() {
 }
 const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
+const schoolId = "{{ school.id }}";
+const className = "{{ class_name|escapejs }}";
+const subjectName = "{{ subject|escapejs }}";
+function getStorageKey() {
+    return `maorif_grade_${schoolId}_${className}_${subjectName}_${document.getElementById('daily-date').value}`;
+}
+let state = {draft: {}, pending: []};
+function loadState() { try { state = JSON.parse(localStorage.getItem(getStorageKey()) || '{"draft":{},"pending":[]}'); } catch(e) { state = {draft: {}, pending: []}; } }
+function saveState() { localStorage.setItem(getStorageKey(), JSON.stringify(state)); }
 function showStatus(el, text) {
+  if (!el) return;
   el.textContent = text;
   el.classList.add('show');
   setTimeout(() => { el.textContent = ''; el.classList.remove('show'); }, 1500);
@@ -194,6 +208,64 @@ function toCleanInt(raw) {
   const n = Number(v);
   if (!Number.isInteger(n)) return null;
   return String(n);
+}
+function collectDraft() {
+    const draft = {};
+    document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => { if (!el.disabled && el.name) draft[el.name] = el.value; });
+    return draft;
+}
+function backupDrafts() { state.draft = collectDraft(); saveState(); }
+function restoreDrafts() {
+    loadState();
+    Object.entries(state.draft).forEach(([name, value]) => {
+        const el = document.querySelector('[name="' + name + '"]');
+        if (el && !el.disabled) { el.value = value; el.dataset.origValue = value; }
+    });
+    if (navigator.onLine) { syncPending(); }
+    else if (state.pending.length) { showOfflineBanner(); }
+}
+function pushPending(item) {
+    state.pending = state.pending.filter(p => p.name !== item.name);
+    state.pending.push(item);
+    saveState();
+}
+function removePending(name) {
+    state.pending = state.pending.filter(p => p.name !== name);
+    saveState();
+}
+function showOfflineBanner() { const b = document.getElementById('offline-banner'); if (b) b.style.display = 'block'; }
+function hideOfflineBanner() { const b = document.getElementById('offline-banner'); if (b) b.style.display = 'none'; }
+function showSyncToast() { const t = document.getElementById('sync-toast'); if (t) { t.style.display = 'block'; setTimeout(() => { t.style.display = 'none'; }, 4000); } }
+async function syncPending() {
+    if (!state.pending.length) return;
+    hideOfflineBanner();
+    for (const item of state.pending) {
+        const data = new URLSearchParams(item.params);
+        try {
+            const r = await fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data});
+            if (!r.ok) throw new Error('network');
+            const resp = await r.json();
+            if (!resp.success) throw new Error(resp.message || 'error');
+            const el = document.querySelector('[name="' + item.name + '"]');
+            if (el) {
+                el.value = item.value;
+                el.dataset.origValue = item.value;
+                const status = document.getElementById('daily-status-' + el.dataset.rowId);
+                if (status) showStatus(status, '✔ Сабт шуд!');
+                const rowId = el.dataset.rowId;
+                if (resp.semi_annual_1 !== undefined && document.getElementById('sa1-' + rowId)) {
+                    document.getElementById('sa1-' + rowId).textContent = resp.semi_annual_1 ?? '-';
+                    document.getElementById('sa2-' + rowId).textContent = resp.semi_annual_2 ?? '-';
+                    document.getElementById('annual-' + rowId).textContent = resp.annual ?? '-';
+                    document.getElementById('final-' + rowId).textContent = resp.final ?? '-';
+                }
+            }
+            removePending(item.name);
+        } catch (err) { console.error(err); break; }
+    }
+    if (!state.pending.length) { hideOfflineBanner(); showSyncToast(); }
+    else { showOfflineBanner(); }
+    saveState();
 }
 function saveDaily(input) {
   const field = input.dataset.field || 'score';
@@ -206,50 +278,43 @@ function saveDaily(input) {
   }
   if (value === input.dataset.origValue) return;
   const status = document.getElementById('daily-status-' + input.dataset.rowId);
-  const data = new URLSearchParams();
-  data.append('student_id', input.dataset.studentId);
-  data.append('subject', input.dataset.subject);
-  data.append('date', document.getElementById('daily-date').value);
-  data.append(field, value);
-  data.append('type', 'daily');
-  fetch(saveUrl, {
-    method: 'POST',
-    headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
-    body: data
-  })
+  const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: document.getElementById('daily-date').value, type: 'daily'};
+  params[field] = value;
+  pushPending({name: input.name, value: value, rowId: input.dataset.rowId, params: params});
+  backupDrafts();
+  if (!navigator.onLine) { showOfflineBanner(); return; }
+  const data = new URLSearchParams(params);
+  fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
   .then(r => r.json())
   .then(resp => {
     if (resp.success) {
       input.value = value;
       input.dataset.origValue = value;
+      removePending(input.name);
       showStatus(status, '✔ Сабт шуд!');
     } else {
       showStatus(status, resp.message || 'Хатo');
     }
   })
-  .catch(() => showStatus(status, 'Хатo'));
+  .catch(() => { showStatus(status, 'Хатo'); showOfflineBanner(); });
 }
 function saveQuarter(input) {
   const scoreVal = toCleanInt(input.value);
   if (scoreVal === null) return;
   if (scoreVal === input.dataset.origValue) return;
   const rowId = input.dataset.rowId;
-  const data = new URLSearchParams();
-  data.append('student_id', input.dataset.studentId);
-  data.append('subject', input.dataset.subject);
-  data.append('quarter', input.dataset.quarter);
-  data.append('score', scoreVal);
-  data.append('type', 'quarterly');
-  fetch(saveUrl, {
-    method: 'POST',
-    headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
-    body: data
-  })
+  const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, quarter: input.dataset.quarter, score: scoreVal, type: 'quarterly'};
+  pushPending({name: input.name, value: scoreVal, rowId: rowId, params: params});
+  backupDrafts();
+  if (!navigator.onLine) { showOfflineBanner(); return; }
+  const data = new URLSearchParams(params);
+  fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
   .then(r => r.json())
   .then(resp => {
     if (!resp.success) return;
     input.value = scoreVal;
     input.dataset.origValue = scoreVal;
+    removePending(input.name);
     if (document.getElementById('sa1-' + rowId)) {
       document.getElementById('sa1-' + rowId).textContent = resp.semi_annual_1 ?? '-';
       document.getElementById('sa2-' + rowId).textContent = resp.semi_annual_2 ?? '-';
@@ -257,7 +322,21 @@ function saveQuarter(input) {
       document.getElementById('final-' + rowId).textContent = resp.final ?? '-';
     }
   })
-  .catch(() => {});
+  .catch(() => { showOfflineBanner(); });
+}
+function saveAll() {
+  document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
+    if (el.disabled || el.value === el.dataset.origValue) return;
+    if (el.classList.contains('q-input') || el.classList.contains('att-input')) saveQuarter(el);
+    else saveDaily(el);
+  });
+}
+function handleFormSubmit(e) {
+  if (!navigator.onLine) {
+    e.preventDefault();
+    saveAll();
+    showOfflineBanner();
+  }
 }
 function moveFocus(input, direction) {
   const inputs = Array.from(document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input')).filter(el => !el.disabled);
@@ -283,12 +362,18 @@ document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, 
   el.addEventListener('keydown', onGradeKeydown);
 });
 document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => {
+  el.addEventListener('input', backupDrafts);
   el.addEventListener('change', () => saveDaily(el));
   el.addEventListener('blur', () => saveDaily(el));
 });
 document.querySelectorAll('.q-input, .att-input').forEach(el => {
+  el.addEventListener('input', backupDrafts);
   el.addEventListener('change', () => saveQuarter(el));
   el.addEventListener('blur', () => saveQuarter(el));
 });
+document.getElementById('grade-form').addEventListener('submit', handleFormSubmit);
+restoreDrafts();
+backupDrafts();
+window.addEventListener('online', syncPending);
 </script>
 {% endblock %}

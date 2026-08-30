@@ -16,7 +16,12 @@
 .sticker-option { font-size: 1.2rem; }
 .sticker-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; font-size: 0.95rem; }
 .sticker-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.offline-banner { background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 0.75rem 1rem; border-radius: 0.5rem; margin: 1rem 0; display: none; }
+.sync-toast { background: #f0fdf4; border: 1px solid #22c55e; color: #166534; padding: 0.75rem 1rem; border-radius: 0.5rem; margin: 1rem 0; display: none; }
 </style>
+
+<div id="offline-banner" class="offline-banner">⚠️ Алоқа бо сомона канда шуд. Маълумот дар хотираи телефон ҳифз шуд ва ба таври автоматикӣ ҳангоми пайдо шудани интернет сабт мешавад.</div>
+<div id="sync-toast" class="sync-toast">✅ Маълумоти ҳифзшуда ба таври автоматикӣ бо сомона ҳамоҳанг ва сабт карда шуд!</div>
 
 <div class="toolbar" style="margin-bottom:1rem;">
     <label for="daily-date">Сана:</label>
@@ -90,11 +95,70 @@ function getCsrfToken() {
 }
 const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
+const schoolId = "{{ school.id }}";
+const className = "{{ class_name|escapejs }}";
+const subjectName = "{{ subject|escapejs }}";
+function getStorageKey() {
+    return `maorif_sticker_${schoolId}_${className}_${subjectName}_${document.getElementById('daily-date').value}`;
+}
+let state = {draft: {}, pending: []};
+function loadState() { try { state = JSON.parse(localStorage.getItem(getStorageKey()) || '{"draft":{},"pending":[]}'); } catch(e) { state = {draft: {}, pending: []}; } }
+function saveState() { localStorage.setItem(getStorageKey(), JSON.stringify(state)); }
 function showStatus(el, text) {
     if (!el) return;
     el.textContent = text;
     el.classList.add('show');
     setTimeout(() => { el.textContent = ''; el.classList.remove('show'); }, 1500);
+}
+function collectDraft() {
+    const draft = {};
+    document.querySelectorAll('.daily-input').forEach(el => { if (!el.disabled && el.name) draft[el.name] = el.value; });
+    return draft;
+}
+function backupDrafts() { state.draft = collectDraft(); saveState(); }
+function restoreDrafts() {
+    loadState();
+    Object.entries(state.draft).forEach(([name, value]) => {
+        const el = document.querySelector('[name="' + name + '"]');
+        if (el && !el.disabled) { el.value = value; el.dataset.origValue = value; }
+    });
+    if (navigator.onLine) { syncPending(); }
+    else if (state.pending.length) { showOfflineBanner(); }
+}
+function pushPending(item) {
+    state.pending = state.pending.filter(p => p.name !== item.name);
+    state.pending.push(item);
+    saveState();
+}
+function removePending(name) {
+    state.pending = state.pending.filter(p => p.name !== name);
+    saveState();
+}
+function showOfflineBanner() { const b = document.getElementById('offline-banner'); if (b) b.style.display = 'block'; }
+function hideOfflineBanner() { const b = document.getElementById('offline-banner'); if (b) b.style.display = 'none'; }
+function showSyncToast() { const t = document.getElementById('sync-toast'); if (t) { t.style.display = 'block'; setTimeout(() => { t.style.display = 'none'; }, 4000); } }
+async function syncPending() {
+    if (!state.pending.length) return;
+    hideOfflineBanner();
+    for (const item of state.pending) {
+        const data = new URLSearchParams(item.params);
+        try {
+            const r = await fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data});
+            if (!r.ok) throw new Error('network');
+            const resp = await r.json();
+            if (!resp.success) throw new Error(resp.message || 'error');
+            const el = document.querySelector('[name="' + item.name + '"]');
+            if (el) {
+                el.dataset.origValue = item.value;
+                const status = document.getElementById('daily-status-' + el.dataset.rowId);
+                if (status) showStatus(status, '✔ Сабт шуд!');
+            }
+            removePending(item.name);
+        } catch (err) { console.error(err); break; }
+    }
+    if (!state.pending.length) { hideOfflineBanner(); showSyncToast(); }
+    else { showOfflineBanner(); }
+    saveState();
 }
 function saveInput(input) {
     const field = input.dataset.field;
@@ -104,23 +168,13 @@ function saveInput(input) {
     }
     if (value === input.dataset.origValue) return;
     const status = document.getElementById('daily-status-' + input.dataset.rowId);
-    const data = new URLSearchParams();
-    data.append('student_id', input.dataset.studentId);
-    data.append('subject', input.dataset.subject);
-    data.append('date', document.getElementById('daily-date').value);
-    data.append('type', 'daily');
-    if (field === 'attendance') {
-        data.append('attendance', value);
-    } else if (field === 'behavior_score') {
-        data.append('behavior_score', value);
-    } else if (field === 'sticker') {
-        data.append('sticker', value);
-    }
-    fetch(saveUrl, {
-        method: 'POST',
-        headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'},
-        body: data
-    })
+    const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: document.getElementById('daily-date').value, type: 'daily'};
+    params[field] = value;
+    pushPending({name: input.name, value: value, rowId: input.dataset.rowId, params: params});
+    backupDrafts();
+    if (!navigator.onLine) { showOfflineBanner(); return; }
+    const data = new URLSearchParams(params);
+    fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
     .then(r => {
         if (!r.ok) return r.text().then(t => { throw new Error(t || 'Хатo'); });
         return r.json();
@@ -128,13 +182,15 @@ function saveInput(input) {
     .then(resp => {
         if (resp.success) {
             input.dataset.origValue = value;
+            removePending(input.name);
             showStatus(status, '✔ Сабт шуд!');
         } else {
             showStatus(status, resp.message || 'Хатo');
         }
     })
-    .catch(e => showStatus(status, 'Хатo: ' + e.message));
+    .catch(e => { showStatus(status, 'Хатo: ' + e.message); showOfflineBanner(); });
 }
+function saveAll() { document.querySelectorAll('.daily-input').forEach(el => { if (!el.disabled && el.value !== el.dataset.origValue) saveInput(el); }); }
 function moveFocus(input, direction) {
     const inputs = Array.from(document.querySelectorAll('.daily-input')).filter(el => !el.disabled);
     const idx = inputs.indexOf(input);
@@ -149,8 +205,12 @@ function onKeydown(e) {
 document.querySelectorAll('.daily-input').forEach(el => {
     el.addEventListener('focus', () => { el.dataset.origValue = el.value; });
     el.addEventListener('keydown', onKeydown);
+    el.addEventListener('input', backupDrafts);
     el.addEventListener('change', () => saveInput(el));
     el.addEventListener('blur', () => saveInput(el));
 });
+restoreDrafts();
+backupDrafts();
+window.addEventListener('online', syncPending);
 </script>
 {% endblock %}

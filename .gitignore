@@ -10,3 +10,7 @@ __pycache__/
 # Microsoft Word lock files
 ~$*.docx
 *.tmp
+
+# SQLite databases
+db.sqlite3
+*.sqlite3

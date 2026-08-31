@@ -516,8 +516,14 @@ def class_list(request, school_id=None):
         school = get_object_or_404(School, id=school_id)
     else:
         school = user_school
-    if request.user.is_authenticated and not has_school_access(request.user, school):
-        return redirect('dashboard')
+    if request.user.is_authenticated:
+        if role == settings.ROLE_TEACHER and school != user_school:
+            messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
+            if user_school:
+                return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+            return redirect('dashboard')
+        if not has_school_access(request.user, school):
+            return redirect('dashboard')
 
     classes = Student.objects.filter(school=school).values('class_name').distinct().order_by('class_name')
     graded_stats = []
@@ -573,9 +579,25 @@ def class_list(request, school_id=None):
 
 def class_detail(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if request.user.is_authenticated and not has_school_access(request.user, school):
-        return redirect('dashboard')
     class_name = normalize_class_name(class_name)
+    if request.user.is_authenticated:
+        user_school = get_user_school(request.user)
+        role = get_user_role(request.user)
+        if role == settings.ROLE_TEACHER:
+            if school != user_school:
+                messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
+                if user_school:
+                    return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+                return redirect('dashboard')
+            if not ClassSubject.objects.filter(
+                school=school, class_name=class_name, is_active=True
+            ).filter(
+                Q(teacher=request.user) | Q(allocated_teacher__user=request.user)
+            ).exists():
+                messages.warning(request, 'Ин синф ё фан ба шумо вобаста карда нашудааст!')
+                return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+        if not has_school_access(request.user, school):
+            return redirect('dashboard')
     ensure_class_subjects(school, class_name)
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
     subjects = ClassSubject.objects.filter(
@@ -595,10 +617,16 @@ def class_detail(request, school_id, class_name):
 def sticker_entry(request, school_id, class_name):
     """Interactive sticker, attendance and behavior journal for non-graded classes."""
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    class_name = normalize_class_name(class_name)
+    user_school = get_user_school(request.user)
+    role = get_user_role(request.user)
+    if role == settings.ROLE_TEACHER:
+        if school != user_school:
+            messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+    elif not has_school_access(request.user, school):
         return redirect('dashboard')
 
-    class_name = normalize_class_name(class_name)
     if not is_non_graded(class_name):
         return redirect('class_detail', school_id=school.id, class_name=class_name)
 
@@ -612,6 +640,9 @@ def sticker_entry(request, school_id, class_name):
     )
 
     if not can_view_grade_journal(request.user, school, class_name, subject):
+        if role == settings.ROLE_TEACHER:
+            messages.warning(request, 'Ин синф ё фан ба шумо вобаста карда нашудааст!')
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
         return HttpResponse('Дастрасӣ манъ аст.', status=403)
 
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
@@ -749,13 +780,20 @@ def edit_student(request, school_id, class_name):
 @login_required
 def grade_entry(request, school_id, class_name, subject):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
-        return redirect('dashboard')
-
     class_name = normalize_class_name(class_name)
     subject = normalize_subject(subject)
-
-    if not can_view_grade_journal(request.user, school, class_name, subject):
+    user_school = get_user_school(request.user)
+    role = get_user_role(request.user)
+    if role == settings.ROLE_TEACHER:
+        if school != user_school:
+            messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+        if not can_view_grade_journal(request.user, school, class_name, subject):
+            messages.warning(request, 'Ин синф ё фан ба шумо вобаста карда нашудааст!')
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+    elif not has_school_access(request.user, school):
+        return redirect('dashboard')
+    elif not can_view_grade_journal(request.user, school, class_name, subject):
         return HttpResponse('Дастрасӣ манъ аст.', status=403)
 
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
@@ -1872,7 +1910,14 @@ def monitoring_dashboard(request):
     is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
     if not (request.user.is_superuser or request.user.is_staff or is_zavuch):
         return redirect('dashboard')
-    return render(request, 'portal/monitoring_dashboard.html', {'stats': _get_monitoring_stats()})
+    stats = _get_monitoring_stats()
+    stats = [
+        s for s in stats
+        if s['school'].type != 'Идораи маориф'
+        and 'идораи маориф' not in (s['school'].name or '').lower()
+        and s['zavuch_username'] != 'zavuch_0'
+    ]
+    return render(request, 'portal/monitoring_dashboard.html', {'stats': stats})
 
 
 @login_required

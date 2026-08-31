@@ -108,6 +108,14 @@ def get_user_role(user):
         return settings.ROLE_TEACHER
 
 
+def _is_zavuch(user, role=None):
+    if not user or user.is_anonymous:
+        return False
+    if role is None:
+        role = get_user_role(user)
+    return (role and role.lower() == 'zavuch') or user.username.lower().startswith('zavuch_')
+
+
 def has_school_access(user, school):
     if user.is_superuser:
         return True
@@ -517,7 +525,8 @@ def class_list(request, school_id=None):
     else:
         school = user_school
     if request.user.is_authenticated:
-        if role == settings.ROLE_TEACHER and school != user_school:
+        is_zavuch = _is_zavuch(request.user, role)
+        if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER and school != user_school:
             messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
             if user_school:
                 return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
@@ -583,7 +592,8 @@ def class_detail(request, school_id, class_name):
     if request.user.is_authenticated:
         user_school = get_user_school(request.user)
         role = get_user_role(request.user)
-        if role == settings.ROLE_TEACHER:
+        is_zavuch = _is_zavuch(request.user, role)
+        if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER:
             if school != user_school:
                 messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
                 if user_school:
@@ -620,7 +630,8 @@ def sticker_entry(request, school_id, class_name):
     class_name = normalize_class_name(class_name)
     user_school = get_user_school(request.user)
     role = get_user_role(request.user)
-    if role == settings.ROLE_TEACHER:
+    is_zavuch = _is_zavuch(request.user, role)
+    if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER:
         if school != user_school:
             messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
             return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
@@ -640,7 +651,7 @@ def sticker_entry(request, school_id, class_name):
     )
 
     if not can_view_grade_journal(request.user, school, class_name, subject):
-        if role == settings.ROLE_TEACHER:
+        if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER:
             messages.warning(request, 'Ин синф ё фан ба шумо вобаста карда нашудааст!')
             return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
         return HttpResponse('Дастрасӣ манъ аст.', status=403)
@@ -784,7 +795,8 @@ def grade_entry(request, school_id, class_name, subject):
     subject = normalize_subject(subject)
     user_school = get_user_school(request.user)
     role = get_user_role(request.user)
-    if role == settings.ROLE_TEACHER:
+    is_zavuch = _is_zavuch(request.user, role)
+    if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER:
         if school != user_school:
             messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
             return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')

@@ -58,7 +58,7 @@
     box-sizing: border-box;
     display: flex;
 }
-@media (max-width: 900px) {
+@media (max-width: 767px) {
     .col-md-6 {
         flex: 0 0 100%;
         max-width: 100%;
@@ -85,10 +85,96 @@
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 0.75rem;
+    flex-wrap: wrap;
 }
 .filter-bar select {
     width: auto;
     min-width: 220px;
+}
+
+/* Mobile dashboard */
+.desktop-dashboard { display: block; }
+.mobile-dashboard { display: none; }
+.mobile-tabs {
+    display: flex;
+    gap: 0.35rem;
+    margin: 0 0 1rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+}
+.mobile-tab {
+    flex: 1 1 0;
+    min-width: 80px;
+    padding: 0.65rem 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #4b5563;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    white-space: nowrap;
+    text-align: center;
+    -webkit-tap-highlight-color: transparent;
+}
+.mobile-tab.active {
+    background: #fff;
+    color: #003366;
+    border-color: #003366;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
+.mobile-pane { display: none; }
+.mobile-pane.active { display: block; }
+.mobile-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+.mobile-card {
+    background: #fff;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 1px solid #e5e7eb;
+}
+.mobile-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid #f3f4f6;
+}
+.mobile-card-title {
+    flex: 1;
+    font-weight: 700;
+    color: #003366;
+    font-size: 1rem;
+    line-height: 1.3;
+}
+.rank-badge {
+    font-size: 1.1rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.mobile-card-body { display: grid; gap: 0.35rem; }
+.mobile-card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.92rem;
+    padding: 0.15rem 0;
+}
+.mobile-card-row span { color: #6b7280; }
+.mobile-card-row strong { color: #111827; font-weight: 600; }
+.mobile-empty { text-align: center; color: #6b7280; padding: 2rem 1rem; }
+@media (min-width: 768px) {
+    .mobile-dashboard { display: none !important; }
+}
+@media (max-width: 767px) {
+    .desktop-dashboard { display: none !important; }
+    .mobile-dashboard { display: block; }
+    .table-scroll { max-height: none; }
 }
 </style>
 
@@ -117,134 +203,264 @@
     </div>
 </section>
 
-<div class="row">
-    <div class="col-md-6">
+<div class="desktop-dashboard">
+    <div class="row">
+        <div class="col-md-6">
+            <section class="card">
+                <h2>🏆 Рейтинги муассисаҳо</h2>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Ҷой</th><th>Муассиса</th><th>Холи миёна</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for item in school_ranking %}
+                            <tr>
+                                <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
+                                <td><a href="{% url 'class_list' school_id=item.school.id %}" class="dashboard-link">{{ item.school.name }}</a></td>
+                                <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <div class="col-md-6">
+            <section class="card honor-roll-card">
+                <h2>Ифтихори маориф</h2>
+                <div class="filter-bar">
+                    <label for="honor-roll-school-filter">Муассиса:</label>
+                    <select id="honor-roll-school-filter" class="form-select" style="width:auto; min-width:220px;">
+                        <option value="0">Ҳама муассисаҳо</option>
+                        {% for s in schools_dropdown %}
+                        <option value="{{ s.id }}">{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table honor-roll-table">
+                        <thead>
+                            <tr>
+                                <th>№</th>
+                                <th>Хонанда</th>
+                                <th>Муассиса</th>
+                                <th>Синф</th>
+                                <th>Ҷойи мактабӣ</th>
+                                <th>Ҷойи ноҳиявӣ</th>
+                                <th>Холи миёна</th>
+                            </tr>
+                        </thead>
+                        <tbody id="honor-roll-body">
+                            {% for item in top_students %}
+                            <tr>
+                                <td>{{ forloop.counter }}</td>
+                                <td><a href="{% url 'student_detail' student_id=item.student_id %}" class="dashboard-link">{{ item.full_name }}</a></td>
+                                <td><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></td>
+                                <td>{{ item.class_name }}</td>
+                                <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
+                                <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
+                                <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="7">Маълумот мавҷуд нест</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6">
+            <section class="card">
+                <h2>🏆 Рейтинги синфҳо</h2>
+                <div class="filter-bar">
+                    <label for="school-filter">Муассиса:</label>
+                    <select id="school-filter" class="form-select" style="width:auto; min-width:220px;">
+                        <option value="0" {% if selected_school == "0" %}selected{% endif %}>Ҳама муассисаҳо</option>
+                        {% for s in schools_dropdown %}
+                        <option value="{{ s.id }}" {% if selected_school == s.id|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>№</th><th>Муассиса</th><th>Синф</th><th>Ҷойи ноҳиявӣ</th><th>Ҷойи муассисавӣ</th><th>Холи миёна</th></tr>
+                        </thead>
+                        <tbody id="class-ranking-body">
+                            {% for item in class_ranking %}
+                            <tr>
+                                <td>{{ forloop.counter }}</td>
+                                <td><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></td>
+                                <td><a href="{% url 'class_detail' school_id=item.school_id class_name=item.class_name %}" class="dashboard-link">{{ item.class_name }}</a></td>
+                                <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
+                                <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
+                                <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="6">Маълумот мавҷуд нест</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <div class="col-md-6">
+            <section class="card">
+                <h2>📊 Рейтинги фанҳо</h2>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Ҷой</th><th>Фан</th><th>Холи миёна</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for item in subject_ranking %}
+                            <tr>
+                                <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
+                                <td>{{ item.subject }}</td>
+                                <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </div>
+</div>
+
+<div class="mobile-dashboard">
+    <div class="mobile-tabs" role="tablist">
+        <button class="mobile-tab active" data-target="schools" type="button">Муассисаҳо</button>
+        <button class="mobile-tab" data-target="honor" type="button">Ифтихори маориф</button>
+        <button class="mobile-tab" data-target="classes" type="button">Синфҳо</button>
+        <button class="mobile-tab" data-target="subjects" type="button">Фанҳо</button>
+    </div>
+
+    <div id="mobile-pane-schools" class="mobile-pane active">
         <section class="card">
             <h2>🏆 Рейтинги муассисаҳо</h2>
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead>
-                        <tr><th>Ҷой</th><th>Муассиса</th><th>Холи миёна</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for item in school_ranking %}
-                        <tr>
-                            <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
-                            <td><a href="{% url 'class_list' school_id=item.school.id %}" class="dashboard-link">{{ item.school.name }}</a></td>
-                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div class="mobile-cards">
+                {% for item in school_ranking %}
+                <div class="mobile-card">
+                    <div class="mobile-card-header">
+                        <div class="rank-badge">
+                            {% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}№ {{ item.rank }}{% endif %}
+                        </div>
+                        <div class="mobile-card-title"><a href="{% url 'class_list' school_id=item.school.id %}" class="dashboard-link">{{ item.school.name }}</a></div>
+                    </div>
+                    <div class="mobile-card-body">
+                        <div class="mobile-card-row"><span>Ҷой:</span> <strong>{{ item.rank }}</strong></div>
+                        <div class="mobile-card-row"><span>Холи миёна:</span> <strong>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</strong></div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="mobile-empty">Маълумот мавҷуд нест</div>
+                {% endfor %}
             </div>
         </section>
     </div>
 
-    <div class="col-md-6">
-        <section class="card honor-roll-card">
+    <div id="mobile-pane-honor" class="mobile-pane">
+        <section class="card">
             <h2>Ифтихори маориф</h2>
             <div class="filter-bar">
-                <label for="honor-roll-school-filter">Муассиса:</label>
-                <select id="honor-roll-school-filter" class="form-select" style="width:auto; min-width:220px;">
+                <label for="honor-roll-school-filter-mobile">Муассиса:</label>
+                <select id="honor-roll-school-filter-mobile" class="form-select" style="width:auto; min-width:220px;">
                     <option value="0">Ҳама муассисаҳо</option>
                     {% for s in schools_dropdown %}
                     <option value="{{ s.id }}">{{ s.name }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="table-scroll">
-                <table class="data-table honor-roll-table">
-                    <thead>
-                        <tr>
-                            <th>№</th>
-                            <th>Хонанда</th>
-                            <th>Муассиса</th>
-                            <th>Синф</th>
-                            <th>Ҷойи мактабӣ</th>
-                            <th>Ҷойи ноҳиявӣ</th>
-                            <th>Холи миёна</th>
-                        </tr>
-                    </thead>
-                    <tbody id="honor-roll-body">
-                        {% for item in top_students %}
-                        <tr>
-                            <td>{{ forloop.counter }}</td>
-                            <td><a href="{% url 'student_detail' student_id=item.student_id %}" class="dashboard-link">{{ item.full_name }}</a></td>
-                            <td><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></td>
-                            <td>{{ item.class_name }}</td>
-                            <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
-                            <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
-                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="7">Маълумот мавҷуд нест</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div id="honor-roll-mobile-body" class="mobile-cards">
+                {% for item in top_students %}
+                <div class="mobile-card">
+                    <div class="mobile-card-header">
+                        <div class="rank-badge">
+                            {% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}№ {{ item.district_rank }}{% endif %}
+                        </div>
+                        <div class="mobile-card-title"><a href="{% url 'student_detail' student_id=item.student_id %}" class="dashboard-link">{{ item.full_name }}</a></div>
+                    </div>
+                    <div class="mobile-card-body">
+                        <div class="mobile-card-row"><span>Муассиса:</span> <strong><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></strong></div>
+                        <div class="mobile-card-row"><span>Синф:</span> <strong>{{ item.class_name }}</strong></div>
+                        <div class="mobile-card-row"><span>Ҷойи мактабӣ:</span> <strong>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</strong></div>
+                        <div class="mobile-card-row"><span>Ҷойи ноҳиявӣ:</span> <strong>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</strong></div>
+                        <div class="mobile-card-row"><span>Холи миёна:</span> <strong>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</strong></div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="mobile-empty">Маълумот мавҷуд нест</div>
+                {% endfor %}
             </div>
         </section>
     </div>
-</div>
 
-<div class="row">
-    <div class="col-md-6">
+    <div id="mobile-pane-classes" class="mobile-pane">
         <section class="card">
             <h2>🏆 Рейтинги синфҳо</h2>
             <div class="filter-bar">
-                <label for="school-filter">Муассиса:</label>
-                <select id="school-filter" class="form-select" style="width:auto; min-width:220px;">
+                <label for="school-filter-mobile">Муассиса:</label>
+                <select id="school-filter-mobile" class="form-select" style="width:auto; min-width:220px;">
                     <option value="0" {% if selected_school == "0" %}selected{% endif %}>Ҳама муассисаҳо</option>
                     {% for s in schools_dropdown %}
                     <option value="{{ s.id }}" {% if selected_school == s.id|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead>
-                        <tr><th>№</th><th>Муассиса</th><th>Синф</th><th>Ҷойи ноҳиявӣ</th><th>Ҷойи муассисавӣ</th><th>Холи миёна</th></tr>
-                    </thead>
-                    <tbody id="class-ranking-body">
-                        {% for item in class_ranking %}
-                        <tr>
-                            <td>{{ forloop.counter }}</td>
-                            <td><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></td>
-                            <td><a href="{% url 'class_detail' school_id=item.school_id class_name=item.class_name %}" class="dashboard-link">{{ item.class_name }}</a></td>
-                            <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
-                            <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
-                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="6">Маълумот мавҷуд нест</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div id="class-ranking-mobile-body" class="mobile-cards">
+                {% for item in class_ranking %}
+                <div class="mobile-card">
+                    <div class="mobile-card-header">
+                        <div class="rank-badge">
+                            {% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}№ {{ item.district_rank }}{% endif %}
+                        </div>
+                        <div class="mobile-card-title"><a href="{% url 'class_detail' school_id=item.school_id class_name=item.class_name %}" class="dashboard-link">{{ item.class_name }}</a></div>
+                    </div>
+                    <div class="mobile-card-body">
+                        <div class="mobile-card-row"><span>Муассиса:</span> <strong><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></strong></div>
+                        <div class="mobile-card-row"><span>Ҷойи ноҳиявӣ:</span> <strong>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</strong></div>
+                        <div class="mobile-card-row"><span>Ҷойи муассисавӣ:</span> <strong>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</strong></div>
+                        <div class="mobile-card-row"><span>Холи миёна:</span> <strong>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</strong></div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="mobile-empty">Маълумот мавҷуд нест</div>
+                {% endfor %}
             </div>
         </section>
     </div>
 
-    <div class="col-md-6">
+    <div id="mobile-pane-subjects" class="mobile-pane">
         <section class="card">
             <h2>📊 Рейтинги фанҳо</h2>
-            <div class="table-scroll">
-                <table class="data-table">
-                    <thead>
-                        <tr><th>Ҷой</th><th>Фан</th><th>Холи миёна</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for item in subject_ranking %}
-                        <tr>
-                            <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
-                            <td>{{ item.subject }}</td>
-                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div class="mobile-cards">
+                {% for item in subject_ranking %}
+                <div class="mobile-card">
+                    <div class="mobile-card-header">
+                        <div class="rank-badge">
+                            {% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}№ {{ item.rank }}{% endif %}
+                        </div>
+                        <div class="mobile-card-title">{{ item.subject }}</div>
+                    </div>
+                    <div class="mobile-card-body">
+                        <div class="mobile-card-row"><span>Ҷой:</span> <strong>{{ item.rank }}</strong></div>
+                        <div class="mobile-card-row"><span>Холи миёна:</span> <strong>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</strong></div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="mobile-empty">Маълумот мавҷуд нест</div>
+                {% endfor %}
             </div>
         </section>
     </div>
@@ -301,19 +517,36 @@
             .catch(function(err) { onError(err); });
     }
 
+    function bindTabs() {
+        const tabs = document.querySelectorAll('.mobile-tab');
+        const panes = document.querySelectorAll('.mobile-pane');
+        if (!tabs.length || !panes.length) return;
+        tabs.forEach(function(tab) {
+            tab.addEventListener('click', function() {
+                const target = tab.getAttribute('data-target');
+                tabs.forEach(function(t) { t.classList.toggle('active', t === tab); });
+                panes.forEach(function(p) { p.classList.toggle('active', p.id === 'mobile-pane-' + target); });
+            });
+        });
+    }
+
     function bindHonorRoll() {
-        const select = document.getElementById('honor-roll-school-filter');
+        const desktopSelect = document.getElementById('honor-roll-school-filter');
+        const mobileSelect = document.getElementById('honor-roll-school-filter-mobile');
         const tbody = document.getElementById('honor-roll-body');
-        if (!select || !tbody) return;
+        const mobileBody = document.getElementById('honor-roll-mobile-body');
+        if ((!desktopSelect && !mobileSelect) || !tbody || !mobileBody) return;
 
         function renderRows(items) {
             if (!items || !items.length) {
                 tbody.innerHTML = '<tr><td colspan="7">Маълумот мавҷуд нест</td></tr>';
+                mobileBody.innerHTML = '<div class="mobile-empty">Маълумот мавҷуд нест</div>';
                 return;
             }
-            let html = '';
+            let desktopHtml = '';
+            let mobileHtml = '';
             items.forEach(function(item, index) {
-                html += '<tr>' +
+                desktopHtml += '<tr>' +
                     '<td>' + (index + 1) + '</td>' +
                     '<td><a href="/student/' + encodeURIComponent(item.student_id) + '/" class="dashboard-link">' + escapeHtml(item.full_name) + '</a></td>' +
                     '<td><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></td>' +
@@ -322,32 +555,57 @@
                     '<td>' + formatRank(item.district_rank) + '</td>' +
                     '<td>' + formatGpa(item.gpa) + '</td>' +
                 '</tr>';
+
+                mobileHtml += '<div class="mobile-card">' +
+                    '<div class="mobile-card-header">' +
+                        '<div class="rank-badge">' + formatRank(item.district_rank) + '</div>' +
+                        '<div class="mobile-card-title"><a href="/student/' + encodeURIComponent(item.student_id) + '/" class="dashboard-link">' + escapeHtml(item.full_name) + '</a></div>' +
+                    '</div>' +
+                    '<div class="mobile-card-body">' +
+                        '<div class="mobile-card-row"><span>Муассиса:</span> <strong><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></strong></div>' +
+                        '<div class="mobile-card-row"><span>Синф:</span> <strong>' + escapeHtml(item.class_name) + '</strong></div>' +
+                        '<div class="mobile-card-row"><span>Ҷойи мактабӣ:</span> <strong>' + formatRank(item.school_rank) + '</strong></div>' +
+                        '<div class="mobile-card-row"><span>Ҷойи ноҳиявӣ:</span> <strong>' + formatRank(item.district_rank) + '</strong></div>' +
+                        '<div class="mobile-card-row"><span>Холи миёна:</span> <strong>' + formatGpa(item.gpa) + '</strong></div>' +
+                    '</div>' +
+                '</div>';
             });
-            tbody.innerHTML = html;
+            tbody.innerHTML = desktopHtml;
+            mobileBody.innerHTML = mobileHtml;
         }
 
-        select.addEventListener('change', function() {
+        function onChange(select) {
+            if (desktopSelect && select !== desktopSelect) desktopSelect.value = select.value;
+            if (mobileSelect && select !== mobileSelect) mobileSelect.value = select.value;
             const url = '/top-students/?school=' + encodeURIComponent(select.value);
             fetchJson(url, renderRows, function(err) {
                 console.error('Honor roll filter error:', err);
                 tbody.innerHTML = '<tr><td colspan="7">Хатогӣ рӯй дод</td></tr>';
+                mobileBody.innerHTML = '<div class="mobile-empty">Хатогӣ рӯй дод</div>';
             });
-        });
+        }
+
+        if (desktopSelect) desktopSelect.addEventListener('change', function() { onChange(desktopSelect); });
+        if (mobileSelect) mobileSelect.addEventListener('change', function() { onChange(mobileSelect); });
     }
 
     function bindClassRankings() {
-        const select = document.getElementById('school-filter');
+        const desktopSelect = document.getElementById('school-filter');
+        const mobileSelect = document.getElementById('school-filter-mobile');
         const tbody = document.getElementById('class-ranking-body');
-        if (!select || !tbody) return;
+        const mobileBody = document.getElementById('class-ranking-mobile-body');
+        if ((!desktopSelect && !mobileSelect) || !tbody || !mobileBody) return;
 
         function renderRows(items) {
             if (!items || !items.length) {
                 tbody.innerHTML = '<tr><td colspan="6">Маълумот мавҷуд нест</td></tr>';
+                mobileBody.innerHTML = '<div class="mobile-empty">Маълумот мавҷуд нест</div>';
                 return;
             }
-            let html = '';
+            let desktopHtml = '';
+            let mobileHtml = '';
             items.forEach(function(item, index) {
-                html += '<tr>' +
+                desktopHtml += '<tr>' +
                     '<td>' + (index + 1) + '</td>' +
                     '<td><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></td>' +
                     '<td><a href="/school/' + item.school_id + '/class/' + encodeURIComponent(item.class_name) + '/" class="dashboard-link">' + escapeHtml(item.class_name) + '</a></td>' +
@@ -355,19 +613,40 @@
                     '<td>' + formatRank(item.school_rank) + '</td>' +
                     '<td>' + formatGpa(item.gpa) + '</td>' +
                 '</tr>';
+
+                mobileHtml += '<div class="mobile-card">' +
+                    '<div class="mobile-card-header">' +
+                        '<div class="rank-badge">' + formatRank(item.district_rank) + '</div>' +
+                        '<div class="mobile-card-title"><a href="/school/' + item.school_id + '/class/' + encodeURIComponent(item.class_name) + '/" class="dashboard-link">' + escapeHtml(item.class_name) + '</a></div>' +
+                    '</div>' +
+                    '<div class="mobile-card-body">' +
+                        '<div class="mobile-card-row"><span>Муассиса:</span> <strong><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></strong></div>' +
+                        '<div class="mobile-card-row"><span>Ҷойи ноҳиявӣ:</span> <strong>' + formatRank(item.district_rank) + '</strong></div>' +
+                        '<div class="mobile-card-row"><span>Ҷойи муассисавӣ:</span> <strong>' + formatRank(item.school_rank) + '</strong></div>' +
+                        '<div class="mobile-card-row"><span>Холи миёна:</span> <strong>' + formatGpa(item.gpa) + '</strong></div>' +
+                    '</div>' +
+                '</div>';
             });
-            tbody.innerHTML = html;
+            tbody.innerHTML = desktopHtml;
+            mobileBody.innerHTML = mobileHtml;
         }
 
-        select.addEventListener('change', function() {
+        function onChange(select) {
+            if (desktopSelect && select !== desktopSelect) desktopSelect.value = select.value;
+            if (mobileSelect && select !== mobileSelect) mobileSelect.value = select.value;
             const url = '/class-rankings/?school=' + encodeURIComponent(select.value);
             fetchJson(url, renderRows, function(err) {
                 console.error('Class ranking filter error:', err);
                 tbody.innerHTML = '<tr><td colspan="6">Хатогӣ рӯй дод</td></tr>';
+                mobileBody.innerHTML = '<div class="mobile-empty">Хатогӣ рӯй дод</div>';
             });
-        });
+        }
+
+        if (desktopSelect) desktopSelect.addEventListener('change', function() { onChange(desktopSelect); });
+        if (mobileSelect) mobileSelect.addEventListener('change', function() { onChange(mobileSelect); });
     }
 
+    bindTabs();
     bindHonorRoll();
     bindClassRankings();
 })();

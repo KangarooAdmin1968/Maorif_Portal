@@ -497,9 +497,7 @@ def dashboard(request):
         except (ValueError, TypeError):
             class_ranking = []
 
-    top_students = calculate_top_students(
-        selected_school if selected_school != '0' else None
-    )
+    top_students = calculate_top_students()
 
     # Grade 1 (non-graded) classes grouped by school for the homepage widget
     grade1_map = {}
@@ -542,6 +540,15 @@ def dashboard(request):
         'selected_school': selected_school,
     }
     return render(request, 'portal/dashboard.html', context)
+
+
+def top_students_ajax(request):
+    """Return top students for the honor roll, optionally filtered by school."""
+    school = request.GET.get('school')
+    if school:
+        school = school.strip() or None
+    data = calculate_top_students(school)
+    return JsonResponse(data, safe=False)
 
 
 def login_view(request):

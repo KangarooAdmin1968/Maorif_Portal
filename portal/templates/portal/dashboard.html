@@ -129,9 +129,9 @@
                     <tbody>
                         {% for item in school_ranking %}
                         <tr>
-                            <td>{{ item.rank }}</td>
+                            <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
                             <td><a href="{% url 'class_list' school_id=item.school.id %}" class="dashboard-link">{{ item.school.name }}</a></td>
-                            <td>{{ item.gpa }}</td>
+                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
@@ -174,9 +174,9 @@
                             <td><a href="{% url 'student_detail' student_id=item.student_id %}" class="dashboard-link">{{ item.full_name }}</a></td>
                             <td><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></td>
                             <td>{{ item.class_name }}</td>
-                            <td>{{ item.school_rank }}</td>
-                            <td>{{ item.district_rank }}</td>
-                            <td>{{ item.gpa }}</td>
+                            <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
+                            <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
+                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="7">Маълумот мавҷуд нест</td></tr>
@@ -212,9 +212,9 @@
                             <td>{{ forloop.counter }}</td>
                             <td><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></td>
                             <td><a href="{% url 'class_detail' school_id=item.school_id class_name=item.class_name %}" class="dashboard-link">{{ item.class_name }}</a></td>
-                            <td>{{ item.district_rank }}</td>
-                            <td>{{ item.school_rank }}</td>
-                            <td>{{ item.gpa }}</td>
+                            <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
+                            <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
+                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="6">Маълумот мавҷуд нест</td></tr>
@@ -236,9 +236,9 @@
                     <tbody>
                         {% for item in subject_ranking %}
                         <tr>
-                            <td>{{ item.rank }}</td>
+                            <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
                             <td>{{ item.subject }}</td>
-                            <td>{{ item.gpa }}</td>
+                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
@@ -276,6 +276,17 @@
         return div.innerHTML;
     }
 
+    function formatRank(rank) {
+        if (rank === 1) return '🥇 1';
+        if (rank === 2) return '🥈 2';
+        if (rank === 3) return '🥉 3';
+        return String(rank);
+    }
+
+    function formatGpa(gpa) {
+        return gpa === 0 ? '—' : String(gpa);
+    }
+
     function fetchJson(url, onSuccess, onError) {
         fetch(url)
             .then(function(response) {
@@ -303,9 +314,9 @@
                     '<td><a href="/student/' + encodeURIComponent(item.student_id) + '/" class="dashboard-link">' + escapeHtml(item.full_name) + '</a></td>' +
                     '<td><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></td>' +
                     '<td>' + escapeHtml(item.class_name) + '</td>' +
-                    '<td>' + item.school_rank + '</td>' +
-                    '<td>' + item.district_rank + '</td>' +
-                    '<td>' + item.gpa + '</td>' +
+                    '<td>' + formatRank(item.school_rank) + '</td>' +
+                    '<td>' + formatRank(item.district_rank) + '</td>' +
+                    '<td>' + formatGpa(item.gpa) + '</td>' +
                 '</tr>';
             });
             tbody.innerHTML = html;
@@ -336,9 +347,9 @@
                     '<td>' + (index + 1) + '</td>' +
                     '<td><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></td>' +
                     '<td><a href="/school/' + item.school_id + '/class/' + encodeURIComponent(item.class_name) + '/" class="dashboard-link">' + escapeHtml(item.class_name) + '</a></td>' +
-                    '<td>' + item.district_rank + '</td>' +
-                    '<td>' + item.school_rank + '</td>' +
-                    '<td>' + item.gpa + '</td>' +
+                    '<td>' + formatRank(item.district_rank) + '</td>' +
+                    '<td>' + formatRank(item.school_rank) + '</td>' +
+                    '<td>' + formatGpa(item.gpa) + '</td>' +
                 '</tr>';
             });
             tbody.innerHTML = html;

@@ -42,4 +42,5 @@ urlpatterns = [
     path('monitoring-dashboard/', views.monitoring_dashboard, name='monitoring_dashboard'),
     path('monitoring-dashboard/export/', views.export_monitoring_excel, name='export_monitoring_excel'),
     path('top-students/', views.top_students_ajax, name='top_students_ajax'),
+    path('class-rankings/', views.class_rankings_ajax, name='class_rankings_ajax'),
 ]

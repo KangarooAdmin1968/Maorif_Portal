@@ -80,13 +80,13 @@
     top: 0;
     z-index: 2;
 }
-.honor-roll-filter {
+.filter-bar {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 0.75rem;
 }
-.honor-roll-filter select {
+.filter-bar select {
     width: auto;
     min-width: 220px;
 }
@@ -145,7 +145,7 @@
     <div class="col-md-6">
         <section class="card honor-roll-card">
             <h2>Ифтихори маориф</h2>
-            <div class="honor-roll-filter">
+            <div class="filter-bar">
                 <label for="honor-roll-school-filter">Муассиса:</label>
                 <select id="honor-roll-school-filter" class="form-select" style="width:auto; min-width:220px;">
                     <option value="0">Ҳама муассисаҳо</option>
@@ -192,21 +192,21 @@
     <div class="col-md-6">
         <section class="card">
             <h2>🏆 Рейтинги синфҳо</h2>
-            <form method="get" class="toolbar" style="margin-bottom:1rem;">
+            <div class="filter-bar">
                 <label for="school-filter">Муассиса:</label>
-                <select id="school-filter" name="school" onchange="this.form.submit()">
+                <select id="school-filter" class="form-select" style="width:auto; min-width:220px;">
                     <option value="0" {% if selected_school == "0" %}selected{% endif %}>Ҳама муассисаҳо</option>
                     {% for s in schools_dropdown %}
                     <option value="{{ s.id }}" {% if selected_school == s.id|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>
                     {% endfor %}
                 </select>
-            </form>
+            </div>
             <div class="table-scroll">
                 <table class="data-table">
                     <thead>
                         <tr><th>№</th><th>Муассиса</th><th>Синф</th><th>Ҷойи ноҳиявӣ</th><th>Ҷойи муассисавӣ</th><th>Холи миёна</th></tr>
                     </thead>
-                    <tbody>
+                    <tbody id="class-ranking-body">
                         {% for item in class_ranking %}
                         <tr>
                             <td>{{ forloop.counter }}</td>
@@ -270,49 +270,91 @@
 
 <script>
 (function() {
-    const select = document.getElementById('honor-roll-school-filter');
-    const tbody = document.getElementById('honor-roll-body');
-    if (!select || !tbody) return;
-
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 
-    function renderRows(items) {
-        if (!items || !items.length) {
-            tbody.innerHTML = '<tr><td colspan="7">Маълумот мавҷуд нест</td></tr>';
-            return;
-        }
-        let html = '';
-        items.forEach(function(item, index) {
-            html += '<tr>' +
-                '<td>' + (index + 1) + '</td>' +
-                '<td><a href="/student/' + encodeURIComponent(item.student_id) + '/" class="dashboard-link">' + escapeHtml(item.full_name) + '</a></td>' +
-                '<td><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></td>' +
-                '<td>' + escapeHtml(item.class_name) + '</td>' +
-                '<td>' + item.school_rank + '</td>' +
-                '<td>' + item.district_rank + '</td>' +
-                '<td>' + item.gpa + '</td>' +
-            '</tr>';
-        });
-        tbody.innerHTML = html;
-    }
-
-    select.addEventListener('change', function() {
-        const url = '/top-students/?school=' + encodeURIComponent(select.value);
+    function fetchJson(url, onSuccess, onError) {
         fetch(url)
             .then(function(response) {
                 if (!response.ok) throw new Error('Network error');
                 return response.json();
             })
-            .then(function(data) { renderRows(data); })
-            .catch(function(err) {
+            .then(function(data) { onSuccess(data); })
+            .catch(function(err) { onError(err); });
+    }
+
+    function bindHonorRoll() {
+        const select = document.getElementById('honor-roll-school-filter');
+        const tbody = document.getElementById('honor-roll-body');
+        if (!select || !tbody) return;
+
+        function renderRows(items) {
+            if (!items || !items.length) {
+                tbody.innerHTML = '<tr><td colspan="7">Маълумот мавҷуд нест</td></tr>';
+                return;
+            }
+            let html = '';
+            items.forEach(function(item, index) {
+                html += '<tr>' +
+                    '<td>' + (index + 1) + '</td>' +
+                    '<td><a href="/student/' + encodeURIComponent(item.student_id) + '/" class="dashboard-link">' + escapeHtml(item.full_name) + '</a></td>' +
+                    '<td><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></td>' +
+                    '<td>' + escapeHtml(item.class_name) + '</td>' +
+                    '<td>' + item.school_rank + '</td>' +
+                    '<td>' + item.district_rank + '</td>' +
+                    '<td>' + item.gpa + '</td>' +
+                '</tr>';
+            });
+            tbody.innerHTML = html;
+        }
+
+        select.addEventListener('change', function() {
+            const url = '/top-students/?school=' + encodeURIComponent(select.value);
+            fetchJson(url, renderRows, function(err) {
                 console.error('Honor roll filter error:', err);
                 tbody.innerHTML = '<tr><td colspan="7">Хатогӣ рӯй дод</td></tr>';
             });
-    });
+        });
+    }
+
+    function bindClassRankings() {
+        const select = document.getElementById('school-filter');
+        const tbody = document.getElementById('class-ranking-body');
+        if (!select || !tbody) return;
+
+        function renderRows(items) {
+            if (!items || !items.length) {
+                tbody.innerHTML = '<tr><td colspan="6">Маълумот мавҷуд нест</td></tr>';
+                return;
+            }
+            let html = '';
+            items.forEach(function(item, index) {
+                html += '<tr>' +
+                    '<td>' + (index + 1) + '</td>' +
+                    '<td><a href="/school/' + item.school_id + '/classes/" class="dashboard-link">' + escapeHtml(item.school_name) + '</a></td>' +
+                    '<td><a href="/school/' + item.school_id + '/class/' + encodeURIComponent(item.class_name) + '/" class="dashboard-link">' + escapeHtml(item.class_name) + '</a></td>' +
+                    '<td>' + item.district_rank + '</td>' +
+                    '<td>' + item.school_rank + '</td>' +
+                    '<td>' + item.gpa + '</td>' +
+                '</tr>';
+            });
+            tbody.innerHTML = html;
+        }
+
+        select.addEventListener('change', function() {
+            const url = '/class-rankings/?school=' + encodeURIComponent(select.value);
+            fetchJson(url, renderRows, function(err) {
+                console.error('Class ranking filter error:', err);
+                tbody.innerHTML = '<tr><td colspan="6">Хатогӣ рӯй дод</td></tr>';
+            });
+        });
+    }
+
+    bindHonorRoll();
+    bindClassRankings();
 })();
 </script>
 {% endblock %}

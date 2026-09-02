@@ -542,12 +542,27 @@ def dashboard(request):
     return render(request, 'portal/dashboard.html', context)
 
 
+def _clean_school_param(school):
+    """Normalize the school filter query parameter; '0'/'all' means no filter."""
+    if not school:
+        return None
+    school = school.strip()
+    if school in ('0', 'all'):
+        return None
+    return school
+
+
 def top_students_ajax(request):
     """Return top students for the honor roll, optionally filtered by school."""
-    school = request.GET.get('school')
-    if school:
-        school = school.strip() or None
+    school = _clean_school_param(request.GET.get('school'))
     data = calculate_top_students(school)
+    return JsonResponse(data, safe=False)
+
+
+def class_rankings_ajax(request):
+    """Return class rankings, optionally filtered by school."""
+    school = _clean_school_param(request.GET.get('school'))
+    data = calculate_class_rankings(school)
     return JsonResponse(data, safe=False)
 
 

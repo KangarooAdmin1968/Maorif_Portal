@@ -43,6 +43,17 @@
 .dashboard-link:hover {
     text-decoration: underline;
 }
+.honor-roll-scroll {
+    max-height: 450px;
+    overflow-y: auto;
+    border-radius: 0.375rem;
+    border: 1px solid #e5e7eb;
+}
+.honor-roll-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
 </style>
 
 <div class="site-header">
@@ -146,6 +157,41 @@
         </section>
     </div>
 </div>
+
+<section class="card honor-roll-card" style="margin-top:1.5rem;">
+    <h2>Ифтихори маориф (Хонандагони пешқадам)</h2>
+    <p style="margin:0.5rem 0 1rem; color:#6b7280; font-size:0.9rem;">Танҳо 100 хонандагони беҳтарин (ва баробархолҳо) намоиш дода мешаванд.</p>
+    <div class="honor-roll-scroll">
+        <table class="data-table honor-roll-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Хонанда</th>
+                    <th>Муассиса</th>
+                    <th>Синф</th>
+                    <th>Ҷойи мактабӣ</th>
+                    <th>Ҷойи ноҳиявӣ</th>
+                    <th>Холи миёна</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in top_students %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td><a href="{% url 'student_detail' student_id=item.student_id %}" class="dashboard-link">{{ item.full_name }}</a></td>
+                    <td><a href="{% url 'class_list' school_id=item.school_id %}" class="dashboard-link">{{ item.school_name }}</a></td>
+                    <td>{{ item.class_name }}</td>
+                    <td>{{ item.school_rank }}</td>
+                    <td>{{ item.district_rank }}</td>
+                    <td>{{ item.gpa }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7">Маълумот мавҷуд нест</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
 
 <section class="card" style="margin-top:1.5rem;">
     <h2>🎒 Синфҳои 1-ум (ғайрибаҳодиҳӣ)</h2>

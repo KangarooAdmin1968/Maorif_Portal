@@ -8,6 +8,7 @@ import json
 import re
 import urllib.parse
 import datetime
+from collections import defaultdict
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Side
@@ -328,6 +329,98 @@ def calculate_class_rankings(school_filter=None):
     return data
 
 
+def calculate_top_students(school_filter=None, limit=100):
+    """Return top-performing graded students (2-11) with dense school/district ranks."""
+    academic_school_ids = {s.id for s in School.objects.all() if is_academic_school(s)}
+    totals = defaultdict(lambda: [0.0, 0])
+
+    non_graded_filter = (
+        ~Q(student__class_name__startswith='0-') &
+        ~Q(student__class_name__startswith='1-')
+    )
+    student_filter = Q(student__school_id__in=academic_school_ids) & non_graded_filter
+
+    grade_qs = Grade.objects.filter(
+        student_filter, score__isnull=False
+    ).values('student').annotate(total=Sum('score'), count=Count('score'))
+    for row in grade_qs:
+        sid = row['student']
+        totals[sid][0] += float(row['total'] or 0)
+        totals[sid][1] += int(row['count'])
+
+    quarter_qs = QuarterGrade.objects.filter(
+        student_filter, quarter__in=(1, 2, 3, 4), grade__isnull=False
+    ).values('student').annotate(total=Sum('grade'), count=Count('grade'))
+    for row in quarter_qs:
+        sid = row['student']
+        totals[sid][0] += float(row['total'] or 0)
+        totals[sid][1] += int(row['count'])
+
+    att_qs = QuarterGrade.objects.filter(
+        student_filter, quarter=0, att_grade__isnull=False
+    ).values('student').annotate(total=Sum('att_grade'), count=Count('att_grade'))
+    for row in att_qs:
+        sid = row['student']
+        totals[sid][0] += float(row['total'] or 0)
+        totals[sid][1] += int(row['count'])
+
+    student_map = {
+        s.id: s
+        for s in Student.objects.filter(id__in=list(totals.keys())).select_related('school')
+    }
+
+    data = []
+    for sid, (total, count) in totals.items():
+        student = student_map.get(sid)
+        if not student:
+            continue
+        if not is_academic_school(student.school):
+            continue
+        if is_non_graded(student.class_name):
+            continue
+        gpa = round(total / count, 2) if count else 0.0
+        data.append({
+            'student_id': sid,
+            'full_name': student.full_name,
+            'class_name': student.class_name,
+            'school_id': student.school.id,
+            'school_name': student.school.name,
+            'gpa': gpa,
+        })
+
+    data.sort(key=lambda x: x['gpa'], reverse=True)
+
+    rank = 0
+    prev_gpa = None
+    for item in data:
+        if item['gpa'] != prev_gpa:
+            rank += 1
+            prev_gpa = item['gpa']
+        item['district_rank'] = rank
+
+    school_state = {}
+    for item in data:
+        sid = item['school_id']
+        state = school_state.setdefault(sid, {'rank': 0, 'prev_gpa': None})
+        if item['gpa'] != state['prev_gpa']:
+            state['rank'] += 1
+            state['prev_gpa'] = item['gpa']
+        item['school_rank'] = state['rank']
+
+    if school_filter:
+        try:
+            sid = int(school_filter)
+            data = [item for item in data if item['school_id'] == sid]
+        except (ValueError, TypeError):
+            data = [item for item in data if school_filter.lower() in item['school_name'].lower()]
+
+    if len(data) > limit:
+        cutoff_gpa = data[limit - 1]['gpa']
+        data = [item for item in data if item['gpa'] >= cutoff_gpa]
+
+    return data
+
+
 def calculate_subject_rankings():
     """Return subject rankings including all default subjects with 0.0 GPA if no grades exist."""
     totals = {}
@@ -404,6 +497,10 @@ def dashboard(request):
         except (ValueError, TypeError):
             class_ranking = []
 
+    top_students = calculate_top_students(
+        selected_school if selected_school != '0' else None
+    )
+
     # Grade 1 (non-graded) classes grouped by school for the homepage widget
     grade1_map = {}
     for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
@@ -434,6 +531,7 @@ def dashboard(request):
         'schools_dropdown': schools_dropdown,
         'school_ranking': school_ranking,
         'class_ranking': class_ranking,
+        'top_students': top_students,
         'subject_ranking': subject_ranking,
         'grade1_schools': grade1_schools,
         'total_schools': total_schools,

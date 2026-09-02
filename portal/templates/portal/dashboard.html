@@ -131,7 +131,7 @@
                         <tr>
                             <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
                             <td><a href="{% url 'class_list' school_id=item.school.id %}" class="dashboard-link">{{ item.school.name }}</a></td>
-                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
@@ -176,7 +176,7 @@
                             <td>{{ item.class_name }}</td>
                             <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
                             <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
-                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="7">Маълумот мавҷуд нест</td></tr>
@@ -214,7 +214,7 @@
                             <td><a href="{% url 'class_detail' school_id=item.school_id class_name=item.class_name %}" class="dashboard-link">{{ item.class_name }}</a></td>
                             <td>{% if item.district_rank == 1 %}🥇 {{ item.district_rank }}{% elif item.district_rank == 2 %}🥈 {{ item.district_rank }}{% elif item.district_rank == 3 %}🥉 {{ item.district_rank }}{% else %}{{ item.district_rank }}{% endif %}</td>
                             <td>{% if item.school_rank == 1 %}🥇 {{ item.school_rank }}{% elif item.school_rank == 2 %}🥈 {{ item.school_rank }}{% elif item.school_rank == 3 %}🥉 {{ item.school_rank }}{% else %}{{ item.school_rank }}{% endif %}</td>
-                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="6">Маълумот мавҷуд нест</td></tr>
@@ -238,7 +238,7 @@
                         <tr>
                             <td>{% if item.rank == 1 %}🥇 {{ item.rank }}{% elif item.rank == 2 %}🥈 {{ item.rank }}{% elif item.rank == 3 %}🥉 {{ item.rank }}{% else %}{{ item.rank }}{% endif %}</td>
                             <td>{{ item.subject }}</td>
-                            <td>{% if item.gpa == 0 %}—{% else %}{{ item.gpa }}{% endif %}</td>
+                            <td>{% if item.gpa == 0 or item.gpa == '0,0' or item.gpa == '0.0' or item.gpa == '0' %}—{% else %}{{ item.gpa }}{% endif %}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="3">Маълумот мавҷуд нест</td></tr>
@@ -277,14 +277,18 @@
     }
 
     function formatRank(rank) {
-        if (rank === 1) return '🥇 1';
-        if (rank === 2) return '🥈 2';
-        if (rank === 3) return '🥉 3';
+        var r = Number(String(rank).replace(',', '.'));
+        if (Number.isNaN(r)) return String(rank);
+        if (r === 1) return '🥇 1';
+        if (r === 2) return '🥈 2';
+        if (r === 3) return '🥉 3';
         return String(rank);
     }
 
     function formatGpa(gpa) {
-        return gpa === 0 ? '—' : String(gpa);
+        if (gpa === null || gpa === undefined) return String(gpa);
+        var num = Number(String(gpa).replace(',', '.').trim());
+        return num === 0 ? '—' : String(gpa);
     }
 
     function fetchJson(url, onSuccess, onError) {

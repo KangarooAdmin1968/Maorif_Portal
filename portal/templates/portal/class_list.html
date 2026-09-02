@@ -26,7 +26,7 @@
             <td>{{ forloop.counter }}</td>
             <td>{{ c.class_name }}</td>
             <td>{% if c.school_rank == 1 %}🥇 {{ c.school_rank }}{% elif c.school_rank == 2 %}🥈 {{ c.school_rank }}{% elif c.school_rank == 3 %}🥉 {{ c.school_rank }}{% else %}{{ c.school_rank }}{% endif %}</td>
-            <td>{% if c.gpa == 0 %}—{% else %}{{ c.gpa }}{% endif %}</td>
+            <td>{% if c.gpa == 0 or c.gpa == '0,0' or c.gpa == '0.0' or c.gpa == '0' %}—{% else %}{{ c.gpa }}{% endif %}</td>
             <td>
                 <a href="{% url 'class_detail' school.id c.class_name %}" class="btn btn-sm">Холҳо</a>
             </td>

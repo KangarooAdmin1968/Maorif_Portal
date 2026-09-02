@@ -94,20 +94,23 @@
 
 /* Mobile dashboard */
 .desktop-dashboard { display: block; }
-.mobile-dashboard { display: none; }
+.mobile-dashboard { display: none; overflow: visible !important; }
 .mobile-tabs {
-    position: -webkit-sticky;
-    position: sticky;
+    position: -webkit-sticky !important;
+    position: sticky !important;
     top: 0;
-    z-index: 1030;
+    z-index: 1040 !important;
+    background-color: #f4f6f9 !important;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #dee2e6;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+}
+.mobile-tabs-track {
     display: flex;
     gap: 0.35rem;
-    margin: 0 0 1rem;
-    padding: 0.5rem 0;
     overflow-x: auto;
-    background-color: #f4f6f9;
-    border-bottom: 1px solid #e5e7eb;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+    padding-bottom: 0.25rem;
+    -webkit-overflow-scrolling: touch;
 }
 .mobile-tab {
     flex: 1 1 0;
@@ -347,10 +350,12 @@
 
 <div class="mobile-dashboard">
     <div class="mobile-tabs" role="tablist">
-        <button class="mobile-tab active" data-target="schools" type="button">Муассисаҳо</button>
-        <button class="mobile-tab" data-target="honor" type="button">Ифтихори маориф</button>
-        <button class="mobile-tab" data-target="classes" type="button">Синфҳо</button>
-        <button class="mobile-tab" data-target="subjects" type="button">Фанҳо</button>
+        <div class="mobile-tabs-track">
+            <button class="mobile-tab active" data-target="schools" type="button">Муассисаҳо</button>
+            <button class="mobile-tab" data-target="honor" type="button">Ифтихори маориф</button>
+            <button class="mobile-tab" data-target="classes" type="button">Синфҳо</button>
+            <button class="mobile-tab" data-target="subjects" type="button">Фанҳо</button>
+        </div>
     </div>
 
     <div id="mobile-pane-schools" class="mobile-pane active">

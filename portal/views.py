@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.db.models import Avg, Count, Sum, Q
 import io
 import json
@@ -1238,18 +1239,50 @@ def import_excel(request, class_name=None, school_id=None):
         return redirect('class_list', school_id=school.id)
 
     target_class = normalize_class_name(class_name) if class_name else None
-    df = pd.read_excel(request.FILES['excel'])
-    df.columns = [str(c).strip() for c in df.columns]
 
-    name_col = 'Ному насаб' if 'Ному насаб' in df.columns else None
-    class_col = 'Синф' if 'Синф' in df.columns else None
+    # Load the active sheet regardless of its name
+    try:
+        excel_file = request.FILES['excel']
+        excel_file.seek(0)
+        wb = load_workbook(excel_file, data_only=True)
+        ws = wb.active
+        raw_rows = list(ws.values)
+        if not raw_rows:
+            messages.error(request, 'Файли Excel холӣ аст.')
+            return redirect('class_list', school_id=school.id)
+        header = [str(c) for c in raw_rows[0]]
+        df = pd.DataFrame(raw_rows[1:], columns=header)
+    except Exception as e:
+        messages.error(request, f'Файли Excel хонда намешавад: {e}')
+        return redirect('class_list', school_id=school.id)
+
+    # Robust, case- and space-insensitive column resolution
+    def _norm_col(c):
+        return re.sub(r'\s+', '', str(c).strip()).lower()
+
+    norm_col_map = {_norm_col(c): c for c in df.columns}
+
+    NAME_SYNONYMS = ['номунасаб', 'ном', 'номихонанда', 'номванасаб', 'фио', 'fio', 'full_name', 'name']
+    CLASS_SYNONYMS = ['синф', 'синфи', 'класс', 'клас', 'class', 'classname', 'class_name']
+    name_col = None
+    for s in NAME_SYNONYMS:
+        if s in norm_col_map:
+            name_col = norm_col_map[s]
+            break
+    class_col = None
+    for s in CLASS_SYNONYMS:
+        if s in norm_col_map:
+            class_col = norm_col_map[s]
+            break
+
     if name_col is None:
         messages.error(request, 'Сутуни "Ному насаб" ёфт нашуд.')
         return redirect('class_list', school_id=school.id)
 
     fixed_cols = {name_col, class_col} if class_col else {name_col}
 
-    imported = 0
+    student_objs = []
+    grade_specs = []
     for _, row in df.iterrows():
         full_name = str(row.get(name_col, '')).strip()
         if not full_name or full_name.lower() in ('nan', 'none'):
@@ -1268,16 +1301,14 @@ def import_excel(request, class_name=None, school_id=None):
             c_name = target_class
 
         student_id = f"{school.name}__{c_name}__{full_name}"
-        student, _ = Student.objects.update_or_create(
-            id=student_id,
-            defaults={'full_name': full_name, 'class_name': c_name, 'school': school}
-        )
+        student = Student(id=student_id, full_name=full_name, class_name=c_name, school=school)
+        student_objs.append(student)
 
         for col in df.columns:
             if col in fixed_cols:
                 continue
-            low = col.lower()
-            if 'unnamed' in low or 'жами' in low or 'рейтинг' in low or '№' in col or col.strip() == '':
+            norm_col = _norm_col(col)
+            if 'unnamed' in norm_col or 'жами' in norm_col or 'рейтинг' in norm_col or '№' in col or col.strip() == '':
                 continue
             subj = normalize_subject(col)
             val = row.get(col)
@@ -1286,16 +1317,59 @@ def import_excel(request, class_name=None, school_id=None):
             try:
                 score = float(val)
                 if 1 <= score <= 10:
-                    Grade.objects.update_or_create(
-                        student=student,
-                        subject=subj,
-                        period='Холҳои ҷорӣ (Онлайн)',
-                        defaults={'score': score}
-                    )
-                    imported += 1
+                    grade_specs.append((student, subj, score))
             except (ValueError, TypeError):
                 continue
 
+    if not student_objs:
+        messages.error(request, 'Ягон хонанда барои воридот ёфт нашуд.')
+        return redirect('class_list', school_id=school.id)
+
+    period = 'Холҳои ҷорӣ (Онлайн)'
+    with transaction.atomic():
+        # Bulk upsert students
+        student_ids = {s.id for s in student_objs}
+        existing_ids = set(Student.objects.filter(id__in=student_ids).values_list('id', flat=True))
+
+        new_students = [s for s in student_objs if s.id not in existing_ids]
+        update_students = [s for s in student_objs if s.id in existing_ids]
+
+        if new_students:
+            Student.objects.bulk_create(new_students, batch_size=200)
+        if update_students:
+            Student.objects.bulk_update(update_students, fields=['full_name', 'class_name'], batch_size=200)
+
+        # Bulk upsert grades for imported score columns
+        if grade_specs:
+            subjects = list({subj for _, subj, _ in grade_specs})
+            existing_grades = {}
+            for g in Grade.objects.filter(
+                student_id__in=student_ids,
+                subject__in=subjects,
+                period=period
+            ).order_by('-date'):
+                key = (g.student_id, g.subject)
+                if key not in existing_grades:
+                    existing_grades[key] = g
+
+            new_grades = {}
+            updated_grades = {}
+            for student, subj, score in grade_specs:
+                key = (student.id, subj)
+                if key in existing_grades:
+                    g = existing_grades[key]
+                    if g.score != score:
+                        g.score = score
+                        updated_grades[key] = g
+                else:
+                    new_grades[key] = Grade(student=student, subject=subj, score=score, period=period)
+
+            if new_grades:
+                Grade.objects.bulk_create(list(new_grades.values()), batch_size=200)
+            if updated_grades:
+                Grade.objects.bulk_update(list(updated_grades.values()), fields=['score'], batch_size=200)
+
+    imported = len(grade_specs)
     messages.success(request, f'{imported} хол(ҳо) ворид карда шуд.')
     if target_class:
         return redirect('class_detail', school_id=school.id, class_name=target_class)

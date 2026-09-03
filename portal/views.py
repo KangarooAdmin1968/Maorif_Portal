@@ -1294,7 +1294,12 @@ def import_excel(request, class_name=None, school_id=None):
                 c_name = target_class
             if not c_name:
                 continue
-            c_name = normalize_class_name(c_name)
+            try:
+                c_name = normalize_class_name(c_name)
+            except Exception:
+                pass
+            if not c_name:
+                continue
         else:
             if not target_class:
                 continue
@@ -1320,6 +1325,11 @@ def import_excel(request, class_name=None, school_id=None):
                     grade_specs.append((student, subj, score))
             except (ValueError, TypeError):
                 continue
+
+    # Deduplicate by deterministic id, keeping the last occurrence
+    student_map = {s.id: s for s in student_objs}
+    student_objs = list(student_map.values())
+    grade_specs = [(student_map[s.id], subj, score) for s, subj, score in grade_specs]
 
     if not student_objs:
         messages.error(request, 'Ягон хонанда барои воридот ёфт нашуд.')

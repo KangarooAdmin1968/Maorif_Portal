@@ -123,7 +123,67 @@
 @media (max-width: 600px) {
     .profile-hero { text-align: center; justify-content: center; }
     .profile-gpa { margin-left: 0; width: 100%; }
+}
+
+.today-report {
+    background: #fff;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    margin-bottom: 1.5rem;
+}
+.today-report h2 {
+    margin-top: 0;
+    color: #003366;
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+}
+.report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+.report-item {
+    background: #f8fafc;
+    border-radius: 0.5rem;
+    padding: 1rem;
+}
+.report-item h3 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.behavior-status {
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    border-radius: 1rem;
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+.status-excellent { background: #dcfce7; color: #166534; }
+.status-concern { background: #ffedd5; color: #9a3412; }
+.infraction-list {
+    margin: 0.5rem 0 0;
+    padding-left: 0;
+    list-style: none;
+    font-size: 0.9rem;
+    color: #4b5563;
+}
+.infraction-list li {
+    margin-bottom: 0.25rem;
+}
+.trend-improved { color: #166534; background: #dcfce7; padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-weight: 700; display: inline-block; }
+.trend-declined { color: #9a3412; background: #ffedd5; padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-weight: 700; display: inline-block; }
+.trend-stable { color: #1e40af; background: #dbeafe; padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-weight: 700; display: inline-block; }
+
+@media (max-width: 600px) {
+    .profile-hero { text-align: center; justify-content: center; }
+    .profile-gpa { margin-left: 0; width: 100%; }
     .chart-wrapper { height: 300px; }
+    .report-grid { grid-template-columns: 1fr; }
 }
 </style>
 
@@ -141,6 +201,56 @@
         <div class="gpa-label">Холи миёна</div>
     </div>
     {% endif %}
+</section>
+
+<section class="today-report">
+    <h2>Ҳисоботи имрӯза ({{ today|date:"d.m.Y" }})</h2>
+    <div class="report-grid">
+        <div class="report-item">
+            <h3>📚 Баҳоҳои имрӯза</h3>
+            {% if today_grades %}
+                <ul class="infraction-list">
+                {% for g in today_grades %}
+                    <li>{{ g.subject }}: <strong>{{ g.score }}</strong></li>
+                {% endfor %}
+                </ul>
+            {% else %}
+                <p style="color:#6b7280; margin:0;">Имрӯз баҳо ворид карда нашудааст</p>
+            {% endif %}
+        </div>
+        <div class="report-item">
+            <h3>🗓️ Давомоти имрӯза</h3>
+            {% if today_excused or today_unexcused %}
+                <p style="margin:0;">Сабабнок: <strong>{{ today_excused }}</strong> соат</p>
+                <p style="margin:0;">Бесабаб: <strong>{{ today_unexcused }}</strong> соат</p>
+            {% else %}
+                <p style="color:#166534; margin:0; font-weight:700;">✅ Иштироки комил дар дарсҳо</p>
+            {% endif %}
+        </div>
+        <div class="report-item">
+            <h3>🧍 Рафтор ва динамикаи имрӯза</h3>
+            <p style="margin:0 0 0.5rem;">
+                <span class="behavior-status {% if today_total_infractions == 0 %}status-excellent{% else %}status-concern{% endif %}">
+                    {{ today_behavior_status }}
+                </span>
+            </p>
+            <p style="margin:0 0 0.5rem; font-size:0.95rem;">
+                Тартиббузарӣ: <strong>{{ today_total_infractions }}</strong> маротиба (дарсҳоро халалдор кард)
+            </p>
+            {% if today_behavior_breakdown %}
+                <ul class="infraction-list">
+                {% for subject, data in today_behavior_breakdown.items %}
+                    {% if data.infractions > 0 %}
+                    <li>📝 {{ subject }}: {{ data.infractions }} маротиба (баҳои рафтор: {{ data.score }})</li>
+                    {% endif %}
+                {% endfor %}
+                </ul>
+            {% endif %}
+            {% if behavior_trend %}
+                <p style="margin:0.75rem 0 0;" class="{{ behavior_trend_class }}">{{ behavior_trend }}</p>
+            {% endif %}
+        </div>
+    </div>
 </section>
 
 {% if not non_graded %}

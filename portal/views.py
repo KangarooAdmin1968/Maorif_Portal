@@ -1564,6 +1564,51 @@ def student_detail(request, student_id):
     else:
         recent_stickers = Grade.objects.filter(student=student, sticker__isnull=False).order_by('-date')[:15]
 
+    today = datetime.date.today()
+    today_grades = [
+        {'subject': g.subject, 'score': int(g.score) if g.score == int(g.score) else g.score}
+        for g in Grade.objects.filter(student=student, date=today, score__isnull=False)
+    ]
+
+    today_attendance = Grade.objects.filter(student=student, date=today, attendance__in=['+', '-'])
+    today_excused = today_attendance.filter(attendance='+').count()
+    today_unexcused = today_attendance.filter(attendance='-').count()
+
+    today_behavior_qs = Grade.objects.filter(student=student, date=today, behavior_score__isnull=False)
+    today_behavior_breakdown = {}
+    today_total_infractions = 0
+    for g in today_behavior_qs:
+        infractions = 5 - g.behavior_score
+        today_behavior_breakdown[g.subject] = {'score': g.behavior_score, 'infractions': infractions}
+        today_total_infractions += infractions
+    today_behavior_status = 'Намунавӣ' if today_total_infractions == 0 else 'Нигаронкунанда'
+
+    today_avg_qs = today_behavior_qs.aggregate(avg=Avg('behavior_score'))
+    today_avg = today_avg_qs['avg'] if today_avg_qs['avg'] is not None else None
+
+    previous_day = Grade.objects.filter(
+        student=student, behavior_score__isnull=False, date__lt=today
+    ).order_by('-date').values_list('date', flat=True).first()
+    yesterday_avg = None
+    if previous_day:
+        yesterday_avg_qs = Grade.objects.filter(
+            student=student, date=previous_day, behavior_score__isnull=False
+        ).aggregate(avg=Avg('behavior_score'))
+        yesterday_avg = yesterday_avg_qs['avg'] if yesterday_avg_qs['avg'] is not None else None
+
+    behavior_trend = None
+    behavior_trend_class = ''
+    if today_avg is not None and yesterday_avg is not None:
+        if today_avg == 5 and yesterday_avg == 5:
+            behavior_trend = '⭐ Рафтори намунавӣ ва устувор!'
+            behavior_trend_class = 'trend-stable'
+        elif today_avg > yesterday_avg:
+            behavior_trend = '📈 Рафтор беҳтар шуд! Баракалла, ҳамин тавр давом диҳед!'
+            behavior_trend_class = 'trend-improved'
+        elif today_avg < yesterday_avg:
+            behavior_trend = '📉 Рафтор паст шуд. Лутфан, бештар диққат диҳед!'
+            behavior_trend_class = 'trend-declined'
+
     context = {
         'student': student,
         'gpa': student_gpa,
@@ -1575,6 +1620,15 @@ def student_detail(request, student_id):
         'scores': scores,
         'recent_stickers': recent_stickers,
         'sticker_labels': {'⭐': 'Ситора', '☀️': 'Офтобак', '🌸': 'Гул', '📖': 'Китоб'},
+        'today': today,
+        'today_grades': today_grades,
+        'today_excused': today_excused,
+        'today_unexcused': today_unexcused,
+        'today_behavior_breakdown': today_behavior_breakdown,
+        'today_total_infractions': today_total_infractions,
+        'today_behavior_status': today_behavior_status,
+        'behavior_trend': behavior_trend,
+        'behavior_trend_class': behavior_trend_class,
     }
     return render(request, 'portal/student_detail.html', context)
 

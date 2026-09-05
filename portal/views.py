@@ -88,6 +88,39 @@ def is_quarter_locked(school, class_name, subject, quarter):
     ).exists()
 
 
+def get_or_create_unique(model, defaults=None, **lookup):
+    """get_or_create that tolerates duplicate rows left by concurrent writes."""
+    qs = model.objects.filter(**lookup).order_by('pk')
+    rows = list(qs)
+    if rows:
+        return rows[0], False
+    params = dict(lookup)
+    params.update(defaults or {})
+    return model.objects.create(**params), True
+
+
+def get_or_create_grade(defaults=None, **lookup):
+    """Fetch-or-create a daily Grade row; merges and removes duplicate rows."""
+    qs = Grade.objects.filter(**lookup).order_by('pk')
+    rows = list(qs)
+    if rows:
+        grade = rows[0]
+        if len(rows) > 1:
+            changed = False
+            for extra in rows[1:]:
+                for field in ('score', 'attendance', 'behavior_score', 'sticker'):
+                    if getattr(grade, field) in (None, '') and getattr(extra, field) not in (None, ''):
+                        setattr(grade, field, getattr(extra, field))
+                        changed = True
+            Grade.objects.filter(pk__in=[r.pk for r in rows[1:]]).delete()
+            if changed:
+                grade.save()
+        return grade, False
+    params = dict(lookup)
+    params.update(defaults or {})
+    return Grade.objects.create(**params), True
+
+
 def get_user_school(user):
     if not user or user.is_anonymous:
         return None
@@ -763,7 +796,8 @@ def sticker_entry(request, school_id, class_name):
 
     subject = normalize_subject('Стикерҳо')
     # Ensure a ClassSubject record exists for permission control
-    ClassSubject.objects.get_or_create(
+    get_or_create_unique(
+        ClassSubject,
         school=school,
         class_name=class_name,
         subject=subject,
@@ -946,7 +980,7 @@ def grade_entry(request, school_id, class_name, subject):
         for student in students:
             # daily grade fallback (skip if quarter is locked)
             if not daily_locked:
-                grade, _ = Grade.objects.get_or_create(
+                grade, _ = get_or_create_grade(
                     student=student,
                     subject=subject,
                     period='Холҳои ҷорӣ (Онлайн)',
@@ -1139,7 +1173,8 @@ def add_remove_subject(request, school_id, class_name):
         subject = request.POST.get('subject', '').strip()
         subject = normalize_subject(subject)
         if action == 'add' and subject:
-            ClassSubject.objects.get_or_create(
+            get_or_create_unique(
+                ClassSubject,
                 school=school,
                 class_name=class_name,
                 subject=subject,
@@ -1348,7 +1383,7 @@ def save_grade_ajax(request):
             if is_quarter_locked(student.school, class_name, subject, get_date_quarter(date)):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
 
-            grade, _ = Grade.objects.get_or_create(
+            grade, _ = get_or_create_grade(
                 student=student,
                 subject=subject,
                 period='Холҳои ҷорӣ (Онлайн)',

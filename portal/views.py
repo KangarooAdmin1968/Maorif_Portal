@@ -188,12 +188,16 @@ def can_edit_grade_journal(user, school, class_name, subject):
         return True
     if role == settings.ROLE_TEACHER:
         # Regular teachers must be explicitly allocated to this ClassSubject in "Тақсимоти дарсҳо"
-        return ClassSubject.objects.filter(
+        qs = ClassSubject.objects.filter(
             school=school,
             class_name=normalize_class_name(class_name),
-            subject=normalize_subject(subject),
             is_active=True,
-        ).filter(
+        )
+        # Non-graded classes (e.g. Grade 1 sticker journal) are class-wide:
+        # any active subject assignment inside this classroom grants full access
+        if not is_non_graded(class_name):
+            qs = qs.filter(subject=normalize_subject(subject))
+        return qs.filter(
             Q(teacher=user) | Q(allocated_teacher__user=user)
         ).exists()
     return False

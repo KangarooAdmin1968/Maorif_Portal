@@ -54,8 +54,7 @@ def calc_quarterly(qmap):
         calc['annual'] = std_round((calc['semi_annual_1'] + calc['semi_annual_2']) / 2)
     if calc['annual'] is not None:
         if 'att' in qmap and qmap['att'] is not None:
-            calculated_final = std_round((calc['annual'] + qmap['att']) / 2)
-            calc['final'] = min(calculated_final, qmap['att'])
+            calc['final'] = std_round((calc['annual'] + qmap['att']) / 2)
         else:
             calc['final'] = calc['annual']
     return calc
@@ -1376,7 +1375,10 @@ def save_grade_ajax(request):
                 score = float(raw)
             except ValueError:
                 raise ValueError('Хол бояд рақам бошад.')
-            return int(score)
+            score = int(score)
+            if not (1 <= score <= 10):
+                raise ValueError('Хол бояд аз 1 то 10 бошад.')
+            return score
 
         if grade_type == 'daily':
             try:
@@ -1586,7 +1588,11 @@ def student_detail(request, student_id):
         class_gpas = []
         school_gpas = []
         district_gpas = []
+        # Rank only against graded students of academic schools (same population as dashboard rankings)
+        academic_ids = {s.id for s in School.objects.all() if is_academic_school(s)}
         for s in Student.objects.all():
+            if s.school_id not in academic_ids or is_non_graded(s.class_name):
+                continue
             g = all_gpas.get(s.id, 0.0)
             district_gpas.append(g)
             if s.school_id == student.school_id:

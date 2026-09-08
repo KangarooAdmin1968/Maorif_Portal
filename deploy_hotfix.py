@@ -16,6 +16,7 @@ password = os.environ['SSH_PASSWORD']
 
 FILES = [
     ('portal/views.py', f'{PROJECT_DIR}/portal/views.py'),
+    ('portal/models.py', f'{PROJECT_DIR}/portal/models.py'),
     ('maorif_portal/settings.py', f'{PROJECT_DIR}/maorif_portal/settings.py'),
 ]
 

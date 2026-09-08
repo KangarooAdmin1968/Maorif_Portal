@@ -128,11 +128,19 @@ class Student(models.Model):
 
     @property
     def behavior_status(self):
-        """Calculates the overall behavioral status badge in Tajik."""
-        grades = self.grade_set.filter(behavior_score__isnull=False)
-        if not grades.exists():
+        """Calculates the overall behavioral status badge in Tajik.
+
+        Each subject contributes equally: the per-subject average of behavior
+        marks is computed first, then averaged across all subjects.
+        """
+        from django.db.models import Avg
+        per_subject = self.grade_set.filter(
+            behavior_score__isnull=False
+        ).values('subject').annotate(avg=Avg('behavior_score'))
+        count = per_subject.count()
+        if not count:
             return "Маълумот нест"
-        avg_behavior = sum(g.behavior_score for g in grades) / grades.count()
+        avg_behavior = sum(r['avg'] for r in per_subject) / count
         if avg_behavior >= 4.5:
             return "Намунавӣ"
         elif avg_behavior >= 3.0:

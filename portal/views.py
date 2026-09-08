@@ -2174,6 +2174,59 @@ def monitoring_dashboard(request):
 
 
 @login_required
+def school_readiness_rating(request):
+    """Shared leaderboard of lesson-allocation readiness for all academic schools.
+
+    Visible to superusers, staff (education officials) and school Zavuchs.
+    percentage = assigned active ClassSubjects / total active ClassSubjects.
+    """
+    role = get_user_role(request.user)
+    is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
+    if not (request.user.is_superuser or request.user.is_staff or is_zavuch):
+        return redirect('dashboard')
+
+    schools = [s for s in School.objects.all() if is_academic_school(s)]
+    school_ids = [s.id for s in schools]
+
+    totals = dict(
+        ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
+        .values_list('school_id').annotate(n=Count('id'))
+    )
+    assigned = dict(
+        ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
+        .filter(Q(teacher__isnull=False) | Q(allocated_teacher__isnull=False))
+        .values_list('school_id').annotate(n=Count('id'))
+    )
+
+    data = []
+    for school in schools:
+        total = totals.get(school.id, 0)
+        done = assigned.get(school.id, 0)
+        pct = round(done / total * 100, 1) if total else 0.0
+        zavuch_user = User.objects.filter(username=f'zavuch_{get_school_number(school)}').first()
+        data.append({
+            'school': school,
+            'total': total,
+            'assigned': done,
+            'percentage': pct,
+            'zavuch_username': f'zavuch_{get_school_number(school)}',
+            'zavuch_last_login': zavuch_user.last_login if zavuch_user else None,
+        })
+    data.sort(key=lambda x: x['percentage'], reverse=True)
+
+    # Dense ranking so tied percentages share the same rank
+    rank = 0
+    prev_pct = None
+    for item in data:
+        if item['percentage'] != prev_pct:
+            rank += 1
+            prev_pct = item['percentage']
+        item['rank'] = rank
+
+    return render(request, 'portal/school_readiness_rating.html', {'stats': data})
+
+
+@login_required
 def export_monitoring_excel(request):
     """Export the monitoring dashboard data as a styled Excel workbook."""
     if not request.user.is_superuser:

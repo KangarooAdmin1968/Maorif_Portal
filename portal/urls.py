@@ -39,6 +39,7 @@ urlpatterns = [
     path('password_change/done/', auth_views.PasswordChangeDoneView.as_view(
         template_name='registration/password_change_done.html'
     ), name='password_change_done'),
+    path('schools/readiness/', views.school_readiness_rating, name='school_readiness_rating'),
     path('monitoring-dashboard/', views.monitoring_dashboard, name='monitoring_dashboard'),
     path('monitoring-dashboard/export/', views.export_monitoring_excel, name='export_monitoring_excel'),
     path('top-students/', views.top_students_ajax, name='top_students_ajax'),

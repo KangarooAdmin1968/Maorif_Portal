@@ -1,0 +1,62 @@
+{% extends 'portal/base.html' %}
+{% block title %}Рейтинги омодагии муассисаҳо{% endblock %}
+{% block extra_head %}
+<style>
+  .readiness-bar { background: #e5e7eb; border-radius: 999px; height: 14px; overflow: hidden; min-width: 120px; }
+  .readiness-fill { height: 100%; border-radius: 999px; transition: width .3s ease; }
+  .fill-red    { background: #dc2626; }
+  .fill-amber  { background: #f59e0b; }
+  .fill-green  { background: #16a34a; }
+  .pct-badge { font-weight: 700; font-size: .9rem; }
+  .pct-badge.done { color: #16a34a; }
+  .done-check { color: #16a34a; font-weight: 700; }
+  .rank-medal { font-weight: 700; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>📊 Рейтинги омодагии муассисаҳо</h1>
+<p style="color:#4b5563;">Фоизи дарсҳои тақсимшуда ба омӯзгорон («Тақсимоти дарсҳо») аз ҳисоби ҳар муассиса. Ҳамаи фанҳои фаъол дар ҳисоб гирифта мешаванд.</p>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>№</th>
+            <th>Муассиса</th>
+            <th>Завуч</th>
+            <th>Охирин фаъолият</th>
+            <th>Тақсимшуда</th>
+            <th style="min-width:180px;">Тақсимоти дарсҳо</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in stats %}
+        <tr>
+            <td class="rank-medal">
+                {% if s.rank == 1 %}🥇 1{% elif s.rank == 2 %}🥈 2{% elif s.rank == 3 %}🥉 3{% else %}{{ s.rank }}{% endif %}
+            </td>
+            <td>
+                {{ s.school.name }}
+                {% if s.percentage == 100 %}<span class="done-check" title="Ҳама дарсҳо тақсим шудаанд">✅</span>{% endif %}
+            </td>
+            <td>{{ s.zavuch_username }}</td>
+            <td>{% if s.zavuch_last_login %}{{ s.zavuch_last_login|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
+            <td>{{ s.assigned }} / {{ s.total }}</td>
+            <td>
+                <div style="display:flex; align-items:center; gap:.6rem;">
+                    <div class="readiness-bar" style="flex:1;">
+                        <div class="readiness-fill {% if s.percentage >= 80 %}fill-green{% elif s.percentage >= 50 %}fill-amber{% else %}fill-red{% endif %}" style="width: {{ s.percentage }}%;"></div>
+                    </div>
+                    <span class="pct-badge {% if s.percentage == 100 %}done{% endif %}">{{ s.percentage }}%</span>
+                </div>
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6">Муассиса ёфт нашуд.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="toolbar">
+    <a href="{% url 'dashboard' %}" class="btn">Бозгашт</a>
+</div>
+{% endblock %}

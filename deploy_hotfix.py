@@ -17,7 +17,10 @@ password = os.environ['SSH_PASSWORD']
 FILES = [
     ('portal/views.py', f'{PROJECT_DIR}/portal/views.py'),
     ('portal/models.py', f'{PROJECT_DIR}/portal/models.py'),
+    ('portal/urls.py', f'{PROJECT_DIR}/portal/urls.py'),
+    ('portal/templates/portal/base.html', f'{PROJECT_DIR}/portal/templates/portal/base.html'),
     ('portal/templates/portal/grade_entry.html', f'{PROJECT_DIR}/portal/templates/portal/grade_entry.html'),
+    ('portal/templates/portal/school_readiness_rating.html', f'{PROJECT_DIR}/portal/templates/portal/school_readiness_rating.html'),
     ('portal/templates/school/lesson_allocation.html', f'{PROJECT_DIR}/portal/templates/school/lesson_allocation.html'),
     ('maorif_portal/settings.py', f'{PROJECT_DIR}/maorif_portal/settings.py'),
 ]

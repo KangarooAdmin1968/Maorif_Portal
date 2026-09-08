@@ -131,11 +131,11 @@
             {% endif %}
           </td>
           {% if q == 2 and not non_graded %}
-          <td><span id="sa1-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"semi_annual_1"|default:"-" }}</span></td>
+          <td><span id="sa1-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"semi_annual_1"|default:"-" }}{% if calculated|dict_key:s.id|dict_key:"semi_annual_1_proj" %}<sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;"> Ҷ</sup>{% endif %}</span></td>
           {% endif %}
           {% if q == 4 and not non_graded %}
-          <td><span id="sa2-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"semi_annual_2"|default:"-" }}</span></td>
-          <td><span id="annual-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"annual"|default:"-" }}</span></td>
+          <td><span id="sa2-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"semi_annual_2"|default:"-" }}{% if calculated|dict_key:s.id|dict_key:"semi_annual_2_proj" %}<sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;"> Ҷ</sup>{% endif %}</span></td>
+          <td><span id="annual-{{ forloop.parentloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"annual"|default:"-" }}{% if calculated|dict_key:s.id|dict_key:"annual_proj" %}<sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;"> Ҷ</sup>{% endif %}</span></td>
           {% endif %}
           {% endfor %}
           <td>
@@ -153,7 +153,7 @@
             {% endif %}
           </td>
           {% if not non_graded %}
-          <td><span id="final-{{ forloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"final"|default:"-" }}</span></td>
+          <td><span id="final-{{ forloop.counter }}">{{ calculated|dict_key:s.id|dict_key:"final"|default:"-" }}{% if calculated|dict_key:s.id|dict_key:"final_proj" %}<sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;"> Ҷ</sup>{% endif %}</span></td>
           {% endif %}
         </tr>
         {% empty %}
@@ -254,10 +254,11 @@ async function syncPending() {
                 if (status) showStatus(status, '✔ Сабт шуд!');
                 const rowId = el.dataset.rowId;
                 if (resp.semi_annual_1 !== undefined && document.getElementById('sa1-' + rowId)) {
-                    document.getElementById('sa1-' + rowId).textContent = resp.semi_annual_1 ?? '-';
-                    document.getElementById('sa2-' + rowId).textContent = resp.semi_annual_2 ?? '-';
-                    document.getElementById('annual-' + rowId).textContent = resp.annual ?? '-';
-                    document.getElementById('final-' + rowId).textContent = resp.final ?? '-';
+                    const projMark = p => p ? ' <sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;">Ҷ</sup>' : '';
+                    document.getElementById('sa1-' + rowId).innerHTML = (resp.semi_annual_1 ?? '-') + projMark(resp.semi_annual_1_proj);
+                    document.getElementById('sa2-' + rowId).innerHTML = (resp.semi_annual_2 ?? '-') + projMark(resp.semi_annual_2_proj);
+                    document.getElementById('annual-' + rowId).innerHTML = (resp.annual ?? '-') + projMark(resp.annual_proj);
+                    document.getElementById('final-' + rowId).innerHTML = (resp.final ?? '-') + projMark(resp.final_proj);
                 }
             }
             removePending(item.name);
@@ -316,10 +317,11 @@ function saveQuarter(input) {
     input.dataset.origValue = scoreVal;
     removePending(input.name);
     if (document.getElementById('sa1-' + rowId)) {
-      document.getElementById('sa1-' + rowId).textContent = resp.semi_annual_1 ?? '-';
-      document.getElementById('sa2-' + rowId).textContent = resp.semi_annual_2 ?? '-';
-      document.getElementById('annual-' + rowId).textContent = resp.annual ?? '-';
-      document.getElementById('final-' + rowId).textContent = resp.final ?? '-';
+      const projMark = p => p ? ' <sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;">Ҷ</sup>' : '';
+      document.getElementById('sa1-' + rowId).innerHTML = (resp.semi_annual_1 ?? '-') + projMark(resp.semi_annual_1_proj);
+      document.getElementById('sa2-' + rowId).innerHTML = (resp.semi_annual_2 ?? '-') + projMark(resp.semi_annual_2_proj);
+      document.getElementById('annual-' + rowId).innerHTML = (resp.annual ?? '-') + projMark(resp.annual_proj);
+      document.getElementById('final-' + rowId).innerHTML = (resp.final ?? '-') + projMark(resp.final_proj);
     }
   })
   .catch(() => { showOfflineBanner(); });

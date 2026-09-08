@@ -44,19 +44,41 @@ def std_round(value):
 
 
 def calc_quarterly(qmap):
-    """Calculate semi-annual, annual, and final grades from a quarter map."""
-    calc = {'semi_annual_1': None, 'semi_annual_2': None, 'annual': None, 'final': None}
-    if 1 in qmap and qmap[1] is not None and 2 in qmap and qmap[2] is not None:
-        calc['semi_annual_1'] = std_round((qmap[1] + qmap[2]) / 2)
-    if 3 in qmap and qmap[3] is not None and 4 in qmap and qmap[4] is not None:
-        calc['semi_annual_2'] = std_round((qmap[3] + qmap[4]) / 2)
+    """Calculate semi-annual, annual, and final grades from a quarter map.
+
+    When only part of a period is filled, fall back to a live projection
+    from the quarters that already exist; projected values are flagged with
+    *_proj = True so the UI can label them as "Ҷорӣ" (in-progress) estimates.
+    """
+    calc = {
+        'semi_annual_1': None, 'semi_annual_2': None, 'annual': None, 'final': None,
+        'semi_annual_1_proj': False, 'semi_annual_2_proj': False,
+        'annual_proj': False, 'final_proj': False,
+    }
+    q1, q2 = qmap.get(1), qmap.get(2)
+    if q1 is not None and q2 is not None:
+        calc['semi_annual_1'] = std_round((q1 + q2) / 2)
+    elif q1 is not None or q2 is not None:
+        calc['semi_annual_1'] = q1 if q1 is not None else q2
+        calc['semi_annual_1_proj'] = True
+    q3, q4 = qmap.get(3), qmap.get(4)
+    if q3 is not None and q4 is not None:
+        calc['semi_annual_2'] = std_round((q3 + q4) / 2)
+    elif q3 is not None or q4 is not None:
+        calc['semi_annual_2'] = q3 if q3 is not None else q4
+        calc['semi_annual_2_proj'] = True
     if calc['semi_annual_1'] is not None and calc['semi_annual_2'] is not None:
         calc['annual'] = std_round((calc['semi_annual_1'] + calc['semi_annual_2']) / 2)
+        calc['annual_proj'] = calc['semi_annual_1_proj'] or calc['semi_annual_2_proj']
+    elif calc['semi_annual_1'] is not None or calc['semi_annual_2'] is not None:
+        calc['annual'] = calc['semi_annual_1'] if calc['semi_annual_1'] is not None else calc['semi_annual_2']
+        calc['annual_proj'] = True
     if calc['annual'] is not None:
-        if 'att' in qmap and qmap['att'] is not None:
+        if qmap.get('att') is not None:
             calc['final'] = std_round((calc['annual'] + qmap['att']) / 2)
         else:
             calc['final'] = calc['annual']
+        calc['final_proj'] = calc['annual_proj']
     return calc
 
 

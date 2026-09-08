@@ -1,36 +1,208 @@
 {% extends 'portal/base.html' %}
 {% block title %}Тақсимоти дарсҳо ба омӯзгорон{% endblock %}
+{% block extra_head %}
+<style>
+  .alloc-tabs { display: flex; gap: .5rem; margin: 1rem 0; }
+  .alloc-tab {
+    padding: .6rem 1.1rem; border: 1px solid #d1d5db; border-radius: .5rem;
+    background: #fff; cursor: pointer; font-size: .95rem; font-weight: 600;
+    color: #374151;
+  }
+  .alloc-tab.active { background: #003366; color: #fff; border-color: #003366; }
+  .gap-badge {
+    display: inline-block; min-width: 1.4rem; padding: 0 .35rem; margin-left: .35rem;
+    background: #dc2626; color: #fff; border-radius: 999px; font-size: .78rem;
+    text-align: center;
+  }
+  .gap-badge.ok { background: #16a34a; }
+
+  .alloc-layout { display: flex; gap: 1rem; align-items: flex-start; }
+  .class-sidebar {
+    flex: 0 0 190px; max-height: 70vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: .35rem;
+    background: #f9fafb; border: 1px solid #e5e7eb; border-radius: .5rem; padding: .5rem;
+  }
+  .class-btn {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .5rem .7rem; border: 1px solid #e5e7eb; border-radius: .4rem;
+    background: #fff; cursor: pointer; font-size: .9rem; font-weight: 600;
+    color: #111827; white-space: nowrap;
+  }
+  .class-btn.active { background: #003366; color: #fff; border-color: #003366; }
+  .cls-dot { width: 9px; height: 9px; border-radius: 50%; background: #dc2626; flex: 0 0 auto; }
+  .class-btn.active .cls-dot { background: #fbbf24; }
+
+  .alloc-main { flex: 1 1 auto; min-width: 0; }
+  .alloc-head {
+    display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+    justify-content: space-between; margin-bottom: .6rem;
+  }
+  .alloc-head h2 { margin: 0; font-size: 1.05rem; color: #003366; }
+  .alloc-search {
+    padding: .45rem .7rem; border: 1px solid #d1d5db; border-radius: .4rem;
+    font-size: .9rem; min-width: 220px;
+  }
+  tr.alloc-hidden { display: none; }
+  .gaps-empty { padding: 1.5rem; text-align: center; color: #16a34a; font-weight: 600; }
+  .gap-fix-btn { padding: .25rem .6rem; font-size: .8rem; }
+
+  @media (max-width: 768px) {
+    .alloc-layout { flex-direction: column; }
+    .class-sidebar {
+      flex: none; flex-direction: row; overflow-x: auto; overflow-y: hidden;
+      max-height: none; width: 100%;
+    }
+    .class-btn { flex: 0 0 auto; }
+    .alloc-search { width: 100%; }
+  }
+</style>
+{% endblock %}
 {% block content %}
 <h1>{{ school.name }} — Тақсимоти дарсҳо ба омӯзгорон</h1>
 
+<div class="alloc-tabs">
+    <button type="button" class="alloc-tab active" id="tab-classes" onclick="switchTab('classes')">📚 Тақсимоти синфҳо</button>
+    <button type="button" class="alloc-tab" id="tab-gaps" onclick="switchTab('gaps')">⚠️ Камбудиҳо <span class="gap-badge" id="gap-count">0</span></button>
+</div>
+
 <form action="{% url 'save_lesson_allocation' %}" method="post">
     {% csrf_token %}
-    <table class="data-table">
-        <thead>
-            <tr><th>Синф</th><th>Фан</th><th>Омӯзгори масъул</th></tr>
-        </thead>
-        <tbody>
-            {% for cs in class_subjects %}
-            <tr>
-                <td>{{ cs.class_name }}</td>
-                <td>{{ cs.subject }}</td>
-                <td>
-                    <select name="alloc_{{ cs.id }}" class="form-select">
-                        <option value="">Интихоб кунед...</option>
-                        {% for t in teachers %}
-                        <option value="{{ t.id }}" {% if cs.selected_profile_id == t.id %}selected{% endif %}>{{ t.full_name }}</option>
+
+    <div id="pane-classes">
+        <div class="alloc-layout">
+            <aside class="class-sidebar" id="class-sidebar">
+                {% regroup class_subjects by class_name as class_groups %}
+                {% for g in class_groups %}
+                <button type="button" class="class-btn" data-class="{{ g.grouper }}" onclick="selectClass(this.dataset.class)">
+                    <span>{{ g.grouper }}</span><span class="cls-dot" data-dot="{{ g.grouper }}" style="display:none"></span>
+                </button>
+                {% endfor %}
+            </aside>
+            <div class="alloc-main">
+                <div class="alloc-head">
+                    <h2 id="current-class-label">Синфро интихоб кунед</h2>
+                    <input type="text" class="alloc-search" id="subject-search" placeholder="🔍 Ҷустуҷӯи фан ё омӯзгор..." oninput="filterSubjects()">
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr><th>Фан</th><th>Омӯзгори масъул</th></tr>
+                    </thead>
+                    <tbody id="alloc-body">
+                        {% for cs in class_subjects %}
+                        <tr class="alloc-row" data-class="{{ cs.class_name }}" data-cs="{{ cs.id }}"
+                            data-unassigned="{% if cs.selected_profile_id %}0{% else %}1{% endif %}">
+                            <td>{{ cs.subject }}</td>
+                            <td>
+                                <select name="alloc_{{ cs.id }}" class="form-select alloc-select" data-cs="{{ cs.id }}">
+                                    <option value="">Интихоб кунед...</option>
+                                    {% for t in teachers %}
+                                    <option value="{{ t.id }}" {% if cs.selected_profile_id == t.id %}selected{% endif %}>{{ t.full_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="2">Фанҳо ёфт нашуданд.</td></tr>
                         {% endfor %}
-                    </select>
-                </td>
-            </tr>
-            {% empty %}
-            <tr><td colspan="3">Фанҳо ёфт нашуданд.</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div id="pane-gaps" hidden>
+        <table class="data-table">
+            <thead>
+                <tr><th>Синф</th><th>Фан</th><th>Амал</th></tr>
+            </thead>
+            <tbody id="gaps-body"></tbody>
+        </table>
+        <p class="gaps-empty" id="gaps-empty" hidden>✅ Ҳама дарсҳо ба омӯзгорон тақсим шудаанд!</p>
+    </div>
+
     <div class="toolbar">
         <button type="submit" class="btn btn-success">Сабт кардан</button>
         <a href="{% url 'dashboard' %}" class="btn">Бозгашт</a>
     </div>
 </form>
+
+<script>
+(function () {
+    const rows = Array.from(document.querySelectorAll('#alloc-body tr.alloc-row'));
+    const classBtns = Array.from(document.querySelectorAll('.class-btn'));
+    const gapsBody = document.getElementById('gaps-body');
+    const gapsEmpty = document.getElementById('gaps-empty');
+    const gapCount = document.getElementById('gap-count');
+    const searchInput = document.getElementById('subject-search');
+    const classLabel = document.getElementById('current-class-label');
+    let currentClass = null;
+
+    function isUnassigned(row) {
+        return row.querySelector('select').value === '';
+    }
+
+    function refreshGaps() {
+        gapsBody.innerHTML = '';
+        let n = 0;
+        rows.forEach(row => {
+            const un = isUnassigned(row);
+            row.dataset.unassigned = un ? '1' : '0';
+            if (un) {
+                n++;
+                const tr = document.createElement('tr');
+                const tdC = document.createElement('td'); tdC.textContent = row.dataset.class;
+                const tdS = document.createElement('td'); tdS.textContent = row.children[0].textContent;
+                const tdA = document.createElement('td');
+                const btn = document.createElement('button');
+                btn.type = 'button'; btn.className = 'btn gap-fix-btn'; btn.textContent = '→ Тақсим кардан';
+                btn.onclick = () => { switchTab('classes'); selectClass(row.dataset.class); row.scrollIntoView({behavior: 'smooth', block: 'center'}); };
+                tdA.appendChild(btn);
+                tr.appendChild(tdC); tr.appendChild(tdS); tr.appendChild(tdA);
+                gapsBody.appendChild(tr);
+            }
+        });
+        gapCount.textContent = n;
+        gapCount.classList.toggle('ok', n === 0);
+        gapsEmpty.hidden = n !== 0;
+        // Red dots on classes with gaps
+        const gapClasses = new Set(rows.filter(isUnassigned).map(r => r.dataset.class));
+        document.querySelectorAll('[data-dot]').forEach(d => {
+            d.style.display = gapClasses.has(d.dataset.dot) ? 'inline-block' : 'none';
+        });
+    }
+
+    window.selectClass = function (cls) {
+        currentClass = cls;
+        classBtns.forEach(b => b.classList.toggle('active', b.dataset.class === cls));
+        classLabel.textContent = 'Синф: ' + cls;
+        searchInput.value = '';
+        filterSubjects();
+    };
+
+    window.switchTab = function (tab) {
+        document.getElementById('pane-classes').hidden = tab !== 'classes';
+        document.getElementById('pane-gaps').hidden = tab !== 'gaps';
+        document.getElementById('tab-classes').classList.toggle('active', tab === 'classes');
+        document.getElementById('tab-gaps').classList.toggle('active', tab === 'gaps');
+        if (tab === 'gaps') refreshGaps();
+    };
+
+    window.filterSubjects = function () {
+        const q = searchInput.value.trim().toLowerCase();
+        rows.forEach(row => {
+            const inClass = row.dataset.class === currentClass;
+            const text = row.textContent.toLowerCase();
+            row.classList.toggle('alloc-hidden', !(inClass && (!q || text.includes(q))));
+        });
+    };
+
+    document.querySelectorAll('.alloc-select').forEach(sel => {
+        sel.addEventListener('change', refreshGaps);
+    });
+
+    // Initial state: select the first class, compute gaps/dots
+    refreshGaps();
+    if (classBtns.length) selectClass(classBtns[0].dataset.class);
+})();
+</script>
 {% endblock %}

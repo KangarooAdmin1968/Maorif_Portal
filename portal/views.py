@@ -2227,6 +2227,64 @@ def school_readiness_rating(request):
 
 
 @login_required
+def school_documents(request):
+    """Ҳуҷҷатнигорӣ — documents hub for superusers, staff and school Zavuchs.
+
+    First document: weekly lesson-hours distribution per teacher, built from
+    active ClassSubject rows (allocated_teacher preferred, teacher as fallback)
+    and settings.TJC_SUBJECT_HOURS.
+    """
+    role = get_user_role(request.user)
+    is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
+    if not (request.user.is_superuser or request.user.is_staff or is_zavuch):
+        return redirect('dashboard')
+
+    school = get_user_school(request.user)
+    workload = []
+    if school:
+        class_subjects = ClassSubject.objects.filter(
+            school=school, is_active=True
+        ).select_related('allocated_teacher', 'teacher').order_by('class_name', 'subject')
+        user_to_profile = {
+            tp.user_id: tp for tp in TeacherProfile.objects.filter(school=school)
+        }
+
+        hours_map = getattr(settings, 'TJC_SUBJECT_HOURS', {})
+        default_hours = getattr(settings, 'TJC_SUBJECT_HOURS_DEFAULT', 2)
+
+        # teacher -> {subject: [class_names]}
+        grouped = {}
+        for cs in class_subjects:
+            profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
+            if not profile:
+                continue
+            subj_map = grouped.setdefault(profile, {})
+            subj_map.setdefault(cs.subject, []).append(cs.class_name)
+
+        def class_sort(cn):
+            return (class_numeric_part(cn) or 0, cn)
+
+        for profile, subj_map in grouped.items():
+            items = []
+            total_hours = 0
+            for subject, classes in sorted(subj_map.items(), key=lambda kv: kv[0]):
+                classes_sorted = sorted(set(classes), key=class_sort)
+                items.append({'subject': subject, 'classes': classes_sorted})
+                total_hours += default_hours if normalize_subject(subject) not in hours_map else hours_map[normalize_subject(subject)] * len(classes_sorted)
+            workload.append({
+                'teacher': profile,
+                'items': items,
+                'total_hours': total_hours,
+            })
+        workload.sort(key=lambda w: w['teacher'].full_name)
+
+    return render(request, 'portal/documents_landing.html', {
+        'school': school,
+        'workload': workload,
+    })
+
+
+@login_required
 def export_monitoring_excel(request):
     """Export the monitoring dashboard data as a styled Excel workbook."""
     if not request.user.is_superuser:

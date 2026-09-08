@@ -1,0 +1,96 @@
+{% extends 'portal/base.html' %}
+{% block title %}Ҳуҷҷатнигорӣ{% endblock %}
+{% block extra_head %}
+<style>
+  .doc-card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem;
+    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  .doc-card h2 { margin: 0 0 .75rem; font-size: 1.1rem; color: #003366; }
+  .subj-list { margin: 0; padding-left: 1.1rem; line-height: 1.5; }
+  .sig-row td { padding: .35rem .5rem; }
+  .sign-area { display: none; }
+  .print-toolbar { margin: .5rem 0 1rem; }
+
+  @media print {
+    .navbar, .site-footer, .toolbar, .print-toolbar, .alloc-tabs,
+    .messages, nav, header, footer { display: none !important; }
+    body { background: #fff; }
+    .container { max-width: 100%; padding: 0; margin: 0; }
+    .doc-card { border: none; padding: 0; }
+    h1 { font-size: 14pt; }
+    .doc-card h2 { font-size: 12pt; }
+    table.data-table { font-size: 9.5pt; border-collapse: collapse; width: 100%; }
+    table.data-table th, table.data-table td { border: 1px solid #000; padding: 4px 6px; }
+    .sign-area {
+      display: block; margin-top: 3rem; font-size: 10pt;
+      page-break-inside: avoid;
+    }
+    .sign-line {
+      display: flex; justify-content: space-between; align-items: flex-end;
+      margin: 1.8rem 0;
+    }
+    .sign-line .lbl { font-weight: 600; }
+    .sign-line .blank { border-bottom: 1px solid #000; min-width: 200px; height: 1rem; }
+    @page { size: A4 landscape; margin: 12mm; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>📄 Ҳуҷҷатнигорӣ</h1>
+
+<div class="print-toolbar no-print">
+    <button type="button" class="btn btn-success" onclick="window.print()">🖨️ Чоп кардан</button>
+    <a href="{% url 'dashboard' %}" class="btn">Бозгашт</a>
+</div>
+
+{% if school %}
+<div class="doc-card" id="doc-workload">
+    <h2>Ҷадвали тақсимоти соатҳои дарсӣ ба омӯзгорон</h2>
+    <p style="color:#4b5563; margin:.25rem 0 .75rem;">
+        <strong>{{ school.name }}</strong> — соли таҳсили 2025–2026
+    </p>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>Омӯзгор</th>
+                <th>Фанҳо ва синфҳо</th>
+                <th style="width:90px;">Сарборӣ (соат)</th>
+                <th style="width:120px;">Имзо</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for w in workload %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ w.teacher.full_name }}</td>
+                <td>
+                    <ul class="subj-list">
+                        {% for it in w.items %}
+                        <li>{{ it.subject }} <em>({{ it.classes|join:', ' }})</em></li>
+                        {% endfor %}
+                    </ul>
+                </td>
+                <td style="text-align:center; font-weight:700;">{{ w.total_hours }}</td>
+                <td class="sig-row"></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5">Ягон омӯзгори таъйиншуда ёфт нашуд. Аввал дар «Тақсимоти дарсҳо» омӯзгоронро таъйин кунед.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="sign-area">
+        <div class="sign-line"><span class="lbl">Мудири маориф:</span><span class="blank"></span></div>
+        <div class="sign-line"><span class="lbl">Директори муассиса:</span><span class="blank"></span></div>
+        <div class="sign-line"><span class="lbl">Муовини директор оид ба таълим:</span><span class="blank"></span></div>
+    </div>
+</div>
+{% else %}
+<div class="doc-card">
+    <p>Барои дидани ҳуҷҷатҳо бояд ба муассиса вобаста бошед.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -77,6 +77,7 @@
                     {% if user.is_superuser or user.is_staff or is_zavuch %}
                         <a href="{% url 'monitoring_dashboard' %}">Назорати Муассисаҳо</a>
                         <a href="{% url 'school_readiness_rating' %}">Рейтинги омодагӣ</a>
+                        <a href="{% url 'school_documents' %}">📄 Ҳуҷҷатнигорӣ</a>
                     {% endif %}
                     <a href="{% url 'password_change' %}" class="btn btn-sm">Ивази рамз</a>
                     <a href="{% url 'logout' %}" class="btn btn-outline">Баромад</a>

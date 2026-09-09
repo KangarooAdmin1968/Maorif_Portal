@@ -171,6 +171,26 @@ class ClassSubjectAdmin(admin.ModelAdmin):
             'created_count': deactivated,
         })
 
+    def save_model(self, request, obj, form, change):
+        reactivated = False
+        if not change:
+            existing = ClassSubject.objects.filter(
+                school=obj.school,
+                class_name=normalize_class_name(obj.class_name),
+                subject=normalize_subject(obj.subject),
+            ).first()
+            if existing:
+                obj.pk = existing.pk
+                obj._state.adding = False
+                obj.teacher = existing.teacher
+                obj.allocated_teacher = existing.allocated_teacher
+                obj.is_default = existing.is_default
+                obj.is_active = True
+                reactivated = True
+        super().save_model(request, obj, form, change)
+        if reactivated:
+            self.message_user(request, 'Фан бомуваффақият фаъол карда шуд', level=messages.SUCCESS)
+
 
 @admin.register(SubjectDeactivationRequest)
 class SubjectDeactivationRequestAdmin(admin.ModelAdmin):

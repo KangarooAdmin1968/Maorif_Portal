@@ -371,16 +371,12 @@ function buildTransferTargetOptions() {
     newOpt.textContent = '+ Синфи нав';
     select.appendChild(newOpt);
 
-    const confirmText = document.getElementById('transfer-confirm-text');
-    const baleBtn = document.getElementById('transfer-bale-btn');
     if (sourceParts && sourceParts.letter === 'А') {
         select.disabled = true;
-        confirmText.textContent = 'Синфи асосии «А» наметавонад ба дигар синфҳо муттаҳид карда шавад!';
-        baleBtn.style.display = 'none';
     } else {
         select.disabled = false;
-        baleBtn.style.display = '';
     }
+    updateTransferMessage();
 }
 
 function openTransferClassModal() {
@@ -414,16 +410,30 @@ function updateTransferMessage() {
     const source = normalizeClassName('{{ class_name }}');
     const sourceParts = parseClassName(source);
     const confirmText = document.getElementById('transfer-confirm-text');
+    const baleBtn = document.getElementById('transfer-bale-btn');
     if (sourceParts && sourceParts.letter === 'А') {
         confirmText.textContent = 'Синфи асосии «А» наметавонад ба дигар синфҳо муттаҳид карда шавад!';
+        baleBtn.disabled = true;
+        baleBtn.style.display = 'none';
         return;
     }
     const sel = document.getElementById('transfer-target-class');
     const input = document.getElementById('transfer-new-class-name');
-    let target = sel.value;
-    if (target === '__new__') {
-        target = normalizeClassName(input.value) || '...';
+    let target = '';
+    if (sel.value === '__new__') {
+        target = normalizeClassName(input.value);
+    } else if (sel.value) {
+        target = normalizeClassName(sel.value);
     }
+    const isValidTarget = target && parseClassName(target);
+    if (!isValidTarget) {
+        confirmText.textContent = 'Лутфан, синфи ҳадафро интихоб намоед.';
+        baleBtn.disabled = true;
+        baleBtn.style.display = 'none';
+        return;
+    }
+    baleBtn.disabled = false;
+    baleBtn.style.display = '';
     confirmText.textContent =
         `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} кӯчонед?`;
     document.getElementById('transfer-warning-text').textContent =

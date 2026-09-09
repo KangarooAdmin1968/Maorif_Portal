@@ -582,9 +582,9 @@ def dashboard(request):
     except ZeroDivisionError:
         ratio = 0.0
 
-    my_requests = SubjectDeactivationRequest.objects.filter(
+    my_requests = list(SubjectDeactivationRequest.objects.filter(
         requested_by=request.user
-    ).select_related('class_subject').order_by('-requested_at') if request.user.is_authenticated else []
+    ).select_related('class_subject').order_by('-requested_at')) if request.user.is_authenticated else []
 
     context = {
         'role': role,
@@ -2052,15 +2052,11 @@ def lesson_allocation(request):
     for cs in class_subjects:
         cs.selected_profile_id = cs.allocated_teacher_id or user_to_profile.get(cs.teacher_id)
 
-    my_requests = SubjectDeactivationRequest.objects.filter(
+    my_requests = list(SubjectDeactivationRequest.objects.filter(
         requested_by=request.user
-    ).select_related('class_subject').order_by('-requested_at')
+    ).select_related('class_subject').order_by('-requested_at'))
 
-    pending_request_ids = set(
-        SubjectDeactivationRequest.objects.filter(
-            requested_by=request.user, status='pending'
-        ).values_list('class_subject_id', flat=True)
-    )
+    pending_request_ids = {r.class_subject_id for r in my_requests if r.status == 'pending'}
 
     return render(request, 'school/lesson_allocation.html', {
         'school': school,

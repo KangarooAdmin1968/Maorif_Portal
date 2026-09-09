@@ -16,7 +16,7 @@ from .utils import class_numeric_part
 
 admin.site.site_header = "Шӯъбаи маорифи ноҳияи Зафаробод"
 admin.site.site_title = "Портали маориф"
-admin.site.index_title = "Маркази идоракунии тизим"
+admin.site.index_title = "Маркази идоракунӣ"
 
 
 @admin.register(School)

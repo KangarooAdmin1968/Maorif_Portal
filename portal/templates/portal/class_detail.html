@@ -77,9 +77,9 @@
             </div>
             <div id="transfer-step-1" style="display:block;">
                 <p id="transfer-confirm-text" style="margin:1rem 0; font-weight:bold; color:#1f2937;"></p>
-                <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                <div id="transfer-step-1-buttons" style="display:flex; gap:0.5rem; justify-content:flex-end;">
                     <button type="button" class="btn btn-secondary" onclick="closeTransferClassModal()">Не</button>
-                    <button type="button" class="btn btn-primary" onclick="proceedToTransferStep2()">Бале</button>
+                    <button type="button" id="transfer-bale-btn" class="btn btn-primary" onclick="proceedToTransferStep2()">Бале</button>
                 </div>
             </div>
             <div id="transfer-step-2" style="display:none;">
@@ -242,6 +242,7 @@
 
 <script>
 const LATIN_TO_CYRILLIC = {'A':'А','B':'Б','C':'В','K':'К'};
+const ALL_CLASSES = [{% for c in all_classes %}'{{ c }}'{% if not forloop.last %},{% endif %}{% endfor %}];
 
 function toCyrillicLetter(letter) {
     return LATIN_TO_CYRILLIC[letter] || letter;
@@ -330,15 +331,52 @@ function parseClassName(name) {
     return {num: parseInt(m[1], 10), letter: m[2]};
 }
 
+function isLetterBefore(a, b) {
+    const a_i = CYRILLIC_ORDER.indexOf(a);
+    const b_i = CYRILLIC_ORDER.indexOf(b);
+    if (a_i === -1 || b_i === -1) return false;
+    return a_i < b_i;
+}
+
 function isValidClassMerge(source, target) {
     const s = parseClassName(source);
     const t = parseClassName(target);
     if (!s || !t) return false;
     if (s.num !== t.num) return false;
-    const s_i = CYRILLIC_ORDER.indexOf(s.letter);
-    const t_i = CYRILLIC_ORDER.indexOf(t.letter);
-    if (s_i === -1 || t_i === -1) return false;
-    return s_i > t_i;
+    return isLetterBefore(t.letter, s.letter);
+}
+
+function buildTransferTargetOptions() {
+    const source = normalizeClassName('{{ class_name }}');
+    const sourceParts = parseClassName(source);
+    const select = document.getElementById('transfer-target-class');
+    select.innerHTML = '<option value="" disabled selected>Синфи ҳадафро интихоб кунед</option>';
+    if (sourceParts) {
+        ALL_CLASSES.forEach(c => {
+            const p = parseClassName(c);
+            if (p && p.num === sourceParts.num && isLetterBefore(p.letter, sourceParts.letter)) {
+                const opt = document.createElement('option');
+                opt.value = c;
+                opt.textContent = c;
+                select.appendChild(opt);
+            }
+        });
+    }
+    const newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.textContent = '+ Синфи нав';
+    select.appendChild(newOpt);
+
+    const confirmText = document.getElementById('transfer-confirm-text');
+    const baleBtn = document.getElementById('transfer-bale-btn');
+    if (sourceParts && sourceParts.letter === 'А') {
+        select.disabled = true;
+        confirmText.textContent = 'Синфи асосии «А» наметавонад ба дигар синфҳо муттаҳид карда шавад!';
+        baleBtn.style.display = 'none';
+    } else {
+        select.disabled = false;
+        baleBtn.style.display = '';
+    }
 }
 
 function openTransferClassModal() {
@@ -347,10 +385,10 @@ function openTransferClassModal() {
     form.dataset.phase = '';
     document.getElementById('transfer-step-1').style.display = 'block';
     document.getElementById('transfer-step-2').style.display = 'none';
+    buildTransferTargetOptions();
     const sel = document.getElementById('transfer-target-class');
     sel.value = '';
     toggleTransferNewClass(sel);
-    updateTransferMessage();
     modal.style.display = 'flex';
 }
 function closeTransferClassModal() {
@@ -369,14 +407,20 @@ function toggleTransferNewClass(sel) {
     updateTransferMessage();
 }
 function updateTransferMessage() {
-    const source = '{{ class_name }}';
+    const source = normalizeClassName('{{ class_name }}');
+    const sourceParts = parseClassName(source);
+    const confirmText = document.getElementById('transfer-confirm-text');
+    if (sourceParts && sourceParts.letter === 'А') {
+        confirmText.textContent = 'Синфи асосии «А» наметавонад ба дигар синфҳо муттаҳид карда шавад!';
+        return;
+    }
     const sel = document.getElementById('transfer-target-class');
     const input = document.getElementById('transfer-new-class-name');
     let target = sel.value;
     if (target === '__new__') {
         target = normalizeClassName(input.value) || '...';
     }
-    document.getElementById('transfer-confirm-text').textContent =
+    confirmText.textContent =
         `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} кӯчонед?`;
     document.getElementById('transfer-warning-text').textContent =
         `⚠️ ОГОҲӢ! Пас аз ин амал синфи ${source} БАТАМОМ БАСТА МЕШАВАД ва ин амалро бекор кардан ғайриимкон аст! Қарори шумо қатъӣ аст?`;

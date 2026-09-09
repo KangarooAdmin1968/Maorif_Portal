@@ -120,7 +120,7 @@ class ClassSubjectAdmin(admin.ModelAdmin):
             form = BulkClassSubjectForm()
         return render(request, 'admin/portal/classsubject/bulk_assign.html', {
             'form': form,
-            'title': 'Бulk Assign Subject by Grade',
+            'title': 'Оммавий иловаи фан',
             'created_count': created,
         })
 

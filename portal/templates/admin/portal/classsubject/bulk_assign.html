@@ -1,0 +1,24 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:portal_classsubject_changelist' %}">Фанҳои синфӣ</a>
+&rsaquo; {{ title }}
+</div>
+{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<form method="post">
+{% csrf_token %}
+{{ form.as_p }}
+<div class="submit-row">
+    <input type="submit" class="default" value="Bulk Assign">
+    <a href="{% url 'admin:portal_classsubject_changelist' %}" class="button cancel-link">Бозгашт</a>
+</div>
+</form>
+{% if created_count is not None %}
+<p><strong>{{ created_count }}</strong> сабти нав сохта шуд.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "admin/change_form.html" %}
+{% block extrahead %}
+{{ block.super }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var schoolSelect = document.getElementById('id_school');
+    var classSelect = document.getElementById('id_class_name');
+    if (!schoolSelect || !classSelect) return;
+
+    function loadClasses(schoolId, selected) {
+        if (!schoolId) {
+            classSelect.innerHTML = '<option value="">Аввал муассисаро интихоб кунед</option>';
+            return;
+        }
+        fetch('{% url "admin:portal_classsubject_school_classes" %}?school=' + encodeURIComponent(schoolId))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                classSelect.innerHTML = '<option value="">Синфро интихоб кунед...</option>';
+                data.forEach(function(cls) {
+                    var opt = document.createElement('option');
+                    opt.value = cls;
+                    opt.textContent = cls;
+                    if (selected && cls === selected) {
+                        opt.selected = true;
+                    }
+                    classSelect.appendChild(opt);
+                });
+            });
+    }
+
+    var initialClass = classSelect.value || '';
+    loadClasses(schoolSelect.value, initialClass);
+    schoolSelect.addEventListener('change', function() {
+        loadClasses(this.value, '');
+    });
+});
+</script>
+{% endblock %}

@@ -195,6 +195,27 @@ def _validate_class_name(raw):
     return norm
 
 
+# Standard Cyrillic letter order used for class merge direction checks
+_CLASS_LETTER_ORDER = {c: i for i, c in enumerate('АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')}
+
+
+def _is_valid_class_merge(source, target):
+    """Return True only if source is a higher-alphabet letter than target in the same grade."""
+    source = normalize_class_name(source)
+    target = normalize_class_name(target)
+    m = re.match(r'^(\d+)-([A-ZА-ЯЁ])$', source)
+    n = re.match(r'^(\d+)-([A-ZА-ЯЁ])$', target)
+    if not m or not n:
+        return False
+    if int(m.group(1)) != int(n.group(1)):
+        return False
+    s_i = _CLASS_LETTER_ORDER.get(m.group(2))
+    t_i = _CLASS_LETTER_ORDER.get(n.group(2))
+    if s_i is None or t_i is None:
+        return False
+    return s_i > t_i
+
+
 def _deactivate_empty_class(school, class_name):
     """Deactivate all ClassSubjects for a class that no longer has students."""
     class_name = normalize_class_name(class_name)
@@ -1080,6 +1101,13 @@ def transfer_class(request, school_id, class_name):
 
     if target_class == source_class:
         messages.warning(request, 'Синфи манба ва ҳадаф якхеланд.')
+        return redirect('class_detail', school_id=school.id, class_name=source_class)
+
+    if not _is_valid_class_merge(source_class, target_class):
+        if source_class.endswith('-А'):
+            messages.error(request, 'Синфи асосии «А» наметавонад ба дигар синфҳо кӯчонида шавад! Танҳо синфҳои «Б, В, Г» метавонанд ба синфи «А» муттаҳид карда шаванд.')
+        else:
+            messages.error(request, 'Кӯчонидан танҳо аз ҳарфи ҷуфттар ба ҳарфи пештар иҷозат дорад (масалан: 10-Б -> 10-А).')
         return redirect('class_detail', school_id=school.id, class_name=source_class)
 
     students = list(Student.objects.filter(school=school, class_name=source_class).order_by('full_name'))

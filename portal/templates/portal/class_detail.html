@@ -75,10 +75,19 @@
                 <label for="transfer-new-class-name" style="display:block; margin-top:0.5rem;">Номи синфи нав</label>
                 <input type="text" id="transfer-new-class-name" name="new_class_name" placeholder="1-В" pattern="^([1-9]|1[0-1])-[А-ЯЁA-Z]$" oninput="updateTransferMessage()" style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
             </div>
-            <p id="transfer-confirm-text" style="margin:1rem 0; font-weight:bold; color:#1f2937;"></p>
-            <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
-                <button type="button" class="btn btn-secondary" onclick="closeTransferClassModal()">Не</button>
-                <button type="submit" class="btn btn-primary">Ҳа</button>
+            <div id="transfer-step-1" style="display:block;">
+                <p id="transfer-confirm-text" style="margin:1rem 0; font-weight:bold; color:#1f2937;"></p>
+                <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeTransferClassModal()">Не</button>
+                    <button type="button" class="btn btn-primary" onclick="proceedToTransferStep2()">Бале</button>
+                </div>
+            </div>
+            <div id="transfer-step-2" style="display:none;">
+                <p id="transfer-warning-text" style="margin:1rem 0; color:#b91c1c; font-weight:bold; line-height:1.5;"></p>
+                <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeTransferClassModal()">Бекор кардан</button>
+                    <button type="submit" class="btn btn-danger">Бале, синфро бандед ва кӯчонед</button>
+                </div>
             </div>
         </form>
     </div>
@@ -313,8 +322,31 @@ function validateEditForm(form) {
     }
     return true;
 }
+const CYRILLIC_ORDER = ['А','Б','В','Г','Д','Е','Ё','Ж','З','И','Й','К','Л','М','Н','О','П','Р','С','Т','У','Ф','Х','Ц','Ч','Ш','Щ','Ъ','Ы','Ь','Э','Ю','Я'];
+
+function parseClassName(name) {
+    const m = name.match(/^(\d+)-([A-ZА-ЯЁ])$/);
+    if (!m) return null;
+    return {num: parseInt(m[1], 10), letter: m[2]};
+}
+
+function isValidClassMerge(source, target) {
+    const s = parseClassName(source);
+    const t = parseClassName(target);
+    if (!s || !t) return false;
+    if (s.num !== t.num) return false;
+    const s_i = CYRILLIC_ORDER.indexOf(s.letter);
+    const t_i = CYRILLIC_ORDER.indexOf(t.letter);
+    if (s_i === -1 || t_i === -1) return false;
+    return s_i > t_i;
+}
+
 function openTransferClassModal() {
     const modal = document.getElementById('transfer-class-modal');
+    const form = modal.querySelector('form');
+    form.dataset.phase = '';
+    document.getElementById('transfer-step-1').style.display = 'block';
+    document.getElementById('transfer-step-2').style.display = 'none';
     const sel = document.getElementById('transfer-target-class');
     sel.value = '';
     toggleTransferNewClass(sel);
@@ -345,21 +377,69 @@ function updateTransferMessage() {
         target = normalizeClassName(input.value) || '...';
     }
     document.getElementById('transfer-confirm-text').textContent =
-        `Ҳамаи хонандагони синфи ${source} ба синфи ${target} кӯчонида шаванд ва синфи ${source} баста шавад?`;
+        `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} кӯчонед?`;
+    document.getElementById('transfer-warning-text').textContent =
+        `⚠️ ОГОҲӢ! Пас аз ин амал синфи ${source} БАТАМОМ БАСТА МЕШАВАД ва ин амалро бекор кардан ғайриимкон аст! Қарори шумо қатъӣ аст?`;
 }
-function validateTransferForm(form) {
+function getTransferTarget() {
+    const sel = document.getElementById('transfer-target-class');
+    const input = document.getElementById('transfer-new-class-name');
+    let target = sel.value;
+    if (target === '__new__') {
+        target = normalizeClassName(input.value);
+    }
+    return target;
+}
+function proceedToTransferStep2() {
     const sel = document.getElementById('transfer-target-class');
     if (!sel.value) {
         alert('Лутфан, синфи ҳадафро интихоб кунед.');
         return false;
     }
+    const target = getTransferTarget();
     if (sel.value === '__new__') {
         const input = document.getElementById('transfer-new-class-name');
         if (!validateClassInput(input)) {
             alert('Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А)');
             return false;
         }
-        updateTransferMessage();
+    }
+    const source = '{{ class_name }}';
+    if (!isValidClassMerge(source, target)) {
+        if (source.endsWith('-А') || source.endsWith('-A')) {
+            alert('Синфи асосии «А» наметавонад ба дигар синфҳо кӯчонида шавад! Танҳо синфҳои «Б, В, Г» метавонанд ба синфи «А» муттаҳид карда шаванд.');
+        } else {
+            alert('Кӯчонидан танҳо аз ҳарфи ҷуфттар ба ҳарфи пештар иҷозат дорад (масалан: 10-Б -> 10-А).');
+        }
+        return false;
+    }
+    const form = document.getElementById('transfer-class-modal').querySelector('form');
+    form.dataset.phase = 'confirmed';
+    document.getElementById('transfer-step-1').style.display = 'none';
+    document.getElementById('transfer-step-2').style.display = 'block';
+    return false;
+}
+function validateTransferForm(form) {
+    if (form.dataset.phase !== 'confirmed') {
+        return proceedToTransferStep2();
+    }
+    const sel = document.getElementById('transfer-target-class');
+    const target = getTransferTarget();
+    if (sel.value === '__new__') {
+        const input = document.getElementById('transfer-new-class-name');
+        if (!validateClassInput(input)) {
+            alert('Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А)');
+            return false;
+        }
+    }
+    const source = '{{ class_name }}';
+    if (!isValidClassMerge(source, target)) {
+        if (source.endsWith('-А') || source.endsWith('-A')) {
+            alert('Синфи асосии «А» наметавонад ба дигар синфҳо кӯчонида шавад! Танҳо синфҳои «Б, В, Г» метавонанд ба синфи «А» муттаҳид карда шаванд.');
+        } else {
+            alert('Кӯчонидан танҳо аз ҳарфи ҷуфттар ба ҳарфи пештар иҷозат дорад (масалан: 10-Б -> 10-А).');
+        }
+        return false;
     }
     return true;
 }

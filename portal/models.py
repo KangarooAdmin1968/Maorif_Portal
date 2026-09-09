@@ -20,6 +20,10 @@ LANGUAGE_CHOICES = [
 ]
 
 
+# Official Tajik Cyrillic class letters (uppercase) in standard order
+CLASS_LETTERS = 'АБВГҒДЕЁЖЗИӢЙКҚЛМНОПРСТУӮФХҲЧҶШЪЭЮЯ'
+
+
 def normalize_class_name(raw):
     """10a, 10-a, 10_a -> 10-А (Cyrillic uppercase)"""
     if not raw:
@@ -28,7 +32,7 @@ def normalize_class_name(raw):
     # unify separators
     raw = raw.replace('_', '-')
     raw = raw.replace(' ', '-')
-    match = re.search(r'(\d+)\s*[-]?\s*([A-ZА-ЯЁ])', raw)
+    match = re.search(rf'(\d+)\s*[-]?\s*([A-Z{CLASS_LETTERS}])', raw)
     if match:
         num = match.group(1)
         let = match.group(2)

@@ -19,7 +19,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest, CLASS_LETTERS
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -173,7 +173,7 @@ def _is_zavuch(user, role=None):
     return (role and role.lower() == 'zavuch') or user.username.lower().startswith('zavuch_')
 
 
-CLASS_NAME_RE = re.compile(r'^(?:[1-9]|1[0-1])-[А-ЯЁA-Z]$')
+CLASS_NAME_RE = re.compile(rf'^(?:[1-9]|1[0-1])-[{CLASS_LETTERS}]$')
 
 
 def _can_manage_school(user, school):
@@ -195,16 +195,17 @@ def _validate_class_name(raw):
     return norm
 
 
-# Standard Cyrillic letter order used for class merge direction checks
-_CLASS_LETTER_ORDER = {c: i for i, c in enumerate('АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ')}
+# Official Tajik Cyrillic letter order used for class merge direction checks
+_CLASS_LETTER_ORDER = {c: i for i, c in enumerate(CLASS_LETTERS)}
+_CLASS_LETTER_RE = re.compile(rf'^(\d+)-([{CLASS_LETTERS}])$')
 
 
 def _is_valid_class_merge(source, target):
     """Return True only if source is a higher-alphabet letter than target in the same grade."""
     source = normalize_class_name(source)
     target = normalize_class_name(target)
-    m = re.match(r'^(\d+)-([A-ZА-ЯЁ])$', source)
-    n = re.match(r'^(\d+)-([A-ZА-ЯЁ])$', target)
+    m = _CLASS_LETTER_RE.match(source)
+    n = _CLASS_LETTER_RE.match(target)
     if not m or not n:
         return False
     if int(m.group(1)) != int(n.group(1)):

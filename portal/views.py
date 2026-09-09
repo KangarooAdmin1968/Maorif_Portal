@@ -2171,8 +2171,10 @@ def request_deactivation(request):
         requested_by=request.user,
         status='pending',
     )
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('Accept', '').startswith('application/json'):
+        return JsonResponse({'status': 'ok', 'message': 'Дархост ирсол шуд'})
     messages.success(request, f'Дархости хориҷкунии «{cs.subject}» барои {cs.class_name} ирсол шуд.')
-    return redirect('lesson_allocation')
+    return redirect(f'{reverse("lesson_allocation")}?class={cs.class_name}')
 
 
 @user_passes_test(lambda u: u.is_superuser)

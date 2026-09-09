@@ -64,7 +64,7 @@
     <button type="button" class="alloc-tab active" id="tab-classes" onclick="switchTab('classes')">📚 Тақсимоти синфҳо</button>
     <button type="button" class="alloc-tab" id="tab-gaps" onclick="switchTab('gaps')">⚠️ Камбудиҳо <span class="gap-badge" id="gap-count">0</span></button>
     {% if is_zavuch %}
-    <button type="button" class="alloc-tab" id="tab-requests" onclick="switchTab('requests')">📨 Дархостҳои ман</button>
+    <button type="button" class="alloc-tab" id="tab-requests" onclick="switchTab('requests')">📨 Дархостҳои ман <span class="gap-badge" id="requests-count">{{ my_requests|length }}</span></button>
     {% endif %}
 </div>
 
@@ -114,7 +114,7 @@
                                     {% if cs.id in pending_request_ids %}
                                         <span class="badge" style="background:#f59e0b; color:#fff; padding:.25rem .5rem; border-radius:.3rem; font-size:.85rem;">🟡 Дархост ирсол шуд</span>
                                     {% else %}
-                                    <form action="{% url 'request_deactivation' %}" method="post" style="display:inline;">
+                                    <form class="deactivation-form" action="{% url 'request_deactivation' %}" method="post" style="display:inline;">
                                         {% csrf_token %}
                                         <input type="hidden" name="cs_id" value="{{ cs.id }}">
                                         <button type="submit" class="btn btn-warning btn-sm">Дархости хориҷкунӣ</button>
@@ -253,9 +253,58 @@
         sel.addEventListener('change', refreshGaps);
     });
 
-    // Initial state: select the first class, compute gaps/dots
+    // AJAX deactivation request forms
+    document.querySelectorAll('.deactivation-form').forEach(form => {
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            const csrf = form.querySelector('input[name="csrfmiddlewaretoken"]').value;
+            const csId = form.querySelector('input[name="cs_id"]').value;
+            const url = form.getAttribute('action');
+            const btn = form.querySelector('button');
+            btn.disabled = true;
+            btn.textContent = '...';
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrf,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'cs_id=' + encodeURIComponent(csId),
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge';
+                    badge.style.cssText = 'background:#f59e0b; color:#fff; padding:.25rem .5rem; border-radius:.3rem; font-size:.85rem;';
+                    badge.textContent = '🟡 Дархост ирсол шуд';
+                    form.replaceWith(badge);
+                    const rc = document.getElementById('requests-count');
+                    if (rc) rc.textContent = parseInt(rc.textContent || '0') + 1;
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = 'Дархости хориҷкунӣ';
+                }
+            })
+            .catch(() => {
+                btn.disabled = false;
+                btn.textContent = 'Дархости хориҷкунӣ';
+            });
+        });
+    });
+
+    // Initial state: pick class from URL or first
+    const urlParams = new URLSearchParams(window.location.search);
+    const preselect = urlParams.get('class');
+    if (preselect && classBtns.some(b => b.dataset.class === preselect)) {
+        switchTab('classes');
+        selectClass(preselect);
+    } else if (classBtns.length) {
+        selectClass(classBtns[0].dataset.class);
+    }
     refreshGaps();
-    if (classBtns.length) selectClass(classBtns[0].dataset.class);
 })();
 </script>
 {% endblock %}

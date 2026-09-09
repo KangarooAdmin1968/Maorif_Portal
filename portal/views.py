@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.db.models import Avg, Count, Sum, Q
 import io
 import json
@@ -170,6 +171,68 @@ def _is_zavuch(user, role=None):
     if role is None:
         role = get_user_role(user)
     return (role and role.lower() == 'zavuch') or user.username.lower().startswith('zavuch_')
+
+
+CLASS_NAME_RE = re.compile(r'^(?:[1-9]|1[0-1])-[А-ЯЁA-Z]$')
+
+
+def _can_manage_school(user, school):
+    """Return True if the user is a superuser or a zavuch of the given school."""
+    if not user or user.is_anonymous:
+        return False
+    if user.is_superuser:
+        return True
+    return _is_zavuch(user) and get_user_school(user) == school
+
+
+def _validate_class_name(raw):
+    """Normalize and validate a class name, returning the normalized form or None."""
+    if not raw:
+        return None
+    norm = normalize_class_name(raw)
+    if not CLASS_NAME_RE.match(norm):
+        return None
+    return norm
+
+
+def _deactivate_empty_class(school, class_name):
+    """Deactivate all ClassSubjects for a class that no longer has students."""
+    class_name = normalize_class_name(class_name)
+    if not Student.objects.filter(school=school, class_name=class_name).exists():
+        ClassSubject.objects.filter(school=school, class_name=class_name).update(is_active=False)
+
+
+def _move_student(school, student, new_class_name, new_full_name=None):
+    """Move a student to a new class and/or name, preserving grade history.
+
+    Because the Student primary key is derived from school + class + full name,
+    a new Student row is created and all Grade / QuarterGrade records are
+    re-linked to it. The old row is then removed.
+    """
+    new_full_name = (new_full_name or student.full_name).strip()
+    new_class_name = normalize_class_name(new_class_name)
+    new_id = f"{school.name}__{new_class_name}__{new_full_name}"
+    old_id = student.id
+    if old_id == new_id:
+        return student
+
+    if Student.objects.filter(id=new_id).exclude(id=old_id).exists():
+        raise ValueError('Хонанда бо ин ном дар синфи ҳадаф аллакай вуҷуд дорад.')
+
+    with transaction.atomic():
+        new_student = Student.objects.create(
+            id=new_id,
+            full_name=new_full_name,
+            class_name=new_class_name,
+            school=school,
+        )
+        Grade.objects.filter(student_id=old_id).update(student=new_student)
+        QuarterGrade.objects.filter(student_id=old_id).update(
+            student=new_student, class_name=new_class_name
+        )
+        Student.objects.filter(id=old_id).delete()
+
+    return new_student
 
 
 def has_school_access(user, school):
@@ -798,12 +861,16 @@ def class_detail(request, school_id, class_name):
         school=school, class_name=class_name, is_active=True, subject__in=official_subjects()
     ).order_by('subject')
     non_graded = is_non_graded(class_name)
+    all_classes = sorted({
+        c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()
+    }, key=class_numeric_part)
     return render(request, 'portal/class_detail.html', {
         'school': school,
         'class_name': class_name,
         'students': students,
         'subjects': subjects,
         'non_graded': non_graded,
+        'all_classes': all_classes,
     })
 
 
@@ -951,11 +1018,13 @@ def remove_student(request, school_id, class_name):
 @require_POST
 def edit_student(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not _can_manage_school(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
     student_id = request.POST.get('student_id', '').strip()
     full_name = request.POST.get('full_name', '').strip()
+    class_option = request.POST.get('class_name', '').strip()
+    new_class_input = request.POST.get('new_class_name', '').strip()
 
     if not student_id or not full_name:
         messages.error(request, 'Иттилооти нокифоя барои таҳрири хонанда.')
@@ -967,10 +1036,69 @@ def edit_student(request, school_id, class_name):
         messages.error(request, 'Хонанда ёфт нашуд.')
         return redirect('class_detail', school_id=school.id, class_name=class_name)
 
-    student.full_name = full_name
-    student.save()
+    target_class = new_class_input if class_option == '__new__' else class_option
+    if not target_class:
+        messages.error(request, 'Синф интихоб карда шавад.')
+        return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+    target_class = _validate_class_name(target_class)
+    if not target_class:
+        messages.error(request, 'Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А).')
+        return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+    try:
+        _move_student(school, student, target_class, full_name)
+    except ValueError as e:
+        messages.error(request, str(e))
+        return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+    ensure_class_subjects(school, target_class)
+    _deactivate_empty_class(school, class_name)
     messages.success(request, f'Хонанда {full_name} таҳрир шуд.')
-    return redirect('class_detail', school_id=school.id, class_name=class_name)
+    return redirect('class_detail', school_id=school.id, class_name=target_class)
+
+
+@login_required
+@require_POST
+def transfer_class(request, school_id, class_name):
+    school = get_object_or_404(School, id=school_id)
+    if not _can_manage_school(request.user, school):
+        return redirect('dashboard')
+    source_class = normalize_class_name(class_name)
+    target_option = request.POST.get('target_class', '').strip()
+    new_class_input = request.POST.get('new_class_name', '').strip()
+
+    target_class = new_class_input if target_option == '__new__' else target_option
+    if not target_class:
+        messages.error(request, 'Синфи ҳадаф интихоб карда шавад.')
+        return redirect('class_detail', school_id=school.id, class_name=source_class)
+
+    target_class = _validate_class_name(target_class)
+    if not target_class:
+        messages.error(request, 'Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А).')
+        return redirect('class_detail', school_id=school.id, class_name=source_class)
+
+    if target_class == source_class:
+        messages.warning(request, 'Синфи манба ва ҳадаф якхеланд.')
+        return redirect('class_detail', school_id=school.id, class_name=source_class)
+
+    students = list(Student.objects.filter(school=school, class_name=source_class).order_by('full_name'))
+    if not students:
+        messages.warning(request, 'Синфи манба холӣ аст.')
+        return redirect('class_detail', school_id=school.id, class_name=source_class)
+
+    try:
+        with transaction.atomic():
+            for student in students:
+                _move_student(school, student, target_class, student.full_name)
+    except ValueError as e:
+        messages.error(request, str(e))
+        return redirect('class_detail', school_id=school.id, class_name=source_class)
+
+    ensure_class_subjects(school, target_class)
+    ClassSubject.objects.filter(school=school, class_name=source_class).update(is_active=False)
+    messages.success(request, 'Хонандагон бомуваффақият кӯчонида шуданд.')
+    return redirect('class_detail', school_id=school.id, class_name=target_class)
 
 
 @login_required

@@ -6,8 +6,9 @@
 <h1>{{ school.name }} — Синф {{ class_name }}</h1>
 
 {% if can_manage %}
-<div class="toolbar">
+<div class="toolbar" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem;">
     <button type="button" class="btn btn-success" onclick="openAddStudentModal()">+ Илова кардани хонанда</button>
+    <button type="button" class="btn btn-warning" onclick="openTransferClassModal()">🔄 Кӯчонидани синф</button>
 </div>
 {% endif %}
 
@@ -29,14 +30,55 @@
 <div id="edit-student-modal" class="modal" style="display:none;">
     <div class="modal-content" style="padding:1.5rem; border-radius:0.5rem;">
         <h3>Таҳрири хонанда</h3>
-        <form action="{% url 'edit_student' school.id class_name %}" method="post">
+        <form action="{% url 'edit_student' school.id class_name %}" method="post" onsubmit="return validateEditForm(this);">
             {% csrf_token %}
             <input type="hidden" id="edit-student-id" name="student_id" value="">
             <label for="edit-student-name" style="display:block; margin-top:0.5rem;">Ному насаби хонанда</label>
             <input type="text" id="edit-student-name" name="full_name" placeholder="Номи хонандаро ворид кунед" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            <label for="edit-student-class" style="display:block; margin-top:0.5rem;">Синф</label>
+            <select id="edit-student-class" name="class_name" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;" onchange="toggleEditNewClass(this)">
+                {% for c in all_classes %}
+                <option value="{{ c }}" {% if c == class_name %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+                <option value="__new__">+ Синфи нав...</option>
+            </select>
+            <div id="edit-new-class-wrapper" style="display:none;">
+                <label for="edit-new-class-name" style="display:block; margin-top:0.5rem;">Номи синфи нав</label>
+                <input type="text" id="edit-new-class-name" name="new_class_name" placeholder="1-В" pattern="^([1-9]|1[0-1])-[А-ЯЁA-Z]$" style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
             <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
                 <button type="button" class="btn btn-secondary" onclick="closeEditStudentModal()">Бекор</button>
                 <button type="submit" class="btn btn-primary">Сабт</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="transfer-class-modal" class="modal" style="display:none;">
+    <div class="modal-content" style="padding:1.5rem; border-radius:0.5rem;">
+        <h3>Кӯчонидани синф</h3>
+        <form action="{% url 'transfer_class' school.id class_name %}" method="post" onsubmit="return validateTransferForm(this);">
+            {% csrf_token %}
+            <label style="display:block; margin-top:0.5rem;">Синфи манба</label>
+            <input type="text" value="{{ class_name }}" disabled style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem; background:#f3f4f6;">
+            <label for="transfer-target-class" style="display:block; margin-top:0.5rem;">Синфи ҳадаф</label>
+            <select id="transfer-target-class" name="target_class" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;" onchange="toggleTransferNewClass(this)">
+                <option value="" disabled selected>Синфи ҳадафро интихоб кунед</option>
+                {% for c in all_classes %}
+                {% if c != class_name %}
+                <option value="{{ c }}">{{ c }}</option>
+                {% endif %}
+                {% endfor %}
+                <option value="__new__">+ Синфи нав</option>
+            </select>
+            <div id="transfer-new-class-wrapper" style="display:none;">
+                <label for="transfer-new-class-name" style="display:block; margin-top:0.5rem;">Номи синфи нав</label>
+                <input type="text" id="transfer-new-class-name" name="new_class_name" placeholder="1-В" pattern="^([1-9]|1[0-1])-[А-ЯЁA-Z]$" oninput="updateTransferMessage()" style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
+            </div>
+            <p id="transfer-confirm-text" style="margin:1rem 0; font-weight:bold; color:#1f2937;"></p>
+            <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="closeTransferClassModal()">Не</button>
+                <button type="submit" class="btn btn-primary">Ҳа</button>
             </div>
         </form>
     </div>
@@ -190,6 +232,36 @@
 </style>
 
 <script>
+const LATIN_TO_CYRILLIC = {'A':'А','B':'Б','C':'В','K':'К'};
+
+function toCyrillicLetter(letter) {
+    return LATIN_TO_CYRILLIC[letter] || letter;
+}
+
+function normalizeClassName(raw) {
+    if (!raw) return '';
+    let s = raw.trim().toUpperCase();
+    s = s.replace(/[\s_]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    const m = s.match(/^(\d+)-?([A-ZА-ЯЁ])$/);
+    if (m) {
+        return m[1] + '-' + toCyrillicLetter(m[2]);
+    }
+    return s;
+}
+
+function isValidClassName(name) {
+    const m = name.match(/^(\d+)-([А-ЯЁ])$/);
+    if (!m) return false;
+    const n = parseInt(m[1], 10);
+    return n >= 1 && n <= 11;
+}
+
+function validateClassInput(input) {
+    const norm = normalizeClassName(input.value);
+    input.value = norm;
+    return isValidClassName(norm);
+}
+
 function toggleSubjects() {
     document.getElementById('subject-menu').classList.toggle('show');
 }
@@ -210,11 +282,86 @@ function closeAddStudentModal() {
 function openEditStudentModal(btn) {
     document.getElementById('edit-student-id').value = btn.dataset.id;
     document.getElementById('edit-student-name').value = btn.dataset.name;
+    const sel = document.getElementById('edit-student-class');
+    sel.value = '{{ class_name }}';
+    toggleEditNewClass(sel);
     document.getElementById('edit-student-modal').style.display = 'flex';
     document.getElementById('edit-student-name').focus();
 }
 function closeEditStudentModal() {
     document.getElementById('edit-student-modal').style.display = 'none';
+}
+function toggleEditNewClass(sel) {
+    const wrap = document.getElementById('edit-new-class-wrapper');
+    if (sel.value === '__new__') {
+        wrap.style.display = 'block';
+        document.getElementById('edit-new-class-name').setAttribute('required', 'required');
+    } else {
+        wrap.style.display = 'none';
+        document.getElementById('edit-new-class-name').removeAttribute('required');
+        document.getElementById('edit-new-class-name').value = '';
+    }
+}
+function validateEditForm(form) {
+    const sel = document.getElementById('edit-student-class');
+    if (sel.value === '__new__') {
+        const input = document.getElementById('edit-new-class-name');
+        if (!validateClassInput(input)) {
+            alert('Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А)');
+            return false;
+        }
+    }
+    return true;
+}
+function openTransferClassModal() {
+    const modal = document.getElementById('transfer-class-modal');
+    const sel = document.getElementById('transfer-target-class');
+    sel.value = '';
+    toggleTransferNewClass(sel);
+    updateTransferMessage();
+    modal.style.display = 'flex';
+}
+function closeTransferClassModal() {
+    document.getElementById('transfer-class-modal').style.display = 'none';
+}
+function toggleTransferNewClass(sel) {
+    const wrap = document.getElementById('transfer-new-class-wrapper');
+    if (sel.value === '__new__') {
+        wrap.style.display = 'block';
+        document.getElementById('transfer-new-class-name').setAttribute('required', 'required');
+    } else {
+        wrap.style.display = 'none';
+        document.getElementById('transfer-new-class-name').removeAttribute('required');
+        document.getElementById('transfer-new-class-name').value = '';
+    }
+    updateTransferMessage();
+}
+function updateTransferMessage() {
+    const source = '{{ class_name }}';
+    const sel = document.getElementById('transfer-target-class');
+    const input = document.getElementById('transfer-new-class-name');
+    let target = sel.value;
+    if (target === '__new__') {
+        target = normalizeClassName(input.value) || '...';
+    }
+    document.getElementById('transfer-confirm-text').textContent =
+        `Ҳамаи хонандагони синфи ${source} ба синфи ${target} кӯчонида шаванд ва синфи ${source} баста шавад?`;
+}
+function validateTransferForm(form) {
+    const sel = document.getElementById('transfer-target-class');
+    if (!sel.value) {
+        alert('Лутфан, синфи ҳадафро интихоб кунед.');
+        return false;
+    }
+    if (sel.value === '__new__') {
+        const input = document.getElementById('transfer-new-class-name');
+        if (!validateClassInput(input)) {
+            alert('Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А)');
+            return false;
+        }
+        updateTransferMessage();
+    }
+    return true;
 }
 window.onclick = function(e) {
     if (e.target === document.getElementById('add-student-modal')) {
@@ -222,6 +369,9 @@ window.onclick = function(e) {
     }
     if (e.target === document.getElementById('edit-student-modal')) {
         document.getElementById('edit-student-modal').style.display = 'none';
+    }
+    if (e.target === document.getElementById('transfer-class-modal')) {
+        document.getElementById('transfer-class-modal').style.display = 'none';
     }
 }
 </script>

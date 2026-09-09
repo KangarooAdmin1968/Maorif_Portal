@@ -1,7 +1,12 @@
 {% extends "admin/change_list.html" %}
 {% block object-tools-items %}
 {{ block.super }}
+{% if request.user.is_superuser %}
 <li>
-    <a href="{% url 'admin:portal_classsubject_bulk_assign' %}" class="addlink">Оммавий қўшиш</a>
+    <a href="{% url 'admin:portal_classsubject_bulk_assign' %}" class="addlink">Иловаи оммавӣ</a>
 </li>
+<li>
+    <a href="{% url 'admin:portal_classsubject_bulk_deactivate' %}" class="deletelink">Хориҷкунии оммавӣ</a>
+</li>
+{% endif %}
 {% endblock %}

@@ -3,11 +3,13 @@ from django.core.exceptions import PermissionDenied
 from django.http import JsonResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
 from django.urls import path, reverse
+from django.utils import timezone
 
 from .forms import ClassSubjectAdminForm, BulkClassSubjectForm
 from .models import (
     School, Teacher, Student, Grade, QuarterGrade, QuarterLock,
-    ClassSubject, UserProfile, normalize_class_name, normalize_subject,
+    ClassSubject, UserProfile, SubjectDeactivationRequest,
+    normalize_class_name, normalize_subject,
 )
 from .utils import class_numeric_part
 
@@ -68,6 +70,8 @@ class ClassSubjectAdmin(admin.ModelAdmin):
                  name=f'{info[0]}_{info[1]}_school_classes'),
             path('bulk-assign/', self.admin_site.admin_view(self.bulk_assign_view),
                  name=f'{info[0]}_{info[1]}_bulk_assign'),
+            path('bulk-deactivate/', self.admin_site.admin_view(self.bulk_deactivate_view),
+                 name=f'{info[0]}_{info[1]}_bulk_deactivate'),
         ] + super().get_urls()
 
     def school_classes_json(self, request):
@@ -86,9 +90,12 @@ class ClassSubjectAdmin(admin.ModelAdmin):
         names = sorted(names, key=lambda c: (class_numeric_part(c) or 0, c))
         return JsonResponse(list(names), safe=False)
 
-    def bulk_assign_view(self, request):
-        if not (request.user.is_superuser or request.user.is_staff):
+    def _bulk_check(self, request):
+        if not request.user.is_superuser:
             raise PermissionDenied
+
+    def bulk_assign_view(self, request):
+        self._bulk_check(request)
         created = None
         if request.method == 'POST':
             form = BulkClassSubjectForm(request.POST)
@@ -120,9 +127,80 @@ class ClassSubjectAdmin(admin.ModelAdmin):
             form = BulkClassSubjectForm()
         return render(request, 'admin/portal/classsubject/bulk_assign.html', {
             'form': form,
-            'title': 'Оммавий иловаи фан',
+            'title': 'Иловаи оммавӣ',
+            'submit_label': 'Иловаи оммавӣ',
+            'result_text': 'сабти нав сохта шуд',
             'created_count': created,
         })
+
+    def bulk_deactivate_view(self, request):
+        self._bulk_check(request)
+        deactivated = None
+        if request.method == 'POST':
+            form = BulkClassSubjectForm(request.POST)
+            if form.is_valid():
+                grade = form.cleaned_data['grade']
+                subject = normalize_subject(form.cleaned_data['subject'])
+                deactivated = 0
+                for school in School.objects.all():
+                    class_names = set()
+                    class_names.update(ClassSubject.objects.filter(school=school).values_list('class_name', flat=True).distinct())
+                    class_names.update(Student.objects.filter(school=school).values_list('class_name', flat=True).distinct())
+                    for cn in class_names:
+                        if str(class_numeric_part(cn)) == grade:
+                            n = ClassSubject.objects.filter(
+                                school=school,
+                                class_name=normalize_class_name(cn),
+                                subject=subject,
+                                is_active=True,
+                            ).update(is_active=False)
+                            deactivated += n
+                self.message_user(
+                    request,
+                    f'{deactivated} сабтҳои "{subject}" барои синфи {grade} ғайрифаъол шуд.',
+                    level=messages.SUCCESS,
+                )
+                return HttpResponseRedirect(reverse('admin:portal_classsubject_changelist'))
+        else:
+            form = BulkClassSubjectForm()
+        return render(request, 'admin/portal/classsubject/bulk_assign.html', {
+            'form': form,
+            'title': 'Хориҷкунии оммавӣ',
+            'submit_label': 'Хориҷкунии оммавӣ',
+            'result_text': 'сабт ғайрифаъол шуд',
+            'created_count': deactivated,
+        })
+
+
+@admin.register(SubjectDeactivationRequest)
+class SubjectDeactivationRequestAdmin(admin.ModelAdmin):
+    list_display = ['class_subject', 'requested_by', 'requested_at', 'status', 'reviewed_by', 'reviewed_at']
+    list_filter = ['status', 'requested_at']
+    search_fields = ['class_subject__subject', 'class_subject__class_name', 'requested_by__username']
+    actions = ['approve_requests', 'reject_requests']
+    readonly_fields = ['class_subject', 'requested_by', 'requested_at']
+
+    @admin.action(description='Тасдиқи хориҷкунӣ')
+    def approve_requests(self, request, queryset):
+        now = timezone.now()
+        for req in queryset.filter(status='pending'):
+            req.class_subject.is_active = False
+            req.class_subject.save()
+            req.status = 'approved'
+            req.reviewed_by = request.user
+            req.reviewed_at = now
+            req.save()
+        self.message_user(request, 'Дархостҳои интихобшуда тасдиқ шуданд.', messages.SUCCESS)
+
+    @admin.action(description='Радди хориҷкунӣ')
+    def reject_requests(self, request, queryset):
+        now = timezone.now()
+        queryset.filter(status='pending').update(
+            status='rejected',
+            reviewed_by=request.user,
+            reviewed_at=now,
+        )
+        self.message_user(request, 'Дархостҳои интихобшуда рад шуданд.', messages.SUCCESS)
 
 
 @admin.register(QuarterLock)

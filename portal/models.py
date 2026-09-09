@@ -307,3 +307,22 @@ class TeacherProfile(models.Model):
 
     def __str__(self):
         return f"{self.full_name} — {self.school}"
+
+
+class SubjectDeactivationRequest(models.Model):
+    class_subject = models.ForeignKey(ClassSubject, on_delete=models.CASCADE, verbose_name='Фани синф')
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deactivation_requests', verbose_name='Дархосткунанда')
+    requested_at = models.DateTimeField('Санаи дархост', auto_now_add=True)
+    status = models.CharField('Ҳолат', max_length=20, choices=[
+        ('pending', 'Дар тайёри'),
+        ('approved', 'Тасдиқ шуд'),
+        ('rejected', 'Рад шуд'),
+    ], default='pending')
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_deactivations', verbose_name='Баррасикунанда')
+    reviewed_at = models.DateTimeField('Санаи баррасӣ', null=True, blank=True)
+    notes = models.TextField('Эзоҳ', blank=True)
+
+    class Meta:
+        verbose_name = 'Дархости хориҷкунии фан'
+        verbose_name_plural = 'Дархостҳои хориҷкунии фан'
+        ordering = ['-requested_at']

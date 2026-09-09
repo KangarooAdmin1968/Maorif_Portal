@@ -30,6 +30,8 @@ urlpatterns = [
     path('school/<int:school_id>/teachers/import/', views.import_teachers, name='import_teachers'),
     path('schools/allocation/', views.lesson_allocation, name='lesson_allocation'),
     path('schools/allocation/save/', views.save_lesson_allocation, name='save_lesson_allocation'),
+    path('schools/allocation/deactivate/', views.deactivate_subject, name='deactivate_subject'),
+    path('schools/allocation/request-deactivation/', views.request_deactivation, name='request_deactivation'),
     path('student/<str:student_id>/', views.student_detail, name='student_detail'),
     path('google3c6e6431fb434e83.html', views.google_verification, name='google_verification'),
     path('password_change/', auth_views.PasswordChangeView.as_view(

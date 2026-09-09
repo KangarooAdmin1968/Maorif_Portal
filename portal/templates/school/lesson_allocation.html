@@ -85,7 +85,7 @@
                 </div>
                 <table class="data-table">
                     <thead>
-                        <tr><th>Фан</th><th>Омӯзгори масъул</th></tr>
+                        <tr><th>Фан</th><th>Омӯзгори масъул</th><th>Амал</th></tr>
                     </thead>
                     <tbody id="alloc-body">
                         {% for cs in class_subjects %}
@@ -100,9 +100,24 @@
                                     {% endfor %}
                                 </select>
                             </td>
+                            <td>
+                                {% if is_superuser %}
+                                <form action="{% url 'deactivate_subject' %}" method="post" style="display:inline;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="cs_id" value="{{ cs.id }}">
+                                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Оё шумо дар ҳақиқат мехоҳед ин фанро хориҷ кунед?');">Хориҷ кардан</button>
+                                </form>
+                                {% elif is_zavuch %}
+                                <form action="{% url 'request_deactivation' %}" method="post" style="display:inline;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="cs_id" value="{{ cs.id }}">
+                                    <button type="submit" class="btn btn-warning btn-sm">Дархости хориҷкунӣ</button>
+                                </form>
+                                {% endif %}
+                            </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="2">Фанҳо ёфт нашуданд.</td></tr>
+                        <tr><td colspan="3">Фанҳо ёфт нашуданд.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

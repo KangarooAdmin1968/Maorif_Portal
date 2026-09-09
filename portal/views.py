@@ -17,7 +17,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -2050,6 +2050,8 @@ def lesson_allocation(request):
         'school': school,
         'class_subjects': class_subjects,
         'teachers': teachers,
+        'is_superuser': request.user.is_superuser,
+        'is_zavuch': _is_zavuch(request.user, get_user_role(request.user)),
     })
 
 
@@ -2105,6 +2107,53 @@ def save_lesson_allocation(request):
         ClassSubject.objects.bulk_update(updated, ['allocated_teacher', 'teacher'], batch_size=100)
 
     messages.success(request, 'Тақсимоти дарсҳо ба омӯзгорон бо муваффақият сабт шуд.')
+    return redirect('lesson_allocation')
+
+
+@login_required
+@require_POST
+def deactivate_subject(request):
+    if not request.user.is_superuser:
+        messages.error(request, 'Танҳо superuser метавонад фанро хориҷ кунад.')
+        return redirect('lesson_allocation')
+    cs_id = request.POST.get('cs_id')
+    if not cs_id:
+        return redirect('lesson_allocation')
+    try:
+        cs = ClassSubject.objects.get(pk=int(cs_id))
+    except (ValueError, ClassSubject.DoesNotExist):
+        messages.error(request, 'Фан ёфт нашуд.')
+        return redirect('lesson_allocation')
+    cs.is_active = False
+    cs.save()
+    messages.success(request, f'Фани «{cs.subject}» барои {cs.class_name} хориҷ шуд.')
+    return redirect('lesson_allocation')
+
+
+@login_required
+@require_POST
+def request_deactivation(request):
+    if not _is_zavuch(request.user, get_user_role(request.user)):
+        messages.error(request, 'Танҳо завучҳо метавонанд дархости хориҷкунӣ ирсол кунанд.')
+        return redirect('lesson_allocation')
+    cs_id = request.POST.get('cs_id')
+    if not cs_id:
+        return redirect('lesson_allocation')
+    try:
+        cs = ClassSubject.objects.get(pk=int(cs_id))
+    except (ValueError, ClassSubject.DoesNotExist):
+        messages.error(request, 'Фан ёфт нашуд.')
+        return redirect('lesson_allocation')
+    school = get_user_school(request.user)
+    if not school or not has_school_access(request.user, school) or cs.school != school:
+        messages.error(request, 'Шумо метавонед танҳо барои муассисаи худ дархост диҳед.')
+        return redirect('lesson_allocation')
+    SubjectDeactivationRequest.objects.get_or_create(
+        class_subject=cs,
+        requested_by=request.user,
+        status='pending',
+    )
+    messages.success(request, f'Дархости хориҷкунии «{cs.subject}» барои {cs.class_name} ирсол шуд.')
     return redirect('lesson_allocation')
 
 

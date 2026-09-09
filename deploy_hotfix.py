@@ -22,6 +22,7 @@ FILES = [
     ('portal/urls.py', f'{PROJECT_DIR}/portal/urls.py'),
     ('portal/migrations/0010_subjectdeactivationrequest.py', f'{PROJECT_DIR}/portal/migrations/0010_subjectdeactivationrequest.py'),
     ('portal/templates/portal/base.html', f'{PROJECT_DIR}/portal/templates/portal/base.html'),
+    ('portal/templates/portal/dashboard.html', f'{PROJECT_DIR}/portal/templates/portal/dashboard.html'),
     ('portal/templates/portal/grade_entry.html', f'{PROJECT_DIR}/portal/templates/portal/grade_entry.html'),
     ('portal/templates/portal/school_readiness_rating.html', f'{PROJECT_DIR}/portal/templates/portal/school_readiness_rating.html'),
     ('portal/templates/portal/documents_landing.html', f'{PROJECT_DIR}/portal/templates/portal/documents_landing.html'),

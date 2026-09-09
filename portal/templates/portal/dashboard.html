@@ -346,6 +346,33 @@
             </section>
         </div>
     </div>
+    {% if my_requests %}
+    <div class="row" style="margin-top: 1.5rem;">
+        <div class="col-md-12" style="flex: 0 0 100%; max-width: 100%;">
+            <section class="card">
+                <h2>Дархостҳои ман</h2>
+                <div class="table-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr><th>Фан</th><th>Синф</th><th>Ҳолат</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for req in my_requests %}
+                            <tr>
+                                <td>{{ req.class_subject.subject }}</td>
+                                <td>{{ req.class_subject.class_name }}</td>
+                                <td>
+                                    {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b;">Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981;">Тасдиқшуда</span>{% else %}<span class="badge" style="background:#ef4444;">Радшуда</span>{% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <div class="mobile-dashboard">
@@ -355,6 +382,7 @@
             <button class="mobile-tab" data-target="honor" type="button">Ифтихори маориф</button>
             <button class="mobile-tab" data-target="classes" type="button">Синфҳо</button>
             <button class="mobile-tab" data-target="subjects" type="button">Фанҳо</button>
+            {% if my_requests %}<button class="mobile-tab" data-target="requests" type="button">Дархостҳо</button>{% endif %}
         </div>
     </div>
 
@@ -476,6 +504,24 @@
             </div>
         </section>
     </div>
+    {% if my_requests %}
+    <div id="mobile-pane-requests" class="mobile-pane">
+        <section class="card">
+            <h2>Дархостҳои ман</h2>
+            <div class="mobile-cards">
+                {% for req in my_requests %}
+                <div class="mobile-card">
+                    <div class="mobile-card-body">
+                        <div class="mobile-card-row"><span>Фан:</span> <strong>{{ req.class_subject.subject }}</strong></div>
+                        <div class="mobile-card-row"><span>Синф:</span> <strong>{{ req.class_subject.class_name }}</strong></div>
+                        <div class="mobile-card-row"><span>Ҳолат:</span> <strong>{% if req.status == 'pending' %}Дар интизорӣ{% elif req.status == 'approved' %}Тасдиқшуда{% else %}Радшуда{% endif %}</strong></div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+    </div>
+    {% endif %}
 </div>
 
 <section class="card" style="margin-top:1.5rem;">

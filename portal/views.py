@@ -581,6 +581,10 @@ def dashboard(request):
     except ZeroDivisionError:
         ratio = 0.0
 
+    my_requests = SubjectDeactivationRequest.objects.filter(
+        requested_by=request.user
+    ).select_related('class_subject').order_by('-requested_at') if request.user.is_authenticated else []
+
     context = {
         'role': role,
         'schools': schools,
@@ -596,6 +600,7 @@ def dashboard(request):
         'ratio': ratio,
         'user_school': user_school,
         'selected_school': selected_school,
+        'my_requests': my_requests,
     }
     return render(request, 'portal/dashboard.html', context)
 

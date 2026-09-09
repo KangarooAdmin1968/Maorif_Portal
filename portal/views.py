@@ -2056,6 +2056,12 @@ def lesson_allocation(request):
         requested_by=request.user
     ).select_related('class_subject').order_by('-requested_at')
 
+    pending_request_ids = set(
+        SubjectDeactivationRequest.objects.filter(
+            requested_by=request.user, status='pending'
+        ).values_list('class_subject_id', flat=True)
+    )
+
     return render(request, 'school/lesson_allocation.html', {
         'school': school,
         'class_subjects': class_subjects,
@@ -2063,6 +2069,7 @@ def lesson_allocation(request):
         'is_superuser': request.user.is_superuser,
         'is_zavuch': _is_zavuch(request.user, get_user_role(request.user)),
         'my_requests': my_requests,
+        'pending_request_ids': pending_request_ids,
     })
 
 
@@ -2199,8 +2206,10 @@ def review_deactivation_request(request):
             f'Фани «{req.class_subject.subject}» барои {req.class_subject.class_name} дар {req.class_subject.school.name} тасдиқ ва хориҷ шуд.'
         )
     else:
+        req.class_subject.is_active = True
+        req.class_subject.save()
         req.status = 'rejected'
-        messages.success(request, 'Дархост рад карда шуд.')
+        messages.success(request, 'Дархост рад карда шуд ва фан фаъол монд.')
     req.reviewed_by = request.user
     req.reviewed_at = now
     req.save()

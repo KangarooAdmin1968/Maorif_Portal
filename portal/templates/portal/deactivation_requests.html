@@ -1,0 +1,55 @@
+{% extends 'portal/base.html' %}
+{% block title %}Дархостҳои хориҷкунии фан{% endblock %}
+{% block content %}
+<h1>📨 Дархостҳои хориҷкунии фан</h1>
+
+{% if messages %}
+<div class="messages" style="margin-bottom: 1rem;">
+    {% for message in messages %}
+    <div class="alert {{ message.tags }}">{{ message }}</div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="table-scroll">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Муассиса</th>
+                <th>Синф</th>
+                <th>Фан</th>
+                <th>Завуч</th>
+                <th>Сана</th>
+                <th>Амал</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for req in pending_requests %}
+            <tr>
+                <td>{{ req.class_subject.school.name }}</td>
+                <td>{{ req.class_subject.class_name }}</td>
+                <td>{{ req.class_subject.subject }}</td>
+                <td>{{ req.requested_by.get_full_name|default:req.requested_by.username }}</td>
+                <td>{{ req.requested_at|date:"d.m.Y H:i" }}</td>
+                <td>
+                    <form action="{% url 'review_deactivation_request' %}" method="post" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="request_id" value="{{ req.id }}">
+                        <input type="hidden" name="action" value="approve">
+                        <button type="submit" class="btn btn-success btn-sm">Тасдиқ кардан</button>
+                    </form>
+                    <form action="{% url 'review_deactivation_request' %}" method="post" style="display:inline;">
+                        {% csrf_token %}
+                        <input type="hidden" name="request_id" value="{{ req.id }}">
+                        <input type="hidden" name="action" value="reject">
+                        <button type="submit" class="btn btn-danger btn-sm">Рад кардан</button>
+                    </form>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6">Дархостҳои дар тайёрӣ нестанд.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

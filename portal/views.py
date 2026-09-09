@@ -1,6 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
 from django.db.models import Avg, Count, Sum, Q
 import io
@@ -13,6 +13,7 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Side
 from django.http import HttpResponse, JsonResponse
+from django.utils import timezone
 from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
@@ -2051,12 +2052,17 @@ def lesson_allocation(request):
     for cs in class_subjects:
         cs.selected_profile_id = cs.allocated_teacher_id or user_to_profile.get(cs.teacher_id)
 
+    my_requests = SubjectDeactivationRequest.objects.filter(
+        requested_by=request.user
+    ).select_related('class_subject').order_by('-requested_at')
+
     return render(request, 'school/lesson_allocation.html', {
         'school': school,
         'class_subjects': class_subjects,
         'teachers': teachers,
         'is_superuser': request.user.is_superuser,
         'is_zavuch': _is_zavuch(request.user, get_user_role(request.user)),
+        'my_requests': my_requests,
     })
 
 
@@ -2160,6 +2166,45 @@ def request_deactivation(request):
     )
     messages.success(request, f'Дархости хориҷкунии «{cs.subject}» барои {cs.class_name} ирсол шуд.')
     return redirect('lesson_allocation')
+
+
+@user_passes_test(lambda u: u.is_superuser)
+def deactivation_requests(request):
+    pending = SubjectDeactivationRequest.objects.filter(
+        status='pending'
+    ).select_related('class_subject', 'class_subject__school', 'requested_by').order_by('-requested_at')
+    return render(request, 'portal/deactivation_requests.html', {
+        'pending_requests': pending,
+    })
+
+
+@user_passes_test(lambda u: u.is_superuser)
+@require_POST
+def review_deactivation_request(request):
+    req_id = request.POST.get('request_id')
+    action = request.POST.get('action')
+    if not req_id or action not in ('approve', 'reject'):
+        return redirect('deactivation_requests')
+    try:
+        req = SubjectDeactivationRequest.objects.get(pk=int(req_id))
+    except (ValueError, SubjectDeactivationRequest.DoesNotExist):
+        return redirect('deactivation_requests')
+    now = timezone.now()
+    if action == 'approve':
+        req.class_subject.is_active = False
+        req.class_subject.save()
+        req.status = 'approved'
+        messages.success(
+            request,
+            f'Фани «{req.class_subject.subject}» барои {req.class_subject.class_name} дар {req.class_subject.school.name} тасдиқ ва хориҷ шуд.'
+        )
+    else:
+        req.status = 'rejected'
+        messages.success(request, 'Дархост рад карда шуд.')
+    req.reviewed_by = request.user
+    req.reviewed_at = now
+    req.save()
+    return redirect('deactivation_requests')
 
 
 def _school_sort_key(school):

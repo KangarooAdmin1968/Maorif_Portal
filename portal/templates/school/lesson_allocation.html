@@ -63,6 +63,9 @@
 <div class="alloc-tabs">
     <button type="button" class="alloc-tab active" id="tab-classes" onclick="switchTab('classes')">📚 Тақсимоти синфҳо</button>
     <button type="button" class="alloc-tab" id="tab-gaps" onclick="switchTab('gaps')">⚠️ Камбудиҳо <span class="gap-badge" id="gap-count">0</span></button>
+    {% if is_zavuch %}
+    <button type="button" class="alloc-tab" id="tab-requests" onclick="switchTab('requests')">📨 Дархостҳои ман</button>
+    {% endif %}
 </div>
 
 <form action="{% url 'save_lesson_allocation' %}" method="post">
@@ -141,6 +144,33 @@
     </div>
 </form>
 
+{% if is_zavuch %}
+<div id="pane-requests" hidden>
+    <h2>📨 Дархостҳои ман</h2>
+    <div class="table-scroll">
+        <table class="data-table">
+            <thead>
+                <tr><th>Фан</th><th>Синф</th><th>Ҳолат</th><th>Сана</th></tr>
+            </thead>
+            <tbody>
+                {% for req in my_requests %}
+                <tr>
+                    <td>{{ req.class_subject.subject }}</td>
+                    <td>{{ req.class_subject.class_name }}</td>
+                    <td>
+                        {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟢 Тасдиқшуда</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🔴 Радшуда</span>{% endif %}
+                    </td>
+                    <td>{{ req.requested_at|date:"d.m.Y H:i" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4">Дархостҳо ёфт нашуданд.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 <script>
 (function () {
     const rows = Array.from(document.querySelectorAll('#alloc-body tr.alloc-row'));
@@ -197,8 +227,12 @@
     window.switchTab = function (tab) {
         document.getElementById('pane-classes').hidden = tab !== 'classes';
         document.getElementById('pane-gaps').hidden = tab !== 'gaps';
+        const paneRequests = document.getElementById('pane-requests');
+        if (paneRequests) paneRequests.hidden = tab !== 'requests';
         document.getElementById('tab-classes').classList.toggle('active', tab === 'classes');
         document.getElementById('tab-gaps').classList.toggle('active', tab === 'gaps');
+        const tabRequests = document.getElementById('tab-requests');
+        if (tabRequests) tabRequests.classList.toggle('active', tab === 'requests');
         if (tab === 'gaps') refreshGaps();
     };
 

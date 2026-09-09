@@ -23,6 +23,7 @@ FILES = [
     ('portal/migrations/0010_subjectdeactivationrequest.py', f'{PROJECT_DIR}/portal/migrations/0010_subjectdeactivationrequest.py'),
     ('portal/templates/portal/base.html', f'{PROJECT_DIR}/portal/templates/portal/base.html'),
     ('portal/templates/portal/dashboard.html', f'{PROJECT_DIR}/portal/templates/portal/dashboard.html'),
+    ('portal/templates/portal/deactivation_requests.html', f'{PROJECT_DIR}/portal/templates/portal/deactivation_requests.html'),
     ('portal/templates/portal/grade_entry.html', f'{PROJECT_DIR}/portal/templates/portal/grade_entry.html'),
     ('portal/templates/portal/school_readiness_rating.html', f'{PROJECT_DIR}/portal/templates/portal/school_readiness_rating.html'),
     ('portal/templates/portal/documents_landing.html', f'{PROJECT_DIR}/portal/templates/portal/documents_landing.html'),
@@ -81,6 +82,9 @@ def main():
         print('manage.py migrate FAILED', file=sys.stderr)
         c.close()
         return 1
+
+    print('\n--- Collecting static ---', flush=True)
+    run(c, f'cd {PROJECT_DIR} && {PY} manage.py collectstatic --noinput')
 
     print('\n--- Restarting gunicorn ---', flush=True)
     run(c, 'pkill -f gunicorn || true')

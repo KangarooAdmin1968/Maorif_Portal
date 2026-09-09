@@ -33,6 +33,7 @@ FILES = [
     ('portal/templates/admin/portal/classsubject/bulk_assign.html', f'{PROJECT_DIR}/portal/templates/admin/portal/classsubject/bulk_assign.html'),
     ('portal/templates/school/lesson_allocation.html', f'{PROJECT_DIR}/portal/templates/school/lesson_allocation.html'),
     ('maorif_portal/settings.py', f'{PROJECT_DIR}/maorif_portal/settings.py'),
+    ('sync_missing_subjects.py', f'{PROJECT_DIR}/sync_missing_subjects.py'),
 ]
 
 
@@ -86,6 +87,9 @@ def main():
 
     print('\n--- Collecting static ---', flush=True)
     run(c, f'cd {PROJECT_DIR} && {PY} manage.py collectstatic --noinput')
+
+    print('\n--- Syncing missing subjects ---', flush=True)
+    run(c, f'cd {PROJECT_DIR} && {PY} sync_missing_subjects.py')
 
     print('\n--- Restarting gunicorn ---', flush=True)
     run(c, 'pkill -f gunicorn || true')

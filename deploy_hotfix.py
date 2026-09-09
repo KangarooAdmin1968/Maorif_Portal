@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""One-time hotfix deploy: upload views.py + settings.py to production and restart gunicorn."""
+"""Hotfix deploy: upload the changed portal files to production and restart gunicorn."""
 import os
 import sys
 import time
@@ -15,13 +15,19 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 password = os.environ['SSH_PASSWORD']
 
 FILES = [
-    ('portal/views.py', f'{PROJECT_DIR}/portal/views.py'),
     ('portal/models.py', f'{PROJECT_DIR}/portal/models.py'),
+    ('portal/admin.py', f'{PROJECT_DIR}/portal/admin.py'),
+    ('portal/forms.py', f'{PROJECT_DIR}/portal/forms.py'),
+    ('portal/views.py', f'{PROJECT_DIR}/portal/views.py'),
     ('portal/urls.py', f'{PROJECT_DIR}/portal/urls.py'),
+    ('portal/migrations/0010_subjectdeactivationrequest.py', f'{PROJECT_DIR}/portal/migrations/0010_subjectdeactivationrequest.py'),
     ('portal/templates/portal/base.html', f'{PROJECT_DIR}/portal/templates/portal/base.html'),
     ('portal/templates/portal/grade_entry.html', f'{PROJECT_DIR}/portal/templates/portal/grade_entry.html'),
     ('portal/templates/portal/school_readiness_rating.html', f'{PROJECT_DIR}/portal/templates/portal/school_readiness_rating.html'),
     ('portal/templates/portal/documents_landing.html', f'{PROJECT_DIR}/portal/templates/portal/documents_landing.html'),
+    ('portal/templates/admin/portal/classsubject/change_form.html', f'{PROJECT_DIR}/portal/templates/admin/portal/classsubject/change_form.html'),
+    ('portal/templates/admin/portal/classsubject/change_list.html', f'{PROJECT_DIR}/portal/templates/admin/portal/classsubject/change_list.html'),
+    ('portal/templates/admin/portal/classsubject/bulk_assign.html', f'{PROJECT_DIR}/portal/templates/admin/portal/classsubject/bulk_assign.html'),
     ('portal/templates/school/lesson_allocation.html', f'{PROJECT_DIR}/portal/templates/school/lesson_allocation.html'),
     ('maorif_portal/settings.py', f'{PROJECT_DIR}/maorif_portal/settings.py'),
 ]
@@ -52,6 +58,10 @@ def main():
         run(c, f'cp -p {remote} {remote}.bak_{ts}')
 
     sftp = c.open_sftp()
+
+    # Ensure the new admin template directory exists
+    run(c, f'mkdir -p {PROJECT_DIR}/portal/templates/admin/portal/classsubject')
+
     for local_rel, remote in FILES:
         sftp.put(os.path.join(BASE, local_rel), remote)
         print(f'Uploaded {local_rel} -> {remote}', flush=True)
@@ -65,6 +75,12 @@ def main():
         c.close()
         return 1
 
+    code = run(c, f'cd {PROJECT_DIR} && {PY} manage.py migrate')
+    if code != 0:
+        print('manage.py migrate FAILED', file=sys.stderr)
+        c.close()
+        return 1
+
     print('\n--- Restarting gunicorn ---', flush=True)
     run(c, 'pkill -f gunicorn || true')
     time.sleep(1)
@@ -75,7 +91,7 @@ def main():
         return 1
     time.sleep(1)
     run(c, "ps aux | grep '[g]unicorn' | head -5")
-    run(c, "curl -s -o /dev/null -w 'HTTP %{http_code}\\n' http://127.0.0.1:8000/login/")
+    run(c, "curl -s -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:8000/login/")
 
     c.close()
     print('\nHotfix deploy complete.', flush=True)

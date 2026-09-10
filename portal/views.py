@@ -803,14 +803,25 @@ def class_list(request, school_id=None):
         if not has_school_access(request.user, school):
             return redirect('dashboard')
 
-    classes = Student.objects.filter(school=school).values('class_name').distinct().order_by('class_name')
+    student_classes = {c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()}
+    subject_classes = {c for c in ClassSubject.objects.filter(school=school).values_list('class_name', flat=True).distinct()}
+    class_names = sorted(student_classes | subject_classes, key=class_numeric_part)
+
+    student_counts = dict(
+        Student.objects.filter(school=school).values('class_name').annotate(count=Count('id')).values_list('class_name', 'count')
+    )
+
     graded_stats = []
     non_graded_stats = []
-    for c in classes:
-        cname = c['class_name']
+    for cname in class_names:
         if is_non_graded(cname):
             label = 'Стикерҳо' if str(class_numeric_part(cname)) == '1' else 'Ғайрибаҳо'
-            non_graded_stats.append({'class_name': cname, 'school_rank': '-', 'gpa': label})
+            non_graded_stats.append({
+                'class_name': cname,
+                'school_rank': '-',
+                'gpa': label,
+                'student_count': student_counts.get(cname, 0),
+            })
             continue
 
         total = 0.0
@@ -826,7 +837,12 @@ def class_list(request, school_id=None):
             count += 1
 
         gpa = round(total / count, 2) if count else 0.0
-        graded_stats.append({'class_name': cname, 'school_rank': None, 'gpa': gpa})
+        graded_stats.append({
+            'class_name': cname,
+            'school_rank': None,
+            'gpa': gpa,
+            'student_count': student_counts.get(cname, 0),
+        })
 
     # Assign school rank by GPA (descending) using dense ranking
     graded_stats.sort(key=lambda x: x['gpa'], reverse=True)
@@ -838,14 +854,14 @@ def class_list(request, school_id=None):
             prev_gpa = s['gpa']
         s['school_rank'] = rank
 
-    # Combine in original class_name order
+    # Combine in class_name order
     rank_map = {s['class_name']: s['school_rank'] for s in graded_stats}
     gpa_map = {s['class_name']: s['gpa'] for s in graded_stats}
+    count_map = {s['class_name']: s['student_count'] for s in graded_stats + non_graded_stats}
     class_stats = []
-    for c in classes:
-        cname = c['class_name']
+    for cname in class_names:
         if cname in rank_map:
-            class_stats.append({'class_name': cname, 'school_rank': rank_map[cname], 'gpa': gpa_map[cname]})
+            class_stats.append({'class_name': cname, 'school_rank': rank_map[cname], 'gpa': gpa_map[cname], 'student_count': count_map[cname]})
         else:
             for s in non_graded_stats:
                 if s['class_name'] == cname:
@@ -885,6 +901,24 @@ def add_class(request, school_id):
     ensure_class_subjects(school, class_name)
     messages.success(request, f'Синфи {class_name} бомуваффақият сохта шуд.')
     return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+@login_required
+@require_POST
+def delete_class(request, school_id, class_name):
+    school = get_object_or_404(School, id=school_id)
+    if not _can_manage_school(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+
+    student_count = Student.objects.filter(school=school, class_name=class_name).count()
+    if student_count > 0:
+        messages.error(request, '❌ Ин синфро хориҷ кардан мумкин нест, чунки дар он хонандагон ҳастанд! Аввал хонандагонро кӯчонед ё хориҷ намоед.')
+        return redirect('class_list', school_id=school.id)
+
+    ClassSubject.objects.filter(school=school, class_name=class_name).delete()
+    messages.success(request, f'Синфи {class_name} бомуваффақият хориҷ карда шуд.')
+    return redirect('class_list', school_id=school.id)
 
 
 def class_detail(request, school_id, class_name):

@@ -56,6 +56,12 @@
             <td>{% if c.gpa == 0 or c.gpa == '0,0' or c.gpa == '0.0' or c.gpa == '0' %}—{% else %}{{ c.gpa }}{% endif %}</td>
             <td>
                 <a href="{% url 'class_detail' school.id c.class_name %}" class="btn btn-sm">Холҳо</a>
+                {% if can_manage and c.student_count == 0 %}
+                <form action="{% url 'delete_class' school.id c.class_name %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед ин синфро хориҷ кунед?');" style="display:inline; margin-left:0.3rem;">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger btn-sm">Хориҷ кардан</button>
+                </form>
+                {% endif %}
             </td>
         </tr>
         {% empty %}

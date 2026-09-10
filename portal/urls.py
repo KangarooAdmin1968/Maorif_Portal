@@ -10,6 +10,7 @@ urlpatterns = [
     path('schools/add/', views.school_add, name='school_add'),
     path('school/<int:school_id>/classes/', views.class_list, name='class_list'),
     path('school/<int:school_id>/class/add/', views.add_class, name='add_class'),
+    path('school/<int:school_id>/class/<str:class_name>/delete/', views.delete_class, name='delete_class'),
     path('school/<int:school_id>/class/<str:class_name>/', views.class_detail, name='class_detail'),
     path('school/<int:school_id>/class/<str:class_name>/stickers/', views.sticker_entry, name='sticker_entry'),
     path('school/<int:school_id>/class/<str:class_name>/student/add/', views.add_student, name='add_student'),

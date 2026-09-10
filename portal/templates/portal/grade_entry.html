@@ -219,7 +219,14 @@ function restoreDrafts() {
     loadState();
     Object.entries(state.draft).forEach(([name, value]) => {
         const el = document.querySelector('[name="' + name + '"]');
-        if (el && !el.disabled) { el.value = value; el.dataset.origValue = value; }
+        if (el && !el.disabled) {
+            if (el.classList.contains('q-input') || el.classList.contains('att-input')) {
+                if (value) { el.value = value; el.dataset.origValue = value; }
+            } else {
+                el.value = value;
+                el.dataset.origValue = value;
+            }
+        }
     });
     if (navigator.onLine) { syncPending(); }
     else if (state.pending.length) { showOfflineBanner(); }

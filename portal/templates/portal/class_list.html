@@ -85,12 +85,18 @@ function updateAddClassPreview() {
         dup.textContent = '⚠️ Синфи «' + className + '» аллакай дар ин муассиса вуҷуд дорад!';
         dup.style.display = 'block';
         submit.disabled = true;
-        submit.classList.add('btn-disabled');
+        submit.style.opacity = '0.5';
+        submit.style.cursor = 'not-allowed';
+        submit.style.pointerEvents = 'none';
+        submit.style.background = '#9ca3af';
     } else {
         dup.textContent = '';
         dup.style.display = 'none';
         submit.disabled = false;
-        submit.classList.remove('btn-disabled');
+        submit.style.opacity = '';
+        submit.style.cursor = '';
+        submit.style.pointerEvents = '';
+        submit.style.background = '';
     }
 }
 function openAddClassModal() {

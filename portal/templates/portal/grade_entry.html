@@ -127,7 +127,7 @@
             <input type="number" name="q_{{ q }}_{{ s.id }}" min="1" max="10" step="1"
                    value="{{ quarter_grades|dict_key:s.id|dict_key:q }}" class="q-input"
                    data-row-id="{{ forloop.parentloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="{{ q }}"
-                   {% if q in locked_quarters %}disabled{% endif %}>
+                   {% if q in locked_quarters %}disabled{% endif %}>{% if q in live_quarter_flags|dict_key:s.id %}<sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;"> Ҷ</sup>{% endif %}
             {% endif %}
           </td>
           {% if q == 2 and not non_graded %}

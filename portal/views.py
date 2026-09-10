@@ -45,30 +45,37 @@ def std_round(value):
     return int(value + 0.5)
 
 
-def calc_quarterly(qmap):
+def calc_quarterly(qmap, live_flags=None):
     """Calculate semi-annual, annual, and final grades from a quarter map.
 
     When only part of a period is filled, fall back to a live projection
     from the quarters that already exist; projected values are flagged with
     *_proj = True so the UI can label them as "Ҷорӣ" (in-progress) estimates.
     """
+    live_flags = live_flags or set()
     calc = {
         'semi_annual_1': None, 'semi_annual_2': None, 'annual': None, 'final': None,
         'semi_annual_1_proj': False, 'semi_annual_2_proj': False,
         'annual_proj': False, 'final_proj': False,
     }
     q1, q2 = qmap.get(1), qmap.get(2)
-    if q1 is not None and q2 is not None:
+    has_q1, has_q2 = q1 is not None, q2 is not None
+    if has_q1 and has_q2:
         calc['semi_annual_1'] = std_round((q1 + q2) / 2)
-    elif q1 is not None or q2 is not None:
-        calc['semi_annual_1'] = q1 if q1 is not None else q2
-        calc['semi_annual_1_proj'] = True
+    elif has_q1 or has_q2:
+        calc['semi_annual_1'] = q1 if has_q1 else q2
+    if has_q1 != has_q2 or (1 in live_flags or 2 in live_flags):
+        if calc['semi_annual_1'] is not None:
+            calc['semi_annual_1_proj'] = True
     q3, q4 = qmap.get(3), qmap.get(4)
-    if q3 is not None and q4 is not None:
+    has_q3, has_q4 = q3 is not None, q4 is not None
+    if has_q3 and has_q4:
         calc['semi_annual_2'] = std_round((q3 + q4) / 2)
-    elif q3 is not None or q4 is not None:
-        calc['semi_annual_2'] = q3 if q3 is not None else q4
-        calc['semi_annual_2_proj'] = True
+    elif has_q3 or has_q4:
+        calc['semi_annual_2'] = q3 if has_q3 else q4
+    if has_q3 != has_q4 or (3 in live_flags or 4 in live_flags):
+        if calc['semi_annual_2'] is not None:
+            calc['semi_annual_2_proj'] = True
     if calc['semi_annual_1'] is not None and calc['semi_annual_2'] is not None:
         calc['annual'] = std_round((calc['semi_annual_1'] + calc['semi_annual_2']) / 2)
         calc['annual_proj'] = calc['semi_annual_1_proj'] or calc['semi_annual_2_proj']
@@ -1381,12 +1388,47 @@ def grade_entry(request, school_id, class_name, subject):
         elif g.grade is not None:
             qmap_by_student[sid][g.quarter] = g.grade
 
+    # Aggregate daily grades by quarter for live quarter bridging
+    daily_by_q = defaultdict(lambda: defaultdict(list))
+    for g in Grade.objects.filter(
+        student__in=students,
+        subject=subject,
+        period='Холҳои ҷорӣ (Онлайн)',
+        score__isnull=False
+    ):
+        q = get_date_quarter(g.date)
+        if q:
+            daily_by_q[g.student_id][q].append(float(g.score))
+
     quarter_grades = {}
+    display_quarter_grades = {}
+    live_quarter_flags = {}
     calculated = {}
     for student in students:
-        qmap = qmap_by_student.get(student.id, {})
-        quarter_grades[student.id] = qmap
-        calculated[student.id] = calc_quarterly(qmap)
+        sid = student.id
+        official = qmap_by_student.get(sid, {})
+        qmap = {}
+        live_flags = set()
+        display = {}
+        for q in (1, 2, 3, 4):
+            official_grade = official.get(q)
+            if official_grade is not None:
+                qmap[q] = official_grade
+                display[q] = official_grade
+            else:
+                scores = daily_by_q.get(sid, {}).get(q, [])
+                if scores:
+                    avg = std_round(sum(scores) / len(scores))
+                    qmap[q] = avg
+                    display[q] = avg
+                    live_flags.add(q)
+                else:
+                    display[q] = None
+        display['att'] = official.get('att')
+        quarter_grades[sid] = display
+        live_quarter_flags[sid] = live_flags
+        qmap['att'] = official.get('att')
+        calculated[sid] = calc_quarterly(qmap, live_flags)
 
     non_graded = is_non_graded(class_name)
 
@@ -1411,6 +1453,7 @@ def grade_entry(request, school_id, class_name, subject):
         'daily_behavior': daily_behavior,
         'behavior_default': behavior_default,
         'quarter_grades': quarter_grades,
+        'live_quarter_flags': live_quarter_flags,
         'calculated': calculated,
         'non_graded': non_graded,
         'qualitative_choices': QUALITATIVE_CHOICES,

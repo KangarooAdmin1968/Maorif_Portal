@@ -34,9 +34,10 @@
                 {% endfor %}
             </select>
             <p id="add-class-preview" style="margin:1rem 0; font-weight:bold; color:#1f2937;">Пешнамоиш: 1-А</p>
+            <p id="add-class-duplicate" style="display:none; margin:0.5rem 0; color:#b91c1c; font-weight:bold;"></p>
             <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
                 <button type="button" class="btn btn-secondary" onclick="closeAddClassModal()">Бекор</button>
-                <button type="submit" class="btn btn-primary">Сохтан</button>
+                <button type="submit" id="add-class-submit" class="btn btn-primary">Сохтан</button>
             </div>
         </form>
     </div>
@@ -71,10 +72,26 @@
 </table>
 
 <script>
+const EXISTING_CLASSES = [{% for c in class_stats %}'{{ c.class_name }}'{% if not forloop.last %},{% endif %}{% endfor %}];
+
 function updateAddClassPreview() {
     const grade = document.getElementById('add-class-grade').value;
     const letter = document.getElementById('add-class-letter').value;
-    document.getElementById('add-class-preview').textContent = 'Пешнамоиш: ' + grade + '-' + letter;
+    const className = grade + '-' + letter;
+    document.getElementById('add-class-preview').textContent = 'Пешнамоиш: ' + className;
+    const dup = document.getElementById('add-class-duplicate');
+    const submit = document.getElementById('add-class-submit');
+    if (EXISTING_CLASSES.includes(className)) {
+        dup.textContent = '⚠️ Синфи «' + className + '» аллакай дар ин муассиса вуҷуд дорад!';
+        dup.style.display = 'block';
+        submit.disabled = true;
+        submit.classList.add('btn-disabled');
+    } else {
+        dup.textContent = '';
+        dup.style.display = 'none';
+        submit.disabled = false;
+        submit.classList.remove('btn-disabled');
+    }
 }
 function openAddClassModal() {
     document.getElementById('add-class-modal').style.display = 'flex';

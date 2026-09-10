@@ -894,8 +894,11 @@ def add_class(request, school_id):
         return redirect('class_list', school_id=school.id)
 
     class_name = f"{int(grade)}-{letter}"
-    if ClassSubject.objects.filter(school=school, class_name=class_name).exists():
-        messages.error(request, f'Синфи {class_name} аллакай вуҷуд дорад.')
+    if (
+        ClassSubject.objects.filter(school=school, class_name=class_name, is_active=True).exists()
+        or Student.objects.filter(school=school, class_name=class_name).exists()
+    ):
+        messages.warning(request, f'Синфи «{class_name}» аллакай дар муассиса вуҷуд дорад!')
         return redirect('class_list', school_id=school.id)
 
     ensure_class_subjects(school, class_name)

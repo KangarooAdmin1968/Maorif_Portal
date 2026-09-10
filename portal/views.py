@@ -852,7 +852,39 @@ def class_list(request, school_id=None):
                     class_stats.append(s)
                     break
 
-    return render(request, 'portal/class_list.html', {'school': school, 'class_stats': class_stats, 'role': role})
+    return render(request, 'portal/class_list.html', {
+        'school': school,
+        'class_stats': class_stats,
+        'role': role,
+        'grade_numbers': list(range(1, 12)),
+        'class_letters': list(CLASS_LETTERS),
+    })
+
+
+@login_required
+@require_POST
+def add_class(request, school_id):
+    school = get_object_or_404(School, id=school_id)
+    if not _can_manage_school(request.user, school):
+        return redirect('dashboard')
+
+    grade = request.POST.get('grade', '').strip()
+    letter = request.POST.get('letter', '').strip().upper()
+    if not grade.isdigit() or not (1 <= int(grade) <= 11):
+        messages.error(request, 'Дараҷаи синф бояд аз 1 то 11 бошад.')
+        return redirect('class_list', school_id=school.id)
+    if letter not in CLASS_LETTERS:
+        messages.error(request, 'Ҳарфи синф нодуруст аст.')
+        return redirect('class_list', school_id=school.id)
+
+    class_name = f"{int(grade)}-{letter}"
+    if ClassSubject.objects.filter(school=school, class_name=class_name).exists():
+        messages.error(request, f'Синфи {class_name} аллакай вуҷуд дорад.')
+        return redirect('class_list', school_id=school.id)
+
+    ensure_class_subjects(school, class_name)
+    messages.success(request, f'Синфи {class_name} бомуваффақият сохта шуд.')
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
 
 
 def class_detail(request, school_id, class_name):
@@ -885,6 +917,8 @@ def class_detail(request, school_id, class_name):
     non_graded = is_non_graded(class_name)
     all_classes = sorted({
         c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()
+    } | {
+        c for c in ClassSubject.objects.filter(school=school).values_list('class_name', flat=True).distinct()
     }, key=class_numeric_part)
     return render(request, 'portal/class_detail.html', {
         'school': school,

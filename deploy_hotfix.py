@@ -26,6 +26,7 @@ FILES = [
     ('portal/templates/portal/dashboard.html', f'{PROJECT_DIR}/portal/templates/portal/dashboard.html'),
     ('portal/templates/portal/deactivation_requests.html', f'{PROJECT_DIR}/portal/templates/portal/deactivation_requests.html'),
     ('portal/templates/portal/grade_entry.html', f'{PROJECT_DIR}/portal/templates/portal/grade_entry.html'),
+    ('portal/templates/portal/class_list.html', f'{PROJECT_DIR}/portal/templates/portal/class_list.html'),
     ('portal/templates/portal/school_readiness_rating.html', f'{PROJECT_DIR}/portal/templates/portal/school_readiness_rating.html'),
     ('portal/templates/portal/documents_landing.html', f'{PROJECT_DIR}/portal/templates/portal/documents_landing.html'),
     ('portal/templates/admin/portal/classsubject/change_form.html', f'{PROJECT_DIR}/portal/templates/admin/portal/classsubject/change_form.html'),
@@ -87,9 +88,6 @@ def main():
 
     print('\n--- Collecting static ---', flush=True)
     run(c, f'cd {PROJECT_DIR} && {PY} manage.py collectstatic --noinput')
-
-    print('\n--- Syncing missing subjects ---', flush=True)
-    run(c, f'cd {PROJECT_DIR} && {PY} sync_missing_subjects.py')
 
     print('\n--- Restarting gunicorn ---', flush=True)
     run(c, 'pkill -f gunicorn || true')

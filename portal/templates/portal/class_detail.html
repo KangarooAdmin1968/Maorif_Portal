@@ -62,19 +62,9 @@
             <label style="display:block; margin-top:0.5rem;">Синфи манба</label>
             <input type="text" value="{{ class_name }}" disabled style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem; background:#f3f4f6;">
             <label for="transfer-target-class" style="display:block; margin-top:0.5rem;">Синфи ҳадаф</label>
-            <select id="transfer-target-class" name="target_class" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;" onchange="toggleTransferNewClass(this)">
+            <select id="transfer-target-class" name="target_class" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;" onchange="updateTransferMessage()">
                 <option value="" disabled selected>Синфи ҳадафро интихоб кунед</option>
-                {% for c in all_classes %}
-                {% if c != class_name %}
-                <option value="{{ c }}">{{ c }}</option>
-                {% endif %}
-                {% endfor %}
-                <option value="__new__">+ Синфи нав</option>
             </select>
-            <div id="transfer-new-class-wrapper" style="display:none;">
-                <label for="transfer-new-class-name" style="display:block; margin-top:0.5rem;">Номи синфи нав</label>
-                <input type="text" id="transfer-new-class-name" name="new_class_name" placeholder="1-В" pattern="^([1-9]|1[0-1])-[АБВГҒДЕЁЖЗИӢЙКҚЛМНОПРСТУӮФХҲЧҶШЪЭЮЯA-Z]$" oninput="updateTransferMessage()" style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
-            </div>
             <div id="transfer-step-1" style="display:block;">
                 <p id="transfer-confirm-text" style="margin:1rem 0; font-weight:bold; color:#1f2937;"></p>
                 <div id="transfer-step-1-buttons" style="display:flex; gap:0.5rem; justify-content:flex-end;">
@@ -366,10 +356,6 @@ function buildTransferTargetOptions() {
             }
         });
     }
-    const newOpt = document.createElement('option');
-    newOpt.value = '__new__';
-    newOpt.textContent = '+ Синфи нав';
-    select.appendChild(newOpt);
 
     if (sourceParts && sourceParts.letter === 'А') {
         select.disabled = true;
@@ -388,23 +374,11 @@ function openTransferClassModal() {
     buildTransferTargetOptions();
     const sel = document.getElementById('transfer-target-class');
     sel.value = '';
-    toggleTransferNewClass(sel);
+    updateTransferMessage();
     modal.style.display = 'flex';
 }
 function closeTransferClassModal() {
     document.getElementById('transfer-class-modal').style.display = 'none';
-}
-function toggleTransferNewClass(sel) {
-    const wrap = document.getElementById('transfer-new-class-wrapper');
-    if (sel.value === '__new__') {
-        wrap.style.display = 'block';
-        document.getElementById('transfer-new-class-name').setAttribute('required', 'required');
-    } else {
-        wrap.style.display = 'none';
-        document.getElementById('transfer-new-class-name').removeAttribute('required');
-        document.getElementById('transfer-new-class-name').value = '';
-    }
-    updateTransferMessage();
 }
 function updateTransferMessage() {
     const source = normalizeClassName('{{ class_name }}');
@@ -418,13 +392,7 @@ function updateTransferMessage() {
         return;
     }
     const sel = document.getElementById('transfer-target-class');
-    const input = document.getElementById('transfer-new-class-name');
-    let target = '';
-    if (sel.value === '__new__') {
-        target = normalizeClassName(input.value);
-    } else if (sel.value) {
-        target = normalizeClassName(sel.value);
-    }
+    const target = sel.value ? normalizeClassName(sel.value) : '';
     const isValidTarget = target && parseClassName(target);
     if (!isValidTarget) {
         confirmText.textContent = 'Лутфан, синфи ҳадафро интихоб намоед.';
@@ -439,29 +407,13 @@ function updateTransferMessage() {
     document.getElementById('transfer-warning-text').textContent =
         `⚠️ ОГОҲӢ! Пас аз ин амал синфи ${source} БАТАМОМ БАСТА МЕШАВАД ва ин амалро бекор кардан ғайриимкон аст! Қарори шумо қатъӣ аст?`;
 }
-function getTransferTarget() {
-    const sel = document.getElementById('transfer-target-class');
-    const input = document.getElementById('transfer-new-class-name');
-    let target = sel.value;
-    if (target === '__new__') {
-        target = normalizeClassName(input.value);
-    }
-    return target;
-}
 function proceedToTransferStep2() {
     const sel = document.getElementById('transfer-target-class');
     if (!sel.value) {
         alert('Лутфан, синфи ҳадафро интихоб кунед.');
         return false;
     }
-    const target = getTransferTarget();
-    if (sel.value === '__new__') {
-        const input = document.getElementById('transfer-new-class-name');
-        if (!validateClassInput(input)) {
-            alert('Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А)');
-            return false;
-        }
-    }
+    const target = normalizeClassName(sel.value);
     const source = '{{ class_name }}';
     if (!isValidClassMerge(source, target)) {
         if (source.endsWith('-А') || source.endsWith('-A')) {
@@ -482,14 +434,7 @@ function validateTransferForm(form) {
         return proceedToTransferStep2();
     }
     const sel = document.getElementById('transfer-target-class');
-    const target = getTransferTarget();
-    if (sel.value === '__new__') {
-        const input = document.getElementById('transfer-new-class-name');
-        if (!validateClassInput(input)) {
-            alert('Лутфан, номи синфро дуруст ворид намоед (масалан: 1-В ёки 10-А)');
-            return false;
-        }
-    }
+    const target = normalizeClassName(sel.value);
     const source = '{{ class_name }}';
     if (!isValidClassMerge(source, target)) {
         if (source.endsWith('-А') || source.endsWith('-A')) {

@@ -6,13 +6,40 @@
 <h1>{{ school.name }} — Синфҳо</h1>
 
 {% if can_manage %}
-<div class="toolbar">
+<div class="toolbar" style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem; align-items:center;">
+    <button type="button" class="btn btn-success" onclick="openAddClassModal()">+ Илова кардани синф</button>
     <a href="{% url 'download_template_school' school.id %}" class="btn btn-secondary">📥 Боргирии шаблон</a>
-    <form action="{% url 'import_excel' school.id %}" method="post" enctype="multipart/form-data" class="inline-form">
+    <form action="{% url 'import_excel' school.id %}" method="post" enctype="multipart/form-data" class="inline-form" style="display:flex; gap:0.5rem; align-items:center;">
         {% csrf_token %}
         <input type="file" name="excel" accept=".xlsx,.xls" required>
         <button type="submit" class="btn btn-secondary">📤 Воридоти Excel</button>
     </form>
+</div>
+
+<div id="add-class-modal" class="modal" style="display:none;">
+    <div class="modal-content" style="padding:1.5rem; border-radius:0.5rem;">
+        <h3>Илова кардани синф</h3>
+        <form action="{% url 'add_class' school.id %}" method="post">
+            {% csrf_token %}
+            <label for="add-class-grade" style="display:block; margin-top:0.5rem;">Дараҷа</label>
+            <select id="add-class-grade" name="grade" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;" onchange="updateAddClassPreview()">
+                {% for n in grade_numbers %}
+                <option value="{{ n }}">{{ n }}</option>
+                {% endfor %}
+            </select>
+            <label for="add-class-letter" style="display:block; margin-top:0.5rem;">Ҳарф</label>
+            <select id="add-class-letter" name="letter" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;" onchange="updateAddClassPreview()">
+                {% for l in class_letters %}
+                <option value="{{ l }}">{{ l }}</option>
+                {% endfor %}
+            </select>
+            <p id="add-class-preview" style="margin:1rem 0; font-weight:bold; color:#1f2937;">Пешнамоиш: 1-А</p>
+            <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="closeAddClassModal()">Бекор</button>
+                <button type="submit" class="btn btn-primary">Сохтан</button>
+            </div>
+        </form>
+    </div>
 </div>
 {% endif %}
 
@@ -36,4 +63,24 @@
         {% endfor %}
     </tbody>
 </table>
+
+<script>
+function updateAddClassPreview() {
+    const grade = document.getElementById('add-class-grade').value;
+    const letter = document.getElementById('add-class-letter').value;
+    document.getElementById('add-class-preview').textContent = 'Пешнамоиш: ' + grade + '-' + letter;
+}
+function openAddClassModal() {
+    document.getElementById('add-class-modal').style.display = 'flex';
+    updateAddClassPreview();
+}
+function closeAddClassModal() {
+    document.getElementById('add-class-modal').style.display = 'none';
+}
+window.onclick = function(e) {
+    if (e.target === document.getElementById('add-class-modal')) {
+        document.getElementById('add-class-modal').style.display = 'none';
+    }
+}
+</script>
 {% endblock %}

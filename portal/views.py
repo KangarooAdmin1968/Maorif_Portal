@@ -899,8 +899,8 @@ def add_class(request, school_id):
         return redirect('class_list', school_id=school.id)
 
     ensure_class_subjects(school, class_name)
-    messages.success(request, f'Синфи {class_name} бомуваффақият сохта шуд.')
-    return redirect('class_detail', school_id=school.id, class_name=class_name)
+    messages.success(request, f'Синфи «{class_name}» бомуваффақият сохта шуд.')
+    return redirect('class_list', school_id=school.id)
 
 
 @login_required

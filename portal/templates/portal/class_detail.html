@@ -49,8 +49,8 @@
             <label for="edit-student-gender" style="display:block; margin-top:0.5rem;">Ҷинс</label>
             <select id="edit-student-gender" name="gender" style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
                 <option value="">— Авто-таъйин —</option>
-                <option value="M">👦 Мард / Писар</option>
-                <option value="F">👧 Зан / Духтар</option>
+                <option value="M">👦 Писар</option>
+                <option value="F">👧 Духтар</option>
             </select>
             <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
                 <button type="button" class="btn btn-secondary" onclick="closeEditStudentModal()">Бекор</button>
@@ -139,7 +139,7 @@
                 <td>{{ forloop.counter }}</td>
                 <td><a href="{% url 'student_detail' s.id %}">{{ s.full_name }}</a></td>
                 <td>
-                    {% if s.gender == 'M' %}👦 Мард{% elif s.gender == 'F' %}👧 Зан{% endif %}
+                    {% if s.gender == 'M' %}👦 Писар{% elif s.gender == 'F' %}👧 Духтар{% endif %}
                 </td>
                 <td>
                     {% if can_manage %}

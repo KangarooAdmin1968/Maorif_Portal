@@ -108,8 +108,8 @@ class Teacher(models.Model):
 
 class Student(models.Model):
     GENDER_CHOICES = [
-        ('M', 'Мард / Писар'),
-        ('F', 'Зан / Духтар'),
+        ('M', 'Писар'),
+        ('F', 'Духтар'),
     ]
 
     id = models.CharField('Рамзи ID', max_length=255, primary_key=True)

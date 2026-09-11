@@ -1,0 +1,24 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 169.58.154.191
+          username: root
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /var/www/maorif_zafarobod
+            git pull origin main
+            /var/www/maorif_zafarobod/venv/bin/python manage.py migrate
+            /var/www/maorif_zafarobod/venv/bin/python manage.py collectstatic --noinput
+            pkill -f gunicorn || true
+            cd /var/www/maorif_zafarobod && /var/www/maorif_zafarobod/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 maorif_portal.wsgi:application --daemon

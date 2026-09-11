@@ -17,7 +17,9 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             cd /var/www/maorif_zafarobod
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
             /var/www/maorif_zafarobod/venv/bin/python manage.py migrate
             /var/www/maorif_zafarobod/venv/bin/python manage.py collectstatic --noinput
             pkill -f gunicorn || true

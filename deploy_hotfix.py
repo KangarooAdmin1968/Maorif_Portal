@@ -92,6 +92,13 @@ def main():
         c.close()
         return 1
 
+    print('\n--- Classifying genders ---', flush=True)
+    code = run(c, f'cd {PROJECT_DIR} && {PY} manage.py classify_genders')
+    if code != 0:
+        print('manage.py classify_genders FAILED', file=sys.stderr)
+        c.close()
+        return 1
+
     print('\n--- Collecting static ---', flush=True)
     run(c, f'cd {PROJECT_DIR} && {PY} manage.py collectstatic --noinput')
 

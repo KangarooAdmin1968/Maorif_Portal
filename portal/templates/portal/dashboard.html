@@ -202,8 +202,9 @@
     <div class="card stat-card">
         <div class="stat-title">👥 Хонандагон</div>
         <div class="stat-value">{{ total_students }}</div>
-        <div style="margin-top:0.25rem; font-size:0.85rem; color:#4b5563;">
-            👦 Писарон: {{ male_students }} ({{ male_pct }}%) | 👧 Духтарон: {{ female_students }} ({{ female_pct }}%)
+        <div style="margin-top:0.5rem; font-size:0.85rem; color:#4b5563; display:flex; flex-direction:column; gap:3px; align-items:center;">
+            <div>👦 Писарон: <strong>{{ male_students }}</strong> ({{ male_pct }}%)</div>
+            <div>👧 Духтарон: <strong>{{ female_students }}</strong> ({{ female_pct }}%)</div>
         </div>
     </div>
     <div class="card stat-card">

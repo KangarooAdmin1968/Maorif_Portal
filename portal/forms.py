@@ -22,7 +22,10 @@ class TeacherForm(forms.ModelForm):
 class StudentForm(forms.ModelForm):
     class Meta:
         model = Student
-        fields = ['full_name', 'class_name', 'school']
+        fields = ['full_name', 'class_name', 'school', 'gender']
+        widgets = {
+            'gender': forms.Select(choices=[('', '---')] + Student.GENDER_CHOICES),
+        }
 
 
 class GradeForm(forms.ModelForm):

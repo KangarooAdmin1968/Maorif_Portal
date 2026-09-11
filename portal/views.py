@@ -231,7 +231,7 @@ def _deactivate_empty_class(school, class_name):
         ClassSubject.objects.filter(school=school, class_name=class_name).update(is_active=False)
 
 
-def _move_student(school, student, new_class_name, new_full_name=None):
+def _move_student(school, student, new_class_name, new_full_name=None, gender=None):
     """Move a student to a new class and/or name, preserving grade history.
 
     Because the Student primary key is derived from school + class + full name,
@@ -243,6 +243,9 @@ def _move_student(school, student, new_class_name, new_full_name=None):
     new_id = f"{school.name}__{new_class_name}__{new_full_name}"
     old_id = student.id
     if old_id == new_id:
+        if gender in ('M', 'F'):
+            student.gender = gender
+            student.save()
         return student
 
     if Student.objects.filter(id=new_id).exclude(id=old_id).exists():
@@ -254,6 +257,7 @@ def _move_student(school, student, new_class_name, new_full_name=None):
             full_name=new_full_name,
             class_name=new_class_name,
             school=school,
+            gender=gender or None,
         )
         Grade.objects.filter(student_id=old_id).update(student=new_student)
         QuarterGrade.objects.filter(student_id=old_id).update(
@@ -668,6 +672,10 @@ def dashboard(request):
 
     total_schools = School.objects.exclude(name__icontains='Кӯдакистон').exclude(name__icontains='Идораи маориф').count()
     total_students = Student.objects.count()
+    male_students = Student.objects.filter(gender='M').count()
+    female_students = Student.objects.filter(gender='F').count()
+    male_pct = round(male_students / total_students * 100, 1) if total_students else 0.0
+    female_pct = round(female_students / total_students * 100, 1) if total_students else 0.0
     total_teachers = Teacher.objects.count()
     try:
         ratio = round(total_students / total_teachers, 1) if total_teachers else 0.0
@@ -689,6 +697,10 @@ def dashboard(request):
         'grade1_schools': grade1_schools,
         'total_schools': total_schools,
         'total_students': total_students,
+        'male_students': male_students,
+        'female_students': female_students,
+        'male_pct': male_pct,
+        'female_pct': female_pct,
         'total_teachers': total_teachers,
         'ratio': ratio,
         'user_school': user_school,
@@ -955,6 +967,9 @@ def class_detail(request, school_id, class_name):
             return redirect('dashboard')
     ensure_class_subjects(school, class_name)
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
+    total_count = students.count()
+    male_count = students.filter(gender='M').count()
+    female_count = students.filter(gender='F').count()
     subjects = ClassSubject.objects.filter(
         school=school, class_name=class_name, is_active=True, subject__in=official_subjects()
     ).order_by('subject')
@@ -968,6 +983,9 @@ def class_detail(request, school_id, class_name):
         'school': school,
         'class_name': class_name,
         'students': students,
+        'total_count': total_count,
+        'male_count': male_count,
+        'female_count': female_count,
         'subjects': subjects,
         'non_graded': non_graded,
         'all_classes': all_classes,
@@ -1123,6 +1141,8 @@ def edit_student(request, school_id, class_name):
     class_name = normalize_class_name(class_name)
     student_id = request.POST.get('student_id', '').strip()
     full_name = request.POST.get('full_name', '').strip()
+    gender = request.POST.get('gender', '').strip()
+    gender = gender if gender in ('M', 'F') else None
     class_option = request.POST.get('class_name', '').strip()
     new_class_input = request.POST.get('new_class_name', '').strip()
 
@@ -1147,7 +1167,7 @@ def edit_student(request, school_id, class_name):
         return redirect('class_detail', school_id=school.id, class_name=class_name)
 
     try:
-        _move_student(school, student, target_class, full_name)
+        _move_student(school, student, target_class, full_name, gender=gender)
     except ValueError as e:
         messages.error(request, str(e))
         return redirect('class_detail', school_id=school.id, class_name=class_name)

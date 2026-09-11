@@ -107,10 +107,23 @@ class Teacher(models.Model):
 
 
 class Student(models.Model):
+    GENDER_CHOICES = [
+        ('M', 'Мард / Писар'),
+        ('F', 'Зан / Духтар'),
+    ]
+
     id = models.CharField('Рамзи ID', max_length=255, primary_key=True)
     full_name = models.CharField('Ному насаб', max_length=255)
     class_name = models.CharField('Синф', max_length=20)
     school = models.ForeignKey(School, on_delete=models.CASCADE, verbose_name='Муассиса')
+    gender = models.CharField(
+        'Ҷинс',
+        max_length=1,
+        choices=GENDER_CHOICES,
+        blank=True,
+        null=True,
+        db_index=True,
+    )
 
     class Meta:
         verbose_name = 'Хонанда'
@@ -172,6 +185,9 @@ class Student(models.Model):
         return max(round(pct, 1), 0.0)
 
     def save(self, *args, **kwargs):
+        if self.full_name and not self.gender:
+            from .gender_detector import detect_student_gender
+            self.gender = detect_student_gender(self.full_name)
         self.class_name = normalize_class_name(self.class_name)
         self.id = f"{self.school.name}__{self.class_name}__{self.full_name}"
         super().save(*args, **kwargs)

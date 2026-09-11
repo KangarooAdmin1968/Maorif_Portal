@@ -35,8 +35,8 @@ class TeacherAdmin(admin.ModelAdmin):
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
-    list_display = ['id', 'full_name', 'class_name', 'school']
-    list_filter = ['school', 'class_name']
+    list_display = ['id', 'full_name', 'class_name', 'school', 'gender']
+    list_filter = ['school', 'class_name', 'gender']
     search_fields = ['full_name', 'id']
 
 

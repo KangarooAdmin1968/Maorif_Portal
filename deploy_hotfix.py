@@ -20,7 +20,12 @@ FILES = [
     ('portal/forms.py', f'{PROJECT_DIR}/portal/forms.py'),
     ('portal/views.py', f'{PROJECT_DIR}/portal/views.py'),
     ('portal/urls.py', f'{PROJECT_DIR}/portal/urls.py'),
+    ('portal/gender_detector.py', f'{PROJECT_DIR}/portal/gender_detector.py'),
     ('portal/migrations/0010_subjectdeactivationrequest.py', f'{PROJECT_DIR}/portal/migrations/0010_subjectdeactivationrequest.py'),
+    ('portal/migrations/0011_student_gender.py', f'{PROJECT_DIR}/portal/migrations/0011_student_gender.py'),
+    ('portal/management/__init__.py', f'{PROJECT_DIR}/portal/management/__init__.py'),
+    ('portal/management/commands/__init__.py', f'{PROJECT_DIR}/portal/management/commands/__init__.py'),
+    ('portal/management/commands/classify_genders.py', f'{PROJECT_DIR}/portal/management/commands/classify_genders.py'),
     ('portal/templates/portal/base.html', f'{PROJECT_DIR}/portal/templates/portal/base.html'),
     ('portal/templates/portal/class_detail.html', f'{PROJECT_DIR}/portal/templates/portal/class_detail.html'),
     ('portal/templates/portal/dashboard.html', f'{PROJECT_DIR}/portal/templates/portal/dashboard.html'),
@@ -64,8 +69,9 @@ def main():
 
     sftp = c.open_sftp()
 
-    # Ensure the new admin template directory exists
+    # Ensure the new admin template and management package directories exist
     run(c, f'mkdir -p {PROJECT_DIR}/portal/templates/admin/portal/classsubject')
+    run(c, f'mkdir -p {PROJECT_DIR}/portal/management/commands')
 
     for local_rel, remote in FILES:
         sftp.put(os.path.join(BASE, local_rel), remote)

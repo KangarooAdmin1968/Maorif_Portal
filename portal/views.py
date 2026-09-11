@@ -2327,6 +2327,9 @@ def import_teachers(request, school_id):
 
 @login_required
 def lesson_allocation(request):
+    if not (request.user.is_superuser or _is_zavuch(request.user, get_user_role(request.user))):
+        messages.error(request, 'Дастрасӣ маҳдуд аст. Ин бахш танҳо барои муовини директор (завуч) дастрас аст.')
+        return redirect('dashboard')
     school = get_user_school(request.user)
     if not school:
         messages.error(request, 'Муассисаи шумо муайян карда нашуд.')
@@ -2363,6 +2366,9 @@ def lesson_allocation(request):
 @login_required
 @require_POST
 def save_lesson_allocation(request):
+    if not (request.user.is_superuser or _is_zavuch(request.user, get_user_role(request.user))):
+        messages.error(request, 'Дастрасӣ маҳдуд аст. Ин бахш танҳо барои муовини директор (завуч) дастрас аст.')
+        return redirect('dashboard')
     school = get_user_school(request.user)
     if not school or not has_school_access(request.user, school):
         return redirect('dashboard')

@@ -19,8 +19,8 @@ jobs:
             cd /var/www/maorif_zafarobod
             git fetch origin main
             git reset --hard origin/main
-            git clean -fd
             /var/www/maorif_zafarobod/venv/bin/python manage.py migrate
             /var/www/maorif_zafarobod/venv/bin/python manage.py collectstatic --noinput
-            pkill -f gunicorn || true
+            fuser -k 8000/tcp || true
+            sleep 1
             cd /var/www/maorif_zafarobod && /var/www/maorif_zafarobod/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 maorif_portal.wsgi:application --daemon

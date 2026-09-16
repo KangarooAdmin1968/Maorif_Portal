@@ -2382,7 +2382,7 @@ def save_lesson_allocation(request):
             continue
 
     class_subject_map = {
-        cs.id: cs for cs in ClassSubject.objects.filter(id__in=cs_ids, school=school)
+        cs.id: cs for cs in ClassSubject.objects.filter(id__in=cs_ids, school=school, is_active=True)
     }
     teacher_map = {
         tp.id: tp for tp in TeacherProfile.objects.filter(school=school)
@@ -2459,6 +2459,11 @@ def request_deactivation(request):
     if not school or not has_school_access(request.user, school) or cs.school != school:
         messages.error(request, 'Шумо метавонед танҳо барои муассисаи худ дархост диҳед.')
         return redirect('lesson_allocation')
+    if SubjectDeactivationRequest.objects.filter(class_subject=cs, status__in=['pending', 'approved']).exists():
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('Accept', '').startswith('application/json'):
+            return JsonResponse({'status': 'exists', 'message': 'Дархости мутаносиб аллакай вуҷуд дорад'})
+        messages.warning(request, 'Дархости мутаносиб аллакай вуҷуд дорад.')
+        return redirect(f'{reverse("lesson_allocation")}?class={cs.class_name}')
     SubjectDeactivationRequest.objects.get_or_create(
         class_subject=cs,
         requested_by=request.user,
@@ -2492,17 +2497,24 @@ def review_deactivation_request(request):
     except (ValueError, SubjectDeactivationRequest.DoesNotExist):
         return redirect('deactivation_requests')
     now = timezone.now()
+    cs = req.class_subject
     if action == 'approve':
-        req.class_subject.is_active = False
-        req.class_subject.save()
-        req.status = 'approved'
+        cs.is_active = False
+        cs.teacher = None
+        cs.allocated_teacher = None
+        cs.save()
+        # Approve all other pending duplicates for the same subject/class cleanly.
+        SubjectDeactivationRequest.objects.filter(class_subject=cs, status='pending').update(
+            status='approved', reviewed_by=request.user, reviewed_at=now
+        )
+        req.refresh_from_db()
         messages.success(
             request,
-            f'Фани «{req.class_subject.subject}» барои {req.class_subject.class_name} дар {req.class_subject.school.name} тасдиқ ва хориҷ шуд.'
+            f'Фани «{cs.subject}» барои {cs.class_name} дар {cs.school.name} тасдиқ ва хориҷ шуд.'
         )
     else:
-        req.class_subject.is_active = True
-        req.class_subject.save()
+        cs.is_active = True
+        cs.save()
         req.status = 'rejected'
         messages.success(request, 'Дархост рад карда шуд ва фан фаъол монд.')
     req.reviewed_by = request.user

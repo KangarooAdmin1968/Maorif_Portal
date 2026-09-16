@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="tg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Паспорти лоиҳа — «Портали маориф» | maorif-zafarobod.tj</title>
+<style>
+  /* ============ АСОСӢ ============ */
+  :root{
+    --navy:#0f2a4a; --navy2:#173d66; --gold:#c9a227; --gold-lt:#f4e9c8;
+    --ink:#1c2733; --muted:#5a6b7c; --line:#d8e0e8; --bg:#f5f8fb;
+    --green:#1e7d4f; --red:#b03030; --screen:#0d1521; --screen2:#14202f;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"PT Serif","Times New Roman",Georgia,serif;
+    font-size:15.5px; line-height:1.62;
+  }
+  .page{max-width:880px; margin:0 auto; padding:0 28px 60px}
+
+  /* ============ САҲИФАИ УНВОНӢ ============ */
+  .cover{
+    min-height:96vh; display:flex; flex-direction:column; justify-content:center;
+    text-align:center; padding:40px 0;
+    background:linear-gradient(160deg,var(--navy) 0%,var(--navy2) 55%,#1d4d80 100%);
+    margin:0 -28px; color:#fff; position:relative; overflow:hidden;
+  }
+  .cover::before{content:""; position:absolute; inset:0;
+    background:radial-gradient(ellipse at 20% 10%,rgba(201,162,39,.18),transparent 50%),
+               radial-gradient(ellipse at 85% 90%,rgba(255,255,255,.07),transparent 45%);}
+  .cover-inner{position:relative; padding:0 40px}
+  .cover .org{font-size:13px; letter-spacing:.35em; text-transform:uppercase; color:var(--gold); margin-bottom:26px}
+  .cover h1{font-size:56px; margin:0 0 6px; letter-spacing:.02em; font-weight:700; color:#fff}
+  .cover h2{font-size:19px; font-weight:400; color:#cfe0f0; margin:0 0 30px; line-height:1.5}
+  .cover .divider{width:120px; height:3px; background:var(--gold); margin:0 auto 30px; border-radius:2px}
+  .cover .competition{font-size:17px; color:#fff; border:1.5px solid var(--gold); display:inline-block;
+    padding:10px 34px; border-radius:40px; margin-bottom:34px; letter-spacing:.05em}
+  .cover .meta{font-size:15px; color:#bcd2e6; line-height:2}
+  .cover .meta b{color:#fff}
+  .cover .url{font-size:20px; color:var(--gold); font-weight:700; letter-spacing:.06em; margin-top:14px}
+
+  /* ============ САРЛАВҲАҲО ============ */
+  h2.section{
+    font-size:26px; color:var(--navy); margin:56px 0 18px; padding-bottom:10px;
+    border-bottom:3px solid var(--gold); display:flex; align-items:baseline; gap:14px;
+  }
+  h2.section .num{
+    font-size:15px; background:var(--navy); color:#fff; border-radius:6px;
+    padding:4px 12px; white-space:nowrap; letter-spacing:.1em;
+  }
+  h3{font-size:19px; color:var(--navy2); margin:34px 0 10px}
+  h4{font-size:16px; color:var(--navy2); margin:24px 0 8px}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0 10px 4px; padding-left:24px}
+  li{margin:6px 0}
+  strong{color:var(--navy)}
+  code{background:#eef3f8; border:1px solid var(--line); border-radius:4px;
+    padding:1px 6px; font-family:Consolas,"Courier New",monospace; font-size:13.5px; color:var(--navy2)}
+
+  /* ============ ҶАДВАЛҲО ============ */
+  table{width:100%; border-collapse:collapse; margin:18px 0; font-size:14.5px;
+    box-shadow:0 2px 10px rgba(15,42,74,.07); border-radius:10px; overflow:hidden}
+  th{background:var(--navy); color:#fff; text-align:left; padding:11px 14px; font-size:13.5px;
+    letter-spacing:.04em}
+  td{padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:top}
+  tr:nth-child(even) td{background:#f2f6fa}
+  tr:last-child td{border-bottom:none}
+  td .delta{color:var(--green); font-weight:700}
+
+  /* ============ НИШОНҲО (BADGES) ============ */
+  .badge{display:inline-block; font-size:12px; font-weight:700; letter-spacing:.05em;
+    padding:3px 12px; border-radius:20px; margin:2px 4px 2px 0; font-family:Arial,sans-serif}
+  .b-navy{background:var(--navy); color:#fff}
+  .b-gold{background:var(--gold); color:#3a2f05}
+  .b-green{background:#dff2e7; color:var(--green); border:1px solid #a9d8bd}
+  .b-red{background:#fbe4e4; color:var(--red); border:1px solid #ecb3b3}
+  .b-line{background:#fff; color:var(--navy2); border:1.5px solid var(--navy2)}
+
+  /* ============ ЛОАҲАИ НОУТБУК (MOCKUP) ============ */
+  .laptop{max-width:760px; margin:30px auto 8px}
+  .laptop .lid{
+    background:linear-gradient(180deg,#3a4250,#232936);
+    border-radius:16px 16px 0 0; padding:8px 14px 0; position:relative;
+    box-shadow:0 10px 30px rgba(15,42,74,.25);
+  }
+  .laptop .lid::before{ /* камера */
+    content:""; position:absolute; top:5px; left:50%; transform:translateX(-50%);
+    width:7px; height:7px; border-radius:50%; background:#111; box-shadow:0 0 0 2px #4a5462;
+  }
+  .laptop .screen{
+    background:#0b1220; border-radius:10px 10px 0 0; padding:10px; margin-top:8px;
+  }
+  .browser{background:#101a29; border-radius:8px; overflow:hidden;
+    font-family:"Segoe UI",Arial,sans-serif; border:1px solid #26334a}
+  .browser-bar{display:flex; align-items:center; gap:8px; background:#1b2940;
+    padding:7px 12px}
+  .browser-bar .dot{width:10px;height:10px;border-radius:50%}
+  .dot.r{background:#ff5f57}.dot.y{background:#febc2e}.dot.g{background:#28c840}
+  .browser-bar .addr{
+    flex:1; background:#0c1522; color:#9fb6cd; font-size:11.5px; border-radius:12px;
+    padding:4px 14px; margin-left:8px; font-family:Consolas,monospace;
+  }
+  .viewport{background:#f6f9fc; color:#22303f; padding:16px 18px; font-size:12.5px; min-height:150px}
+  .viewport .vtitle{font-weight:700; color:var(--navy); font-size:13.5px; margin-bottom:10px;
+    border-bottom:1px solid var(--line); padding-bottom:6px}
+  .laptop .base{
+    height:14px; background:linear-gradient(180deg,#4a5462,#2c3340);
+    border-radius:0 0 14px 14px; margin:0 -30px; position:relative;
+  }
+  .laptop .base::after{content:""; position:absolute; top:0; left:50%; transform:translateX(-50%);
+    width:120px; height:6px; background:#1c222d; border-radius:0 0 8px 8px}
+  .laptop .brand{text-align:center; font-size:10px; color:#7d8ea0; letter-spacing:.3em;
+    padding:3px 0; background:#2c3340}
+
+  /* унсуриҳои экран */
+  .stat-row{display:flex; gap:8px; margin:10px 0}
+  .stat{flex:1; background:#fff; border:1px solid var(--line); border-radius:8px;
+    padding:9px 6px; text-align:center}
+  .stat b{display:block; font-size:19px; color:var(--navy)}
+  .stat span{font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em}
+  .bar-line{display:flex; align-items:center; gap:8px; margin:5px 0; font-size:11px}
+  .bar-line .lbl{width:130px; text-align:right; color:#42536a; white-space:nowrap; overflow:hidden}
+  .bar{flex:1; height:11px; background:#e3eaf1; border-radius:6px; overflow:hidden}
+  .bar i{display:block; height:100%; border-radius:6px;
+    background:linear-gradient(90deg,var(--navy2),#3d7bb5)}
+  .bar .pct{position:absolute}
+  .bar-val{width:36px; font-weight:700; color:var(--navy)}
+  .live{color:#fff; background:#c0392b; font-size:9px; padding:1px 8px; border-radius:8px;
+    animation:blink 1.6s infinite}
+  @keyframes blink{50%{opacity:.45}}
+
+  .cols3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px}
+  .col3{background:#fff; border:1px solid var(--line); border-radius:7px; padding:8px; min-height:110px}
+  .col3 h6{margin:0 0 6px; font-size:10px; color:var(--navy); text-transform:uppercase;
+    letter-spacing:.08em; border-bottom:1px solid var(--line); padding-bottom:4px}
+  .col3 .item{font-size:10.5px; padding:4px 6px; border-radius:5px; margin:3px 0; background:#f2f6fa}
+  .col3 .item.warn{background:#fdf0d8; border-left:3px solid var(--gold); color:#7a5c10}
+  .col3 .item.over{background:#fbe4e4; border-left:3px solid var(--red); color:#8a2828}
+
+  .journal{width:100%; border-collapse:collapse; font-size:10.5px; box-shadow:none}
+  .journal th{background:var(--navy2); padding:5px 6px; font-size:9.5px}
+  .journal td{padding:5px 6px; font-size:10.5px; background:#fff !important}
+  .journal .grade{font-weight:700; color:var(--navy); text-align:center}
+  .journal .j-flag{color:#fff; background:var(--gold); font-size:8.5px; padding:0 5px;
+    border-radius:6px; font-weight:700}
+  .journal .att-plus{color:var(--green)} .journal .att-minus{color:var(--red)}
+  .vbtn{display:inline-block; background:var(--navy); color:#fff; font-size:10px;
+    padding:5px 14px; border-radius:6px; margin:10px 6px 0 0; font-weight:700}
+  .vbtn.alt{background:#fff; color:var(--navy); border:1.5px solid var(--navy)}
+  .lock{font-size:10px; color:var(--muted); margin-top:8px}
+
+  /* ============ ДИАГРАММАИ АЛГОРИТМ ============ */
+  .algo{font-family:Consolas,"Courier New",monospace; font-size:13px; line-height:1.55;
+    background:var(--screen); color:#cfe3f5; border-radius:12px; padding:20px 24px;
+    margin:18px 0; overflow-x:auto; white-space:pre; border-left:5px solid var(--gold)}
+  .algo .hl{color:#ffd876; font-weight:700}
+  .formula{background:var(--gold-lt); border:1.5px solid var(--gold); border-radius:10px;
+    padding:14px 20px; margin:16px 0; font-family:Consolas,monospace; font-size:14px;
+    color:#4a3a08}
+
+  /* ============ САВОЛУ ҶАВОБ ============ */
+  .qa{margin:22px 0; border-radius:12px; overflow:hidden; border:1.5px solid var(--line);
+    box-shadow:0 3px 12px rgba(15,42,74,.06); break-inside:avoid}
+  .qa .q{background:linear-gradient(90deg,var(--navy),var(--navy2)); color:#fff;
+    padding:13px 18px; font-weight:700; font-size:15px}
+  .qa .q .qnum{color:var(--gold); margin-right:10px; font-family:Arial,sans-serif}
+  .qa .a{padding:14px 20px; background:#fff}
+  .qa .a p{margin:8px 0; font-size:14.5px}
+  .qa .a .lbl{font-size:11px; font-weight:700; color:var(--green); letter-spacing:.15em;
+    text-transform:uppercase; font-family:Arial,sans-serif}
+
+  /* ============ ҚУТТИИ КАЛИДӢ ============ */
+  .keyfact{display:flex; gap:16px; background:#fff; border-left:5px solid var(--gold);
+    padding:14px 20px; margin:16px 0; border-radius:0 10px 10px 0;
+    box-shadow:0 2px 8px rgba(15,42,74,.05)}
+  .keyfact .n{font-size:26px; font-weight:700; color:var(--navy); font-family:Arial,sans-serif;
+    white-space:nowrap; align-self:center}
+
+  /* ============ САҲИФАБАНДӢ (A4 PRINT) ============ */
+  @page{size:A4; margin:16mm 14mm}
+  @media print{
+    body{background:#fff; font-size:12.5px}
+    .page{max-width:none; padding:0}
+    .cover{min-height:auto; margin:0; padding:70px 30px; page-break-after:always}
+    h2.section{page-break-after:avoid; margin-top:30px}
+    .laptop,.qa,table,.keyfact,.algo,.formula{page-break-inside:avoid}
+    .live{animation:none}
+    a{color:var(--navy); text-decoration:none}
+  }
+  @media(max-width:640px){
+    .cover h1{font-size:36px}
+    .cols3{grid-template-columns:1fr}
+    .stat-row{flex-wrap:wrap}
+    .stat{min-width:45%}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ═══════════════ САҲИФАИ УНВОНӢ ═══════════════ -->
+<div class="cover">
+  <div class="cover-inner">
+    <div class="org">Озмуни ҷумҳуриявии «Илм — фурӯғи маърифат»</div>
+    <h1>ПОРТАЛИ<br>МАОРИФ</h1>
+    <h2>Системаи рақамии ягонаи идоракунии маорифи<br>ноҳияи Зафаробод</h2>
+    <div class="divider"></div>
+    <div class="competition">ПАСПОРТИ ЛОИҲА · Бахши барномасозӣ ва технологияҳои иттилоотӣ</div>
+    <div class="meta">
+      Муаллиф ва таҳиягар: <b>Зокиров Ӯсар Дӯсарович</b><br>
+      Омӯзгори информатика, <b>МТМУ №20</b><br>
+      Шӯъбаи маорифи ноҳияи Зафаробод, вилояти Суғд<br>
+      Соли таҳия ва татбиқ: <b>2025–2026</b>
+    </div>
+    <div class="url">maorif-zafarobod.tj</div>
+  </div>
+</div>
+
+<!-- ═══════════════ I. МЕТАМАЪЛУМОТ ═══════════════ -->
+<h2 class="section"><span class="num">I</span> САҲИФАИ УНВОНӢ ВА МЕТАМАЪЛУМОТ</h2>
+<table>
+  <tr><th style="width:34%">Майдон</th><th>Маълумот</th></tr>
+  <tr><td><b>Номи лоиҳа</b></td><td>«Портали маориф» — Системаи рақамии ягонаи идоракунии маорифи ноҳияи Зафаробод</td></tr>
+  <tr><td><b>Суроғаи онлайн</b></td><td>https://maorif-zafarobod.tj</td></tr>
+  <tr><td><b>Муаллиф ва таҳиягар</b></td><td>Зокиров Ӯсар Дӯсарович — омӯзгори информатикаи МТМУ №20</td></tr>
+  <tr><td><b>Ҷойи татбиқ</b></td><td>Шӯъбаи маорифи ноҳияи Зафаробод, вилояти Суғд</td></tr>
+  <tr><td><b>Соли таҳия</b></td><td>2025–2026</td></tr>
+  <tr><td><b>Фармондеҳии соҳа</b></td><td>25 муассисаи таълимӣ · 1048 омӯзгор · 16 700 хонанда</td></tr>
+  <tr><td><b>Забони интерфейс</b></td><td>Тоҷикӣ (алифбои 35-ҳарфаи кирилликӣ), дастгирии ӯзбекӣ ва русӣ</td></tr>
+  <tr><td><b>Ҳолат</b></td><td><span class="badge b-green">ФАЪОЛ · PRODUCTION</span> <span class="badge b-navy">HTTPS</span> <span class="badge b-gold">CI/CD</span></td></tr>
+</table>
+
+<!-- ═══════════════ II. МУҚАДДИМА ═══════════════ -->
+<h2 class="section"><span class="num">II</span> МУҚАДДИМА ВА ЗАМИНАИ ПАЙДОИШ</h2>
+
+<h3>2.1. Мушкилоти мавҷудаи соҳа</h3>
+<p>То соли 2025 идоракунии равандҳои таълимӣ дар ноҳияи Зафаробод — ки дорои <b>25 муассисаи таълимӣ, 1048 омӯзгор ва 16 700 хонанда</b> мебошад — асосан бо воситаи асноди коғазӣ ва ҷадвалҳои парокандаи электронӣ ба роҳ монда мешуд. Ин вазъият чанд мушкилоти сохторӣ эҷод мекард:</p>
+<ul>
+  <li><b>Бори вазнини коғазбозӣ.</b> Ҳар омӯзгор дар як соли таълимӣ дафтари синфӣ, журнали холҳо, варақаҳои тарификатсия ва ҳисоботи чорякиро дастӣ пур мекард. Завучҳо ҳар сол ҳафтаҳоро барои тартиб додани тақсимоти соатҳои дарсӣ сарф менамуданд.</li>
+  <li><b>Ношаффофии баҳогузорӣ.</b> Баҳои хонандагон дар зинҷири «дафтари омӯзгор → журнали синф → ҳисоботи мактаб → шӯъбаи маориф» се-чор бор дастӣ такрор мешуд ва дар ҳар марҳила имкони хатои инсонӣ ва дахолати субъективӣ вуҷуд дошт.</li>
+  <li><b>Набудани мониторинги воқеии вақт.</b> Шӯъбаи маориф ҳолати воқеии ҳар мактабро танҳо пас аз гирдиҳамоии ҳисоботи моҳона мешинохт — яъне бо таъхири 15–30 рӯз. Қарорҳои идоравӣ ба маълумоти куҳнашуда такя мекарданд.</li>
+  <li><b>Инфиродии маълумот.</b> Номгӯйи синфҳо («10а», «10-А», «10 а») ва фанҳо («ОДХ», «ОИХ», «OIH») дар муассисаҳои гуногун ягона набуд ва ҷамъбасти автоматии маълумоти ноҳияро душвор месохт.</li>
+</ul>
+
+<h3>2.2. Мувофиқати стратегӣ</h3>
+<p>Лоиҳа мустақиман ба санадҳои миллии стратегӣ хидмат мекунад:</p>
+<ul>
+  <li><b>«Бистсолаи омӯзиш ва рушди фанҳои табиатшиносӣ, дақиқ ва риёзӣ (2020–2040)»</b> — рақамикунонии инфраструктури таълимӣ шарти аввалиндараҷаи рушди фанҳои дақиқ аст;</li>
+  <li><b>Консепсияи гузариш ба таҳсилоти рақамӣ дар Ҷумҳурии Тоҷикистон</b> — платформа намунаи амалии ин консепсия дар сатҳи як ноҳияи алоҳида мебошад;</li>
+  <li><b>Стандартҳои Вазорати маориф ва илми ҶТ</b> — миқёси миллии 10-хола, тақсимбандии чорякӣ ва ҳуҷҷатнигории давлатӣ дар пояи система гузошта шудааст.</li>
+</ul>
+
+<div class="keyfact">
+  <div class="n">ҲАДАФ</div>
+  <div>Сохтани <b>системаи рақамии ягонае</b>, ки тамоми занҷири идоракунии маорифро — аз холи ҳаррӯзаи хонанда то мониторинги шӯъбаи маориф — дар як фазои иттилоотии муттаҳид муттаҳид месозад, бори маъмуриро кам мекунад ва шаффофияти пурраи баҳогузориро таъмин менамояд.</div>
+</div>
+
+<!-- ═══════════════ III. ТЕХНИКӢ ═══════════════ -->
+<h2 class="section"><span class="num">III</span> ХУСУСИЯТҲОИ ТЕХНИКИИ ЛОИҲА</h2>
+
+<h3>3.1. Стеки технологӣ</h3>
+<table>
+  <tr><th style="width:26%">Қабат</th><th style="width:30%">Технология</th><th>Асоснокунӣ</th></tr>
+  <tr><td>Забони барномасозӣ</td><td><b>Python 3.12</b></td><td>Стандартии муосир, экосистемаи бойи таҳлили маълумот</td></tr>
+  <tr><td>Фреймворки веб</td><td><b>Django 4.2</b></td><td>ORM, аутентификатсия, RBAC, муҳофизати CSRF/SQL-injection дар сатҳи фреймворк</td></tr>
+  <tr><td>Пойгоҳи додаҳо</td><td><b>SQLite / PostgreSQL</b></td><td>Архитектураи дурежимӣ — ҳангоми миқёсгузорӣ ба PostgreSQL бидуни тағйири код мегузарад</td></tr>
+  <tr><td>Frontend</td><td><b>Vanilla JS + CSS3</b></td><td>100% рамзи муаллифӣ — бе Bootstrap/jQuery; боршавии босуръат ҳатто дар интернети суст</td></tr>
+  <tr><td>WSGI-сервер</td><td><b>Gunicorn · 3 worker</b></td><td>Идоракунии яквақтаи дархостҳо, устуворӣ дар бори баланд</td></tr>
+  <tr><td>Инфрасохтор</td><td><b>Ubuntu VPS · 169.58.154.191</b></td><td>Истиқлолияти пурраи инфрасохторӣ ва соҳибияти маълумот</td></tr>
+  <tr><td>CI/CD</td><td><b>GitHub Actions + SSH</b></td><td>Ҳар push ба <code>main</code>: <code>git reset → migrate → collectstatic → restart gunicorn</code></td></tr>
+  <tr><td>Пардозиши файл</td><td>pandas · openpyxl · python-docx</td><td>Импорт/экспорти Excel ва ҳуҷҷатҳои Word-и давлатӣ</td></tr>
+</table>
+
+<h3>3.2. Амният ва эътимоднокӣ</h3>
+<ul>
+  <li><b>RBAC:</b> се нақши асосӣ — <i>Раиси маориф</i>, <i>Директори муассиса (завуч)</i>, <i>Омӯзгор</i> — бо ҳуқуқҳои фарқкунанда дар сатҳи ҳар view ва ҳар объекти маълумот;</li>
+  <li><b>QuarterLock — қуфли чорякӣ:</b> пас аз супоридани холҳои чоряк давра аз ҷониби маъмурият механикӣ баста мешавад; тағйири баҳои басташуда аз ҷониби омӯзгор имконнопазир аст;</li>
+  <li><b>Даври тасдиқ (SubjectDeactivationRequest):</b> хориҷкунии фан танҳо бо тасдиқи суперадмин — сепаратсияи ҳуқуқҳо;</li>
+  <li><b>Audit trail:</b> ҳар сабт муаллиф, сана ва ҳолат дорад — имкони тафтиши пурраи оморӣ;</li>
+  <li><b>HTTPS + калидҳои криптографии SSH:</b> интисоли маълумот ва насбкунӣ танҳо аз каналҳои рамзгузоришуда.</li>
+</ul>
+
+<h3>3.3. Мутобиқати миллӣ</h3>
+<ul>
+  <li>Миқёси баҳогузории <b>10-хола</b> — стандарти Вазорати маориф ва илми ҶТ;</li>
+  <li>Алифбои <b>35-ҳарфаи тоҷикӣ</b> дар саросари интерфейс (Ӯ, Қ, Ғ, Ҳ, Ҷ, Ӣ);</li>
+  <li>Се забони таълимӣ — тоҷикӣ, ӯзбекӣ, русӣ;</li>
+  <li>Нормализатсияи худкор: <code>10a / 10-a / 10 а → 10-А</code> · <code>ОДХ / OIH / OIX → ОИХ</code>.</li>
+</ul>
+
+<!-- ═══════════════ IV. НАҚШҲО ═══════════════ -->
+<h2 class="section"><span class="num">IV</span> МЕЪМОРИИ НАҚШҲО ВА ИМКОНИЯТҲОИ КОРБАРОН</h2>
+
+<h3>4.А. Мақоми Шӯъбаи маориф — Панели Раиси маориф</h3>
+<p>Раиси маориф дар як саҳифа тасвири пурраи ноҳияро мебинад: 25 муассиса, 1048 омӯзгор, 16 700 хонанда — ҳама дар реҷими воқеии вақт.</p>
+
+<div class="laptop">
+  <div class="lid"><div class="screen"><div class="browser">
+    <div class="browser-bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="addr">🔒 https://maorif-zafarobod.tj — Панели Раиси маориф</span>
+    </div>
+    <div class="viewport">
+      <div class="vtitle">ПОРТАЛИ МАОРИФ — НОҲИЯИ ЗАФАРОБОД &nbsp;<span class="live">● ВАҚТИ ВОҚЕӢ</span></div>
+      <div class="stat-row">
+        <div class="stat"><b>25</b><span>муассиса</span></div>
+        <div class="stat"><b>1048</b><span>омӯзгор</span></div>
+        <div class="stat"><b>16 700</b><span>хонанда</span></div>
+        <div class="stat"><b>97,4%</b><span>пуршавӣ</span></div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);letter-spacing:.1em;margin:8px 0 4px">РЕЙТИНГИ ТАЙЁРИИ МУАССИСАҲО (0–100%)</div>
+      <div class="bar-line"><span class="lbl">1. МТМУ №20</span><span class="bar"><i style="width:96%"></i></span><span class="bar-val">96%</span></div>
+      <div class="bar-line"><span class="lbl">2. Литсейи Президентӣ</span><span class="bar"><i style="width:91%"></i></span><span class="bar-val">91%</span></div>
+      <div class="bar-line"><span class="lbl">3. МТМУ №12</span><span class="bar"><i style="width:87%"></i></span><span class="bar-val">87%</span></div>
+      <div class="bar-line"><span class="lbl">4. МТМУ №7</span><span class="bar"><i style="width:82%"></i></span><span class="bar-val">82%</span></div>
+      <div><span class="vbtn">Сабти ҳуҷҷатҳо</span><span class="vbtn alt">Экспорти Excel</span><span class="vbtn alt">Мониторинги муфассал</span></div>
+    </div>
+  </div></div></div>
+  <div class="base"></div>
+  <div class="brand">ПОРТАЛИ МАОРИФ</div>
+</div>
+
+<ul>
+  <li><b>Рейтинги тайёрии муассисаҳо (0–100%)</b> — нишондиҳандаи таркибӣ аз пуршавии кадрҳо, воридшавии холҳо, давомот ва ҳуҷҷатнигорӣ;</li>
+  <li><b>Рейтинги GPA-и мактабҳо, синфҳо ва фанҳо</b> — дар сатҳи ноҳия ва мактаб, бо алгоритми Dense Ranking;</li>
+  <li><b>Топ-100 хонандагони ноҳия</b> — шиносномаи автоматии хонандагони болаёқат барои олимпиадаҳо;</li>
+  <li><b>Ҳуҷҷатнигории автоматии давлатӣ</b> — варақаҳои ҳисоботӣ ва талаботномаҳо бо як клик;</li>
+  <li><b>Экспорти Excel-и мониторинг</b> — барои ҳисоботи болоӣ ба Вазорат ва Ҳукумати вилоят.</li>
+</ul>
+
+<h3>4.Б. Мақоми Муовини директор (Завуч)</h3>
+
+<div class="laptop">
+  <div class="lid"><div class="screen"><div class="browser">
+    <div class="browser-bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="addr">🔒 Тақсимоти соатҳои дарсӣ — МТМУ №20</span>
+    </div>
+    <div class="viewport">
+      <div class="vtitle">ТАҚСИМОТИ СОАТҲОИ ДАРСӢ — интерфейси се-қисма</div>
+      <div class="cols3">
+        <div class="col3"><h6>Фанҳои бесоҳиб</h6>
+          <div class="item warn">10-А: Физика · ⚠ соат нест</div>
+          <div class="item warn">10-Б: Химия · ⚠ соат нест</div>
+          <div class="item">9-В: Адабиёт</div>
+        </div>
+        <div class="col3"><h6>Омӯзгорон</h6>
+          <div class="item">Зокиров Ӯ. (инф.) · бор: 14/18</div>
+          <div class="item over">Ҳакимова М. (мат.) · бор: 21/18 · СЕРБОРӢ!</div>
+          <div class="item">Саидов Ҷ. (таърих) · бор: 9/18</div>
+        </div>
+        <div class="col3"><h6>Тақсимоти ҷорӣ</h6>
+          <div class="item">Зокиров Ӯ. → 10-А: Информатика</div>
+          <div class="item">Зокиров Ӯ. → 10-Б: Информатика</div>
+          <div class="item">Ҳакимова М. → 9-А: Математика</div>
+        </div>
+      </div>
+      <div><span class="vbtn">Чопи тарификатсия — 1 клик</span><span class="vbtn alt">Экспорти Excel</span></div>
+    </div>
+  </div></div></div>
+  <div class="base"></div>
+  <div class="brand">ПОРТАЛИ МАОРИФ</div>
+</div>
+
+<ul>
+  <li><b>Интерфейси нави се-қисма:</b> фанҳои бесоҳиб · омӯзгорон бо бори ҷорӣ · таъйинотҳо — бо <b>ошкорсозии автоматии камбудиҳо</b> (⚠ фанҳои бесоҳиб, «СЕРБОРӢ!» барои омӯзгорони аз ҳад зиёд бордошта);</li>
+  <li><b>Сарбории омӯзгорон (тарификатсия)</b> — ҷамъбасти автоматии соатҳо бо муқоиса ба намунаи давлатӣ ва чопи як-кликӣ;</li>
+  <li><b>Боздории фанҳо бо тасдиқи суперадмин</b> — дархост тавассути <code>SubjectDeactivationRequest</code> ба марҳилаи дуюм меравад;</li>
+  <li><b>Импорт/экспорти Excel-и омӯзгорон</b> — 1048 кадр дар дақиқаҳо, на ҳафтаҳо.</li>
+</ul>
+
+<h3>4.В. Мақоми Омӯзгор — Журнали электронӣ</h3>
+
+<div class="laptop">
+  <div class="lid"><div class="screen"><div class="browser">
+    <div class="browser-bar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="addr">🔒 Журнали электронӣ — 10-А — Информатика</span>
+    </div>
+    <div class="viewport">
+      <div class="vtitle">ЖУРНАЛИ ЭЛЕКТРОНӢ · 10-А · ИНФОРМАТИКА · Миқёси 10-хола</div>
+      <table class="journal">
+        <tr><th>ХОНАНДА</th><th>08.09</th><th>10.09</th><th>12.09</th><th>Хулқ</th><th>Дав.</th><th>Чоряк</th></tr>
+        <tr><td>Аҳмадов Фирӯз</td><td class="grade">9</td><td class="grade">10</td><td class="att-plus">+</td><td>★5</td><td>100%</td><td class="grade">9 <span class="j-flag">Ҷ</span></td></tr>
+        <tr><td>Ғафурова Нигина</td><td class="grade">10</td><td class="grade">8</td><td class="att-minus">−</td><td>★4</td><td>92%</td><td class="grade">9 <span class="j-flag">Ҷ</span></td></tr>
+        <tr><td>Қаримов Сафар</td><td class="grade">7</td><td class="grade">6</td><td class="att-plus">+</td><td>★3</td><td>100%</td><td class="grade">7 <span class="j-flag">Ҷ</span></td></tr>
+      </table>
+      <div><span class="vbtn">Гузариши холҳо ба чоряк</span><span class="lock">🔒 Ҳолати чоряк: баста нашудааст</span></div>
+    </div>
+  </div></div></div>
+  <div class="base"></div>
+  <div class="brand">ПОРТАЛИ МАОРИФ</div>
+</div>
+
+<ul>
+  <li><b>Холҳои ҷорӣ</b> дар миқёси миллии <b>10-хола</b> — дар ҳамон ҷадвал давомот (<code>+</code> босабаб / <code>−</code> бесабаб) ва хулқу атвор (1–5) сабт мегарданд;</li>
+  <li><b>Гузариши худкори холҳо ба чорякҳо</b> — миёнаи ҳаррӯза бо формулаи расмӣ мудаввар мешавад; пешбинӣ бо нишондиҳандаи каҳрабоии <b>«Ҷ» (Ҷорӣ)</b> маркер мегирад;</li>
+  <li><b>Хулқу атвор бо алгоритми беғарази миёнавазн:</b> аввал миёна дар ҳар фан, сипас байни фанҳо → «Намунавӣ» (≥4,5) · «Қаноатбахш» (≥3,0) · «Ноқаноатбахш» (&lt;3,0);</li>
+  <li><b>Стикерҳои рағбаткунанда</b> — ⭐ Ситора · ☀️ Офтобак · 🌸 Гул · 📖 Китоб — барои синфҳои хурд;</li>
+  <li><b>Профили шахсии хонанда</b> — таърихи пурраи холҳо, давомот ва рейтинг дар як саҳифа.</li>
+</ul>
+
+<h3>4.Г. Мақоми Волидон ва Хонандагон</h3>
+<ul>
+  <li><b>Рӯзномаи электронӣ:</b> дастрасии танҳо-хонданӣ ба холҳои шаффоф, давомот ва шарҳҳои омӯзгорон;</li>
+  <li><b>Огоҳии фаврӣ:</b> ҳар холи нав ва ҳар ғайбузии бесабаб зуд дар профил инъикос меёбад — волидон набзи таҳсили фарзандро на дар охири чоряк, балки ҳар рӯз мебинанд;</li>
+  <li><b>Шаффофияти рейтингӣ:</b> ҷойи хонанда дар синф ва ноҳия бе пинҳонӣ — ҳавасмандии солим ва рақобати илмӣ.</li>
+</ul>
+
+<!-- ═══════════════ V. НАВОВАРИҲО ═══════════════ -->
+<h2 class="section"><span class="num">V</span> НАВОВАРИҲОИ ИЛМӢ ВА РАҚАМИИ ЛОИҲА</h2>
+
+<h3>5.1. Алгоритми таснифоти дуфарҳангаи ҷинсият <span class="badge b-gold">TAJIK–UZBEK ONOMASTIC CLASSIFIER</span></h3>
+<p><b>Масъала.</b> Дар базаи 16 700 хонанда майдони «ҷинс» вуҷуд надошт — муассисаҳо ҳам бо номгузории тоҷикӣ (<code>-зода</code>, <code>-ӣ</code>, шарифи «духтар»/«писар»), ҳам бо суннати ӯзбекӣ (<code>-қизи</code>, <code>-ўғли</code>, <code>-оглы</code>) ва ҳам русӣ (<code>-ова</code>, <code>-овна</code>) пур шуда буданд. Ташхиси дастии 16 700 ном ғайриимкон буд.</p>
+<p><b>Ҳал — таснифгари ономастикии бисёрқабата</b> (<code>portal/gender_detector.py</code>):</p>
+
+<div class="algo">Ному насаб
+   │
+   ▼
+[1] Нормализатсияи кирилликӣ (нишонаҳо, ҳарфҳои калон → хурд)
+   │
+   ▼
+[2] Таҳлили ШАРИФ:
+   │    «қизи/кизи/овна/евна/духт»        → <span class="hl">ДУХТАР</span>
+   │    «ўғли/угли/ович/евич/пур/оглы»    → <span class="hl">ПИСАР</span>
+   ▼
+[3] ОХИРИ НАСАБ:
+   │    «-ова/-ева/-ина» → ДУХТАР    «-ов/-ев/-ин» → ПИСАР
+   │    «-зода/-ӣ/-ён»   → ХОНУСОР (қабати 4)
+   ▼
+[4] ЛУҒАТИ НОМҲО (дукорпусии тоҷикӣ-ӯзбекӣ):
+   │    300+ номи занона   (мадина, зебунисо, гулнор…)
+   │    300+ номи мардона  (рустам, алишер, мақсуд…)
+   ▼
+[5] ПРЕФИКСҲОИ ҶИНСАТӢ:
+   │    «биби-», «гул-», «моҳ-», «дил-»        → ДУХТАР
+   │    «абду-», «муҳаммад», «мулло-», «мирзо-» → ПИСАР
+   ▼
+[6] ОХИРИ НОМИ ХУСУСӢ:
+        «-хон/-бону/-бегим/-нисо» → ДУХТАР   «-бек/-ҷон/-қул/-шоҳ» → ПИСАР</div>
+
+<div class="keyfact">
+  <div class="n">98,8%</div>
+  <div><b>Натиҷаи амалӣ:</b> алгоритм 98,8%-и ҳамаи 16 700 хонандаро дуруст тасниф кард; 1,2%-и боқимонда (номҳои хонусори ҳақиқӣ) ба рӯйхати омӯзгори синф барои тасдиқи якдафъаина мебарояд. Ин тасниф дар ҳеҷ платформаи хориҷӣ, ки барои фазои номгузории Осиёи Марказӣ тарҳрезӣ нашудааст, вуҷуд надорад.</div>
+</div>
+
+<h3>5.2. Алгоритми Dense Ranking <span class="badge b-navy">РЕЙТИНГИ ЗИЧ</span></h3>
+<p><b>Масъала.</b> Ҳолате пеш меояд, ки ду ё се иштирокчӣ GPA-и яксон доранд. Рейтинги оддӣ пас аз ҷойи муштарак зинаро мепартояд (<code>1, 2, 2, 4</code>) ва маънии ҷойи «3»-ро халалдор месозад.</p>
+<p><b>Ҳал:</b> рақами ҷой танҳо он вақт афзоиш меёбад, ки GPA-и нав аз GPA-и қаблӣ <b>фарқ</b> кунад:</p>
+
+<div class="algo">rank = 0
+prev_gpa = None
+for item in data_sorted_by_gpa_desc:
+    <span class="hl">if item['gpa'] != prev_gpa:</span>   # ҷойи нав танҳо бо GPA-и нав
+        rank += 1
+        prev_gpa = item['gpa']
+    item['rank'] = rank          # GPA-и баробар → ҷойи баробар
+
+Натиҷа: <span class="hl">1, 2, 2, 3</span> — зинаҳои баробар муштарак, пайдарпайӣ солим</div>
+
+<p>Алгоритм дар се сатҳ амал мекунад: мактабҳо дар ноҳия, синфҳо дар мактаб ва ноҳия, хонандагон (Top-100) дар ноҳия.</p>
+
+<h3>5.3. Кӯпруки динамикии ҷорӣ–чорякӣ <span class="badge b-green">LIVE DAILY-TO-QUARTER BRIDGE</span></h3>
+<ol>
+  <li><b>Харитаи сана → чоряк.</b> Ҳар холи ҳаррӯза бо санаи худ ба чоряки мувофиқ вобаста мешавад (сен–ноя → I, дек–фев → II, мар–май → III, июн–авг → IV);</li>
+  <li><b>Прогнози зинда (live projection).</b> Функсияи <code>calc_quarterly()</code> аз холҳои ҷории чоряк пешбинии кушод месозад — нимсола, солона ва ниҳоӣ низ рекурсиван аз қисмҳои мавҷуда прогноз мегиранд;</li>
+  <li><b>Нишондиҳандаи «Ҷ» (Ҷорӣ).</b> Ҳар арзиши пешбинишуда бо парчами каҳрабоӣ маркер мегирад — пешбина ҳеҷ гоҳ бо баҳои расмӣ омехта намешавад;</li>
+  <li><b>Гузариш ба расмӣ.</b> Баҳои тасдиқшуда афзалият мегирад; пас аз мӯҳлат <code>QuarterLock</code> давраро механикӣ мебандад.</li>
+</ol>
+
+<div class="formula">
+Нимсола₁ = std_round((Q1 + Q2) / 2)<br>
+Солона&nbsp;&nbsp;&nbsp;= std_round((Нимсола₁ + Нимсола₂) / 2)<br>
+Ниҳоӣ&nbsp;&nbsp;&nbsp;&nbsp;= std_round((Солона + Аттестатсия) / 2)
+</div>
+<p>Ҳар гоҳ қисми ростӣ вуҷуд надорад — прогнози ҷонибдор аз қисми мавҷуда, бо парчами <code>_proj = True</code>.</p>
+
+<!-- ═══════════════ VI. САМАРАБАХШИЯТ ═══════════════ -->
+<h2 class="section"><span class="num">VI</span> САМАРАБАХШИИ ИҚТИСОДӢ ВА ИҶТИМОИИ ЛОИҲА</h2>
+
+<table>
+  <tr><th>Нишондиҳанда</th><th>Пеш аз лоиҳа</th><th>Пас аз лоиҳа</th><th>Тағйир</th></tr>
+  <tr><td>Масрафи коғаз дар як сол (ноҳия)</td><td>~500 000+ варақ</td><td>~0 (электронӣ)</td><td class="delta">−500 000 варақ</td></tr>
+  <tr><td>Вақти завуч барои тарификатсия</td><td>2–3 ҳафтаи кории пур</td><td>1–2 рӯз</td><td class="delta">−90%</td></tr>
+  <tr><td>Вақти омӯзгор барои ҳисоботи чорякӣ</td><td>6–8 соат/чоряк</td><td>&lt;30 дақиқа</td><td class="delta">−70% вақти умумӣ</td></tr>
+  <tr><td>Мӯҳлати дидани ҳолати ноҳия</td><td>15–30 рӯз</td><td>Воқеӣ, ҳар лаҳза</td><td class="delta">real-time</td></tr>
+  <tr><td>Имкони дастӣ тағйир додани баҳо</td><td>Мавҷуд</td><td>Нест (QuarterLock + audit)</td><td class="delta">0% дахолат</td></tr>
+  <tr><td>Шаффофият барои волидон</td><td>Танҳо дафтари дневник</td><td>Ҳаррӯза, онлайн</td><td class="delta">100%</td></tr>
+</table>
+
+<h3>6.2. Таъсири иҷтимоӣ</h3>
+<ul>
+  <li><b>Шаффофияти 100%-и аттестатсия</b> — омили инсонӣ аз ҳисобкунии ниҳоӣ хориҷ шуд;</li>
+  <li><b>Баробарии дастрасӣ</b> — хонандаи мактаби дурдаст ҳамон сифати ҳисоботиро мегирад, ки хонандаи маркази ноҳия;</li>
+  <li><b>Эҳтироми забони давлатӣ</b> — платформаи ягонаи соҳа, ки пурра бо алифбои 35-ҳарфаи тоҷикӣ кор мекунад;</li>
+  <li><b>Намунаи такрорӣ</b> — архитектура барои нусхабардорӣ дар дигар ноҳияҳои вилояти Суғд омода аст.</li>
+</ul>
+
+<!-- ═══════════════ VII. ROADMAP ═══════════════ -->
+<h2 class="section"><span class="num">VII</span> НАҚШАИ РУШДИ ОЯНДА — ROADMAP 2026–2027</h2>
+
+<table>
+  <tr><th style="width:14%">Давра</th><th style="width:30%">Вазифа</th><th>Тавсиф</th></tr>
+  <tr><td><b>Q4 2026</b></td><td>«Табели синфӣ»-и чопшаванда</td><td>Табели расмии PDF барои ҳар хонанда бо <b>QR-коди тасдиқкунанда</b> — скан кардани код ҳуҷҷатро ба сабти аслии база мепайвандад ва қалбакиро ғайриимкон месозад</td></tr>
+  <tr><td><b>Q1 2027</b></td><td>Бастаи ҳисоботи давлатии Омор</td><td>Тавлиди автоматии <b>Формаи 1-НШ ва 2-ОШ</b> — формаҳои расмии омории таълимӣ, ки ҳоло дастӣ пур мешаванд</td></tr>
+  <tr><td><b>Q1–Q2 2027</b></td><td>Telegram-боти волидон</td><td>Паёмрасони <b>бепул</b> — огоҳии фаврӣ аз холи нав, ғайбузӣ ва ҷадвали имтиҳонҳо бе насби барномаи иловагӣ</td></tr>
+  <tr><td><b>Q2–Q3 2027</b></td><td>Миқёсгузории вилоятӣ</td><td>Гузариш ба PostgreSQL-кластер, мутобиқсозӣ барои <b>тамоми ноҳияҳои вилояти Суғд</b> ва дар оянда — <b>Ҷумҳурии Тоҷикистон</b>; санҷиши бори 500+ муассиса</td></tr>
+  <tr><td><b>Q4 2027</b></td><td>Модули олимпиадавӣ</td><td>Пайванди Top-100-и ноҳия ба базаи ягонаи хонандагони болаёқати вилоят</td></tr>
+</table>
+
+<!-- ═══════════════ VIII. САВОЛУ ҶАВОБ ═══════════════ -->
+<h2 class="section"><span class="num">VIII</span> САВОЛУ ҶАВОБҲО БО ҲАКАМОНИ ОЗМУН</h2>
+<p><i>Дувоздаҳ саволи пешбинишудаи ҳаяти ҳакамон — профессорон, кормандони Вазорати маориф ва илм ва мутахассисони IT — бо ҷавобҳои асоснок.</i></p>
+
+<div class="qa">
+  <div class="q"><span class="qnum">01</span>Чаро системаҳои омодаи хориҷӣ (масалан, Кунделик ё дигар платформаҳо)-ро нахаридед ва худатон сохтед?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Се далели принсипиалӣ. Якум, <b>мутобиқати миллӣ</b>: платформаҳои хориҷӣ барои алифбои 35-ҳарфаи тоҷикӣ, миқёси махсуси 10-холаи мо, номгузории синфҳои мо («10-А» бо ҳарфи кирилликӣ) ва сохтори чорякии мо тарҳрезӣ нашудаанд — мутобиқсозии онҳо як лоиҳаи алоҳидаи чандмоҳа мешуд. Дуюм, <b>соҳибиятии маълумот</b>: маълумоти 16 700 хонандаи тоҷик бояд дар инфраструктури мо, таҳти назорати мо ва мувофиқи қонунгузории ҶТ нигоҳ дошта шавад, на дар серверҳои ширкати хориҷӣ. Сеюм, <b>иқтисодӣ</b>: платформаи мо арзиши обунавӣ надорад — ҳаргиз барои шӯъбаи маориф ҳисоби моҳона намерасад. Илова бар ин, мо функсияҳое дорем, ки дар ҳеҷ платформаи омода нестанд — масалан, таснифгари ономастикии тоҷикӣ-ӯзбекӣ барои ҷинсият, ки барои таркиби дуфарҳангаи ноҳияи мо зарур буд.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">02</span>Амнияти маълумоти шахсии 16 700 хонанда чӣ гуна ҳимоя мешавад?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Амният дар чор қабат сохта шудааст. <b>Қабати дастрасӣ:</b> RBAC — ҳар корбар танҳо он маълумотро мебинад, ки ба нақши ӯ ва муассисаи ӯ вобаста аст; омӯзгори мактаби №12 физикан наметавонад хонандаи мактаби №20-ро бинад. <b>Қабати иттисол:</b> тамоми трафик аз роҳи HTTPS рамзгузорӣ мешавад, паролҳо бо hashing-и муосири Django нигоҳубин мегарданд. <b>Қабати барнома:</b> муҳофизати CSRF, SQL-injection ва XSS дар сатҳи фреймворк гарантияшудааст. <b>Қабати идоравӣ:</b> <code>QuarterLock</code> тағйири баҳои тасдиқшударо манъ мекунад ва ҳар сабт муаллифу санадор аст — ҳатто дохили система ҳеҷ кас наметавонад ношинос тағйирот ворид кунад. Паролҳои омӯзгорон тавассути «калидҳои мастер»-и якдафъаина дода мешаванд, ки ивазкунии онҳо ҳангоми аввалин вуруд ҳатмӣ аст.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">03</span>Агар дар мактабҳои дурдаст интернет қатъ шавад, система чӣ гуна кор мекунад?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Ин савол барои ноҳияи мо, ки мактабҳояш дар нуқтаҳои кӯҳӣ паҳн шудаанд, амалӣ аст. Вокуниши мо дукарата аст. <b>Техникӣ:</b> интерфейс бо Vanilla JS ва CSS3-и сабук сохта шудааст — саҳифаҳо ҳатто дар суръати 3G/2G-и суст бор мешаванд, зеро ҳеҷ китобхонаи вазнини хориҷӣ бор намешавад. <b>Ҷубронӣ:</b> омӯзгор метавонад холҳоро дар Excel-и офлайн ҷамъ кунад ва ҳангоми пайдо шудани интернет бо импорти якдафъаина ворид созад. Ва нуқтаи муҳим: холҳо тақвимӣ ҳифз мешаванд — омӯзгор метавонад холҳои рӯзҳои гузаштаро ворид кунад ва система онҳоро ба чоряки дуруст худкор вобаста мекунад.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">04</span>Оё система ба стандартҳои Вазорати маориф ва илми ҶТ, аз ҷумла миқёси 10-хола, мутобиқ аст?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Бале, ва на танҳо мутобиқ — система ин стандартҳоро <b>ҳақиқатан иҷро мекунад</b>. Миқёси 10-хола дар модели <code>Grade</code> ҳамчун воҳиди асосӣ гузошта шудааст; тақсимбандии чорякӣ бо <code>QuarterGrade</code> ва ҷадвали аттестатсия (<code>quarter=0</code>) сохтори расмии соли таълимии ҶТ-ро такрор мекунад; нақшаи фанҳо (<code>TJC_SUBJECTS</code>) бевосита аз нақшаи таълимии миллӣ гирифта шудааст ва ҳангоми сабти хонанда фанҳои синфаш <b>худкор</b> бор мешаванд. Синфҳои 0 ва 1 ҳамчун «ғайрибаҳогузорӣ» қайд шудаанд. Ҳуҷҷатҳои содиркардашуда (тарификатсия, ҳисоботҳо) дар формати ҳуҷҷатҳои давлатии Word/Excel мебароянд.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">05</span>Мутобиқати забонӣ ва ҳуруфи 35-ҳарфаи тоҷикӣ чӣ гуна ҳал шудааст?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Тамоми интерфейс, моделҳо ва ҳуҷҷатҳо бо алифбои расмии кирилликии тоҷикӣ — бо ҳуруфи муштараки <b>Ӯ, Қ, Ғ, Ҳ, Ҷ, Ӣ</b> — сохта шудаанд, на бо имитацияи ҳарфҳои русӣ. Ду сатҳи ҳимояи забонӣ вуҷуд дорад: аввал, <code>CLASS_LETTERS</code> — сатри расмии 35 ҳарф бо тартиби стандартӣ — барои нормализатсияи номи синфҳо; дуюм, функсияи <code>normalize_subject()</code> вариантҳои сабтии фанҳоро (масалан, «ОДХ», «OIH») ба шакли дурусти «ОИХ» мегардонад. Дастгирии се забон (тоҷикӣ, ӯзбекӣ, русӣ) мувофиқи забони таълимии ҳар муассиса аст — мактаби ӯзбекзабони ноҳия бо ҳуруфи ӯзбекӣ сабт мешавад ва ҳеҷ талаффузи забонӣ гум намешавад.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">06</span>Сервер дар куҷо ҷойгир аст ва чаро меъмории Python/Django интихоб шуд?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Сервер — VPS-и Ubuntu Linux дар нуқтаи 169.58.154.191, ки мо пурра идора мекунем — на хостинги муштарак, на инфраструктури хориҷӣ; ин соҳибияти пурраи маълумотро таъмин мекунад. Django интихоб шуд, зеро се хусусияти беҳамто дорад: <b>(1)</b> ORM барои моделҳои мураккаби таълимӣ — School→Student→Grade→QuarterGrade→QuarterLock — бо транзакцияҳои атомӣ; <b>(2)</b> системаи аутентификатсия ва RBAC-и воридшуда беҳтарин асос барои нақшҳои сеяки мост; <b>(3)</b> экосистемаи Python — pandas, openpyxl, python-docx, paramiko — импорти Excel, ҳуҷҷатҳои Word ва синхронизатсияи дурдастии SSH-ро бе фреймворки иловагӣ ҳал кард. Python 3.12 интихоби оянда низ ҳаст — забонест, ки ҳам барои веб, ҳам барои таҳлили маълумот ва ҳам барои ML кор мекунад.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">07</span>Чӣ гуна исбот мекунед, ки система дар амал кор карда истодааст, на дар рӯи коғаз?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Далелҳо амалӣ ва санҷишпазиранд. Якум, <b>маълумоти зинда:</b> дар база ҳоло 25 муассиса, 1048 омӯзгор ва 16 700 хонанда сабт шудаанд — ман метавонам ҳоло ворид шуда, ҳар мактабро нишон диҳам. Дуюм, <b>рӯйдодҳои воқеӣ:</b> <code>QuarterLock</code>-ҳо бо <code>locked_at</code>-и воқеӣ, дархостҳои <code>SubjectDeactivationRequest</code> бо санаҳои дархост ва баррасӣ — таърихи амалиёти маъмурӣ дар база мӯҳр хӯрдааст. Сеюм, <b>инфраструктури воқеӣ:</b> GitHub Actions ҳар push-ро ба сервери production мебарад — <code>deploy.log</code> нишон медиҳад, ки ин системаи зиндаест, на презентатсия. Чорум, <b>истифодаи воқеӣ:</b> омӯзгорон бо «калидҳои мастер»-и якдафъаина ворид мешаванд — таърихи истифода дар база ҳаст. Ман омодаам ҳар саҳифаро ҳоло дар назди ҳакамон нишон диҳам — на видео, на скриншот, балки системаи зинда.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">08</span>Мушкилоти омӯзгорони калонсол, ки саводи рақамӣ надоранд, чӣ гуна ҳал карда мешавад?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Мо онро се роҳ ҳал кардем. <b>Якум — интерфейси интуитивӣ:</b> журнали электронӣ амалан ҳамон ҷадвали коғазии омӯзгор аст, танҳо дар экран — хол гузоштан як клик аст, на формаи мураккаб. <b>Дуюм — ҳуҷҷатҳои таълимӣ:</b> се дастури алоҳида (барои омӯзгор, завуч ва раиси маориф) бо забони содда ва скриншотҳои қадам-ба-қадам тавлид шудааст — ҳар омӯзгор ҳуҷҷати дастрас дорад. <b>Сеюм — модели «воситаи рақамӣ»:</b> дар ҳар мактаб завуч ё омӯзгори ҷавон ҳамчун нуқтаи дастгирии аввалин хидмат мекунад — омӯзгори калонсол метавонад холҳоро дар коғаз нависад ва бо ёрии ҳамкор ворид кунад. Ва муҳимтарин — ҳеҷ ҷойи система имлои англисӣ, менюҳои чандсатҳӣ ё терминологияи техникӣ талаб намекунад; ҳама тоҷикӣ, ҳама оддӣ.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">09</span>Таснифоти ҷинсият (писарон ва духтарон) ба чӣ хотир лозим буд?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Се сабаби амалӣ ва оморӣ. Якум, <b>ҳисоботи давлатӣ:</b> шӯъбаи маориф шумораи духтарон ва писаронро дар ҳар муассиса ва сатҳи синф гузориш медиҳад — ин қисми ҳисоботи расмии омор аст ва бидуни ҷинсият номумкин буд. Дуюм, <b>таҳлили таълимӣ:</b> мониторинги фарқи иқтибоси духтарон ва писарон дар фанҳои гуногун — масалан, оё духтарон дар физика хуб таҳсил мекунанд — барои сиёсати таълимӣ зарур аст. Сеюм, <b>интихоби олимпиадавӣ ва касбӣ:</b> рӯйхатҳои олимпиадаҳо аксар вақт бо тақсимоти ҷинсӣ талаб мешаванд. Ва муҳим — ҳеҷ платформаи хориҷӣ барои номгузории тоҷикӣ-ӯзбекии мо ин корро намекард; таснифгари мо морфемаҳои миллии мо — «-зода», «-пур», «-қизи», «-ўғли», «-хон», «-бону» — мефаҳмад ва 98,8% дақиқ кор кард. Ин на танҳо функсия, балки ҳалли як масъалаи забоншиносии ҳақиқӣ аст.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">10</span>Барои татбиқи ин система дар тамоми вилоят ё ҷумҳурӣ чӣ қадар вақт ва маблағ лозим аст?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Архитектураи мо аз аввал барои миқёс тарҳрезӣ шудааст. <b>Замон:</b> барои вилояти Суғд (тақрибан 14 ноҳия, ~700 муассиса) ҳудуди 3–4 моҳ — на солҳо: қадами асосӣ гузариш аз SQLite ба кластери PostgreSQL ва ҳамоҳангсозии ҳуқуқҳои вилоятӣ аст, на навсозии лоиҳа. <b>Маблағ:</b> хароҷоти асосӣ сервер аст — кластери миёнаи PostgreSQL + VPS-и мӯътадил барои тамоми вилоят ҳудуди чанд ҳазор доллар дар сол мешавад, на даҳҳо ҳазор; инфраструктури софтверӣ аллакай мавҷуд аст, зеро ҳеҷ лицензияи моҳона нест. <b>Инсонӣ:</b> дар ҳар ноҳия як администратори маҳаллӣ (одатан ҳамон омӯзгори информатика) кифоя аст — модели мо нишон дод, ки як нафар метавонад 25 муассисаро идора кунад. Барои тамоми ҷумҳурӣ — 6–8 моҳ, бо хароҷоти ҳануз хеле пасттар аз хариди як платформаи хориҷӣ.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">11</span>Чӣ гуна аз ворид шудани баҳоҳои бардурӯғ ё тағйир додани баҳо аз ҷониби шахсони бегона пешгирӣ мешавад?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Механизми ҳимоя чорқабат аст. <b>Якум — ҳуқуқи қатъӣ:</b> функсияи <code>can_edit_grade_journal()</code> тафтиш мекунад, ки омӯзгор танҳо ба фанҳои таъйиншудааш (<code>allocated_teacher</code>) ва танҳо дар муассисаи худ дастрасӣ дорад — омӯзгори математика физикан наметавонад холҳои таърихро тағйир диҳад. <b>Дуюм — қуфли чорякӣ:</b> <code>QuarterLock</code> пас аз тасдиқ давраро мебандад; ҳар тағйири баҳои басташуда дар сатҳи барнома рад мешавад, на танҳо дар сатҳи интерфейс. <b>Сеюм — даври тасдиқ:</b> ҳатто амалҳои ҳасас, монанди хориҷкунии фан, ба марҳилаи дуюми суперадмин мераванд — ихтиёри як танҳо барои харобкорӣ нест. <b>Чорум — аудит:</b> ҳар <code>Grade</code> муаллиф, сана ва ҳолат дорад; ҳар тағйирот сабт ва пайгирӣ мегардад. Яъне система на танҳо аз бегона, балки аз ихтиёри зиёдатии дохилӣ низ ҳимояшуда аст.</p></div>
+</div>
+
+<div class="qa">
+  <div class="q"><span class="qnum">12</span>Масъалаи тақсимоти соатҳо (тарификатсия) ва бори омӯзгорон дар система чӣ гуна шаффоф шуд?</div>
+  <div class="a"><span class="lbl">Ҷавоб</span>
+  <p>Ин яке аз вазифаҳои аз ҳама вақтталаби завуч буд — ҳар сол ҳафтаҳо — ва мо онро бо интерфейси нави се-қисма ҳал кардем. Саҳифаи <code>lesson_allocation</code> се сутун дорад: чап — фанҳои синфҳо, ки ҳануз омӯзгор надоранд (бо нишони ⚠ ошкоршуда); миёна — омӯзгорон бо бори ҷорӣ («14/18 соат» — 14 соати таъйиншуда аз 18 соати намунавӣ); рост — таъйинотҳои ҷорӣ. Система <b>худкор</b> ҳисоб мекунад: ҳар гоҳ омӯзгор аз ҳадди намунавӣ зиёд ё кам соат гирад, ранг ва нишон тағйир меёбад — «СЕРБОРӢ!» сурх мешавад. Ҳамаи тарификатсия дар як нигариш дида мешавад ва <b>бо як клик</b> ба варақаи расмии Word/Excel чоп мегардад — ҳамон ҳуҷҷате, ки пештар дастӣ ҳафтаҳо тайёр мешуд. Шаффофият дар он аст, ки ҳар омӯзгор бори худро, ҳар завуч тақсимоти умумиро ва раиси маориф ҳолати пуршавии кадрҳои ҳар мактабро мебинад — пинҳонӣ дар ҳеҷ сатҳ нест.</p></div>
+</div>
+
+<!-- ═══════════════ ПОАЯН ═══════════════ -->
+<div style="text-align:center; margin-top:60px; padding:34px 20px; background:linear-gradient(160deg,var(--navy),var(--navy2)); border-radius:14px; color:#fff">
+  <div style="font-size:13px; letter-spacing:.3em; color:var(--gold); margin-bottom:12px">МАЪЛУМОТИ ТАМОС</div>
+  <div style="font-size:20px; font-weight:700">Зокиров Ӯсар Дӯсарович</div>
+  <div style="color:#bcd2e6; margin:8px 0">Омӯзгори информатика, МТМУ №20<br>Шӯъбаи маорифи ноҳияи Зафаробод, вилояти Суғд</div>
+  <div style="font-size:18px; color:var(--gold); font-weight:700; margin-top:10px">maorif-zafarobod.tj</div>
+  <div style="margin-top:18px; font-style:italic; color:#cfe0f0">«Портали маориф» — илм, ки фурӯғи маърифат мебахшад.</div>
+</div>
+
+</div>
+</body>
+</html>

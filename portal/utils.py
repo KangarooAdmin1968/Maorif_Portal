@@ -4,7 +4,7 @@ import io
 import pandas as pd
 from django.db.models import Avg, Count, Q
 from django.conf import settings
-from .models import School, Student, Grade, ClassSubject, normalize_class_name, normalize_subject, is_litsey
+from .models import School, Student, Grade, ClassSubject, SubjectDeactivationRequest, normalize_class_name, normalize_subject, is_litsey
 
 
 # Default national curriculum subjects by grade
@@ -123,9 +123,15 @@ def ensure_class_subjects(school, class_name):
         )
         if c:
             created += 1
-        elif not obj.is_active:
-            obj.is_active = True
-            obj.is_default = True
+        elif obj.is_active:
+            if not obj.is_default:
+                obj.is_default = True
+                obj.save()
+        # Preserve any approved deactivation: do not reactivate and clear assigned teacher.
+        if obj.is_active and SubjectDeactivationRequest.objects.filter(class_subject=obj, status='approved').exists():
+            obj.is_active = False
+            obj.teacher = None
+            obj.allocated_teacher = None
             obj.save()
 
     # Deactivate any class subjects that are not part of the official curriculum

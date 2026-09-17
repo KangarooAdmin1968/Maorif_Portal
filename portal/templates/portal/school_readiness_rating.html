@@ -1,7 +1,30 @@
 {% extends 'portal/base.html' %}
-{% block title %}Рейтинги омодагии муассисаҳо{% endblock %}
+{% block title %}Рейтинги муассисаҳо{% endblock %}
 {% block extra_head %}
 <style>
+  .tab-bar {
+    display: flex;
+    gap: .5rem;
+    border-bottom: 2px solid #003366;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+  .tab-btn {
+    background: #e5e7eb;
+    color: #1f2937;
+    border: none;
+    border-radius: .5rem .5rem 0 0;
+    padding: .6rem 1.2rem;
+    font-size: .95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s, color .2s;
+  }
+  .tab-btn:hover { background: #d1d5db; }
+  .tab-btn.active { background: #003366; color: #fff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
   .readiness-bar { background: #e5e7eb; border-radius: 999px; height: 14px; overflow: hidden; min-width: 120px; }
   .readiness-fill { height: 100%; border-radius: 999px; transition: width .3s ease; }
   .fill-red    { background: #dc2626; }
@@ -11,52 +34,148 @@
   .pct-badge.done { color: #16a34a; }
   .done-check { color: #16a34a; font-weight: 700; }
   .rank-medal { font-weight: 700; }
+
+  .my-school-row { background: #fff7d6 !important; }
+  .my-school-row td { border-top: 2px solid #d4a017; border-bottom: 2px solid #d4a017; }
+  .mine-badge {
+    display: inline-block;
+    background: #d4a017;
+    color: #fff;
+    font-size: .72rem;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: .1rem .55rem;
+    margin-left: .4rem;
+    vertical-align: middle;
+  }
+  .num-cell { text-align: center; }
+  .norm-legend {
+    margin-top: 1rem;
+    padding: .75rem 1rem;
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    border-radius: .5rem;
+    font-size: .9rem;
+    color: #3730a3;
+  }
+  .norm-legend strong { display: block; margin-bottom: .25rem; }
 </style>
 {% endblock %}
 {% block content %}
-<h1>📊 Рейтинги омодагии муассисаҳо</h1>
-<p style="color:#4b5563;">Фоизи дарсҳои тақсимшуда ба омӯзгорон («Тақсимоти дарсҳо») аз ҳисоби ҳар муассиса. Ҳамаи фанҳои фаъол дар ҳисоб гирифта мешаванд.</p>
+<h1>🏆 Рейтинги муассисаҳо</h1>
 
-<table class="data-table">
-    <thead>
-        <tr>
-            <th>№</th>
-            <th>Муассиса</th>
-            <th>Завуч</th>
-            <th>Охирин фаъолият</th>
-            <th>Тақсимшуда</th>
-            <th style="min-width:180px;">Тақсимоти дарсҳо</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for s in stats %}
-        <tr>
-            <td class="rank-medal">
-                {% if s.rank == 1 %}🥇 1{% elif s.rank == 2 %}🥈 2{% elif s.rank == 3 %}🥉 3{% else %}{{ s.rank }}{% endif %}
-            </td>
-            <td>
-                {{ s.school.name }}
-                {% if s.percentage == 100 %}<span class="done-check" title="Ҳама дарсҳо тақсим шудаанд">✅</span>{% endif %}
-            </td>
-            <td>{{ s.zavuch_username }}</td>
-            <td>{% if s.zavuch_last_login %}{{ s.zavuch_last_login|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
-            <td>{{ s.assigned }} / {{ s.total }}</td>
-            <td>
-                <div style="display:flex; align-items:center; gap:.6rem;">
-                    <div class="readiness-bar" style="flex:1;">
-                        <div class="readiness-fill {% if s.percentage >= 80 %}fill-green{% elif s.percentage >= 50 %}fill-amber{% else %}fill-red{% endif %}" style="width: {{ s.percentage }}%;"></div>
+<div class="tab-bar">
+    <button type="button" class="tab-btn active" data-tab="readiness">📚 Омодагии дарсҳо (0–100%)</button>
+    <button type="button" class="tab-btn" data-tab="activity">⭐ Фаъолнокии баҳогузорӣ (Рейтинги холҳо)</button>
+</div>
+
+<div id="tab-readiness" class="tab-panel active">
+    <p style="color:#4b5563;">Фоизи дарсҳои тақсимшуда ба омӯзгорон («Тақсимоти дарсҳо») аз ҳисоби ҳар муассиса. Ҳамаи фанҳои фаъол дар ҳисоб гирифта мешаванд.</p>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>№</th>
+                <th>Муассиса</th>
+                <th>Завуч</th>
+                <th>Охирин фаъолият</th>
+                <th>Тақсимшуда</th>
+                <th style="min-width:180px;">Тақсимоти дарсҳо</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in stats %}
+            <tr>
+                <td class="rank-medal">
+                    {% if s.rank == 1 %}🥇 1{% elif s.rank == 2 %}🥈 2{% elif s.rank == 3 %}🥉 3{% else %}{{ s.rank }}{% endif %}
+                </td>
+                <td>
+                    {{ s.school.name }}
+                    {% if s.percentage == 100 %}<span class="done-check" title="Ҳама дарсҳо тақсим шудаанд">✅</span>{% endif %}
+                </td>
+                <td>{{ s.zavuch_username }}</td>
+                <td>{% if s.zavuch_last_login %}{{ s.zavuch_last_login|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
+                <td>{{ s.assigned }} / {{ s.total }}</td>
+                <td>
+                    <div style="display:flex; align-items:center; gap:.6rem;">
+                        <div class="readiness-bar" style="flex:1;">
+                            <div class="readiness-fill {% if s.percentage >= 80 %}fill-green{% elif s.percentage >= 50 %}fill-amber{% else %}fill-red{% endif %}" style="width: {{ s.percentage }}%;"></div>
+                        </div>
+                        <span class="pct-badge {% if s.percentage == 100 %}done{% endif %}">{{ s.percentage }}%</span>
                     </div>
-                    <span class="pct-badge {% if s.percentage == 100 %}done{% endif %}">{{ s.percentage }}%</span>
-                </div>
-            </td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="6">Муассиса ёфт нашуд.</td></tr>
-        {% endfor %}
-    </tbody>
-</table>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6">Муассиса ёфт нашуд.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 
-<div class="toolbar">
+<div id="tab-activity" class="tab-panel">
+    <p style="color:#4b5563;">Рейтинги зиндаи фаъолияти баҳогузорӣ дар ноҳия — шумораи умумии холҳои гузошташудаи ҳар муассиса.</p>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Ҷой</th>
+                <th>Номи муассиса</th>
+                <th class="num-cell">Хонандагон</th>
+                <th class="num-cell">Ҳамагӣ холҳо</th>
+                <th class="num-cell">Холҳои миёна ба як хонанда</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in activity %}
+            <tr {% if s.is_mine %}class="my-school-row"{% endif %}>
+                <td class="rank-medal">
+                    {% if s.rank == 1 %}🏆 1{% elif s.rank == 2 %}🥈 2{% elif s.rank == 3 %}🥉 3{% else %}{{ s.rank }}{% endif %}
+                </td>
+                <td>
+                    {{ s.school.name }}
+                    {% if s.is_mine %}<span class="mine-badge">Шумо</span>{% endif %}
+                </td>
+                <td class="num-cell">{{ s.students }}</td>
+                <td class="num-cell"><strong>{{ s.total_grades }}</strong></td>
+                <td class="num-cell">{{ s.avg_per_student }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5">Муассиса ёфт нашуд.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="norm-legend">
+        <strong>Меъёри ҳадди ақали холҳо дар як чоряк (аз рӯи соатҳои ҳафтаинаи таҳсил):</strong>
+        {% for hours, minimum in min_norm_bands %}{% if not forloop.first %} &nbsp;•&nbsp; {% endif %}{{ hours }}{% if hours == 4 %}–5{% elif hours == 8 %}–10{% endif %} соат = {{ minimum }} хол{% endfor %}
+    </div>
+</div>
+
+<div class="toolbar" style="margin-top:1rem;">
     <a href="{% url 'dashboard' %}" class="btn">Бозгашт</a>
 </div>
+
+<script>
+(function () {
+    var buttons = document.querySelectorAll('.tab-btn');
+    var panels = document.querySelectorAll('.tab-panel');
+    function activate(name) {
+        buttons.forEach(function (b) {
+            b.classList.toggle('active', b.dataset.tab === name);
+        });
+        panels.forEach(function (p) {
+            p.classList.toggle('active', p.id === 'tab-' + name);
+        });
+    }
+    buttons.forEach(function (b) {
+        b.addEventListener('click', function () {
+            activate(b.dataset.tab);
+            history.replaceState(null, '', '#' + b.dataset.tab);
+        });
+    });
+    if (location.hash === '#activity') {
+        activate('activity');
+    }
+})();
+</script>
 {% endblock %}

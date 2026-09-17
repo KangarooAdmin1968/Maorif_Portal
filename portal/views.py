@@ -26,6 +26,7 @@ from .utils import (
     default_subjects_for_class, ensure_class_subjects, is_non_graded,
     get_school_number, is_academic_school, official_subjects
 )
+from .curriculum_hours import MIN_GRADES_BANDS
 
 
 QUALITATIVE_CHOICES = [
@@ -2590,10 +2591,13 @@ def monitoring_dashboard(request):
 
 @login_required
 def school_readiness_rating(request):
-    """Shared leaderboard of lesson-allocation readiness for all academic schools.
+    """Unified district leaderboard for all academic schools (2 tabs).
+
+    Tab 1 — lesson-allocation readiness:
+        percentage = assigned active ClassSubjects / total active ClassSubjects.
+    Tab 2 — grading activity: total Grade rows and grades-per-student.
 
     Visible to superusers, staff (education officials) and school Zavuchs.
-    percentage = assigned active ClassSubjects / total active ClassSubjects.
     """
     role = get_user_role(request.user)
     is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
@@ -2638,7 +2642,45 @@ def school_readiness_rating(request):
             prev_pct = item['percentage']
         item['rank'] = rank
 
-    return render(request, 'portal/school_readiness_rating.html', {'stats': data})
+    # Tab 2: live district grading-activity leaderboard.
+    # "Active students" excludes non-graded class levels ('0' and '1').
+    user_school = get_user_school(request.user)
+    student_counts = dict(
+        Student.objects.filter(school_id__in=school_ids)
+        .exclude(class_name__regex=r'^(0|1)(-|$|[^0-9])')
+        .values_list('school_id').annotate(n=Count('id'))
+    )
+    grade_counts = dict(
+        Grade.objects.filter(student__school_id__in=school_ids)
+        .values_list('student__school_id').annotate(n=Count('id'))
+    )
+    activity = []
+    for school in schools:
+        students_n = student_counts.get(school.id, 0)
+        grades_n = grade_counts.get(school.id, 0)
+        activity.append({
+            'school': school,
+            'students': students_n,
+            'total_grades': grades_n,
+            'avg_per_student': round(grades_n / students_n, 1) if students_n else 0.0,
+            'is_mine': bool(user_school and user_school.id == school.id),
+        })
+    activity.sort(key=lambda x: x['total_grades'], reverse=True)
+
+    # Dense ranking so tied grade counts share the same rank
+    rank = 0
+    prev_grades = None
+    for item in activity:
+        if item['total_grades'] != prev_grades:
+            rank += 1
+            prev_grades = item['total_grades']
+        item['rank'] = rank
+
+    return render(request, 'portal/school_readiness_rating.html', {
+        'stats': data,
+        'activity': activity,
+        'min_norm_bands': MIN_GRADES_BANDS,
+    })
 
 
 @login_required

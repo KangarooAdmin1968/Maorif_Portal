@@ -103,20 +103,45 @@
   .teacher-panel.open > td { border-bottom: 1px solid #e5e7eb; }
   .teacher-wrap { max-height: 0; overflow: hidden; transition: max-height .4s ease; }
   .teacher-panel.open .teacher-wrap { max-height: 2500px; }
-  .teacher-inner { padding: .75rem 1rem 1rem; }
-  .teacher-table th { background: #1e3a5f; font-size: .82rem; padding: .5rem .6rem; }
-  .teacher-table td { font-size: .88rem; padding: .5rem .6rem; }
-  .status-badge {
+  .teacher-inner { padding: .9rem 1.1rem 1.1rem; }
+  .teacher-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: inset 0 1px 3px rgba(15, 23, 42, .05), 0 1px 2px rgba(15, 23, 42, .04);
+    padding: .9rem 1rem;
+    overflow-x: auto;
+  }
+  .teacher-table { margin: 0; }
+  .teacher-table th { background: #1e3a5f; font-size: .8rem; padding: .6rem .75rem; letter-spacing: .02em; }
+  .teacher-table td { font-size: .88rem; padding: .6rem .75rem; vertical-align: middle; }
+  .teacher-table tbody tr:nth-child(even) { background: #f1f5f9; }
+  .teacher-table tbody tr:hover { background: #e8eefc; }
+  .subject-chip {
     display: inline-block;
-    padding: .15rem .6rem;
+    background: #eef2ff;
+    color: #3730a3;
+    border: 1px solid #c7d2fe;
     border-radius: 999px;
-    font-weight: 700;
-    font-size: .8rem;
+    padding: .18rem .65rem;
+    font-size: .78rem;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: .12rem .18rem .12rem 0;
     white-space: nowrap;
   }
-  .status-green { background: #dcfce7; color: #166534; }
-  .status-amber { background: #fef3c7; color: #92400e; }
-  .status-red   { background: #fee2e2; color: #991b1b; }
+  .status-badge {
+    display: inline-block;
+    padding: .22rem .75rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: .78rem;
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  .status-green { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+  .status-amber { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+  .status-red   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
 </style>
 {% endblock %}
 {% block content %}
@@ -200,13 +225,14 @@
                 <td class="num-cell">
                     <span class="norm-badge {% if s.fulfillment >= 70 %}norm-high{% elif s.fulfillment >= 30 %}norm-mid{% else %}norm-low{% endif %}">{{ s.fulfillment }}%</span>
                 </td>
-                <td class="num-cell"><span class="gpa-badge">{{ s.gpa }}</span></td>
+                <td class="num-cell"><span class="gpa-badge">{{ s.gpa|floatformat:2 }}</span></td>
             </tr>
             <tr class="teacher-panel" id="tp-{{ forloop.counter }}">
                 <td colspan="6">
                     <div class="teacher-wrap">
                         <div class="teacher-inner">
                             {% if s.teachers %}
+                            <div class="teacher-card">
                             <table class="data-table teacher-table">
                                 <thead>
                                     <tr>
@@ -225,7 +251,7 @@
                                     <tr>
                                         <td>{{ forloop.counter }}</td>
                                         <td>{{ t.name }}</td>
-                                        <td>{{ t.subjects }}</td>
+                                        <td>{% for chip in t.subjects %}<span class="subject-chip">{{ chip }}</span>{% endfor %}</td>
                                         <td class="num-cell">{{ t.hours }}</td>
                                         <td class="num-cell">{{ t.min_grades }}</td>
                                         <td class="num-cell">{{ t.grades_done }}</td>
@@ -243,6 +269,7 @@
                                     {% endfor %}
                                 </tbody>
                             </table>
+                            </div>
                             {% else %}
                             <p style="color:#6b7280; margin:0;">Омӯзгорони тақсимшуда ёфт нашуд.</p>
                             {% endif %}
@@ -288,12 +315,19 @@
         activate('activity');
     }
 
-    document.querySelectorAll('.school-row').forEach(function (row) {
+    var schoolRows = document.querySelectorAll('.school-row');
+    var teacherPanels = document.querySelectorAll('.teacher-panel');
+    schoolRows.forEach(function (row) {
         row.addEventListener('click', function () {
             var panel = document.getElementById(row.dataset.target);
             if (!panel) return;
-            var open = panel.classList.toggle('open');
-            row.classList.toggle('open', open);
+            var willOpen = !panel.classList.contains('open');
+            teacherPanels.forEach(function (p) { p.classList.remove('open'); });
+            schoolRows.forEach(function (r) { r.classList.remove('open'); });
+            if (willOpen) {
+                panel.classList.add('open');
+                row.classList.add('open');
+            }
         });
     });
 })();

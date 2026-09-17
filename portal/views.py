@@ -2667,11 +2667,11 @@ def school_readiness_rating(request):
         .values('student__school_id', 'student__class_name', 'subject')
         .annotate(n=Count('id'))
     }
+    # Use the exact same school-GPA formula as the academic leaderboard
+    # (calculate_school_rankings) so all leaderboards show identical values.
     gpa_map = {
-        r['student__school_id']: round(r['avg'], 1)
-        for r in Grade.objects.filter(
-            student__school_id__in=school_ids, score__isnull=False
-        ).values('student__school_id').annotate(avg=Avg('score'))
+        item['school'].id: item['gpa']
+        for item in calculate_school_rankings()
     }
     class_subjects = list(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
@@ -2728,10 +2728,10 @@ def school_readiness_rating(request):
             fulfillment = round(norm_done / min_grades * 100, 1) if min_grades else 0.0
             teachers.append({
                 'name': profile.full_name,
-                'subjects': '; '.join(
+                'subjects': [
                     f"{subj}: {', '.join(sorted(set(cls), key=class_sort))}"
                     for subj, cls in sorted(subj_classes.items())
-                ),
+                ],
                 'hours': hours,
                 'min_grades': min_grades,
                 'grades_done': grades_done,

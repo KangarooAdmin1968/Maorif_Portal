@@ -2,6 +2,11 @@
 {% block title %}Рейтинги муассисаҳо{% endblock %}
 {% block extra_head %}
 <style>
+  /* Zero horizontal scrolling — everything fits the viewport width */
+  html, body { overflow-x: hidden; }
+  .data-table { table-layout: auto; width: 100%; }
+  .data-table th, .data-table td { padding: .6rem .6rem; font-size: .92rem; }
+
   .tab-bar {
     display: flex;
     gap: .5rem;
@@ -25,7 +30,7 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
-  .readiness-bar { background: #e5e7eb; border-radius: 999px; height: 14px; overflow: hidden; min-width: 120px; }
+  .readiness-bar { background: #e5e7eb; border-radius: 999px; height: 14px; overflow: hidden; min-width: 90px; }
   .readiness-fill { height: 100%; border-radius: 999px; transition: width .3s ease; }
   .fill-red    { background: #dc2626; }
   .fill-amber  { background: #f59e0b; }
@@ -109,26 +114,28 @@
     border: 1px solid #e2e8f0;
     border-radius: 8px;
     box-shadow: inset 0 1px 3px rgba(15, 23, 42, .05), 0 1px 2px rgba(15, 23, 42, .04);
-    padding: .9rem 1rem;
-    overflow-x: auto;
+    padding: .8rem .9rem;
+    overflow-x: hidden;
   }
-  .teacher-table { margin: 0; }
-  .teacher-table th { background: #1e3a5f; font-size: .8rem; padding: .6rem .75rem; letter-spacing: .02em; }
-  .teacher-table td { font-size: .88rem; padding: .6rem .75rem; vertical-align: middle; }
+  .teacher-table { margin: 0; width: 100%; }
+  .teacher-table th { background: #1e3a5f; font-size: .78rem; padding: .5rem .6rem; letter-spacing: .02em; }
+  .teacher-table td { font-size: .85rem; padding: .55rem .6rem; vertical-align: middle; }
   .teacher-table tbody tr:nth-child(even) { background: #f1f5f9; }
   .teacher-table tbody tr:hover { background: #e8eefc; }
+  .teacher-name { display: block; font-weight: 700; color: #1e293b; margin-bottom: .3rem; }
+  .norm-note { font-size: .75rem; color: #64748b; white-space: nowrap; }
   .subject-chip {
     display: inline-block;
     background: #eef2ff;
     color: #3730a3;
     border: 1px solid #c7d2fe;
     border-radius: 999px;
-    padding: .18rem .65rem;
+    padding: .12rem .5rem;
     font-size: .78rem;
     font-weight: 600;
-    line-height: 1.4;
-    margin: .12rem .18rem .12rem 0;
-    white-space: nowrap;
+    line-height: 1.35;
+    margin: .1rem .15rem .1rem 0;
+    white-space: normal;
   }
   .status-badge {
     display: inline-block;
@@ -163,7 +170,7 @@
                 <th>Завуч</th>
                 <th>Охирин фаъолият</th>
                 <th>Тақсимшуда</th>
-                <th style="min-width:180px;">Тақсимоти дарсҳо</th>
+                <th style="min-width:140px;">Тақсимоти дарсҳо</th>
             </tr>
         </thead>
         <tbody>
@@ -237,12 +244,9 @@
                                 <thead>
                                     <tr>
                                         <th>№</th>
-                                        <th>Номи омӯзгор</th>
-                                        <th>Фан ва синфҳо</th>
-                                        <th class="num-cell">Соати ҳафтаина</th>
-                                        <th class="num-cell">Меъёри ҳадди ақал</th>
-                                        <th class="num-cell">Ҳамагӣ холҳои гузошташуда</th>
-                                        <th class="num-cell">Иҷрошавӣ (%)</th>
+                                        <th>Омӯзгор ва фанҳо</th>
+                                        <th class="num-cell">Соат / Меъёр</th>
+                                        <th class="num-cell">Холҳо / Иҷрошавӣ</th>
                                         <th class="num-cell">Ҳолат</th>
                                     </tr>
                                 </thead>
@@ -250,12 +254,12 @@
                                     {% for t in s.teachers %}
                                     <tr>
                                         <td>{{ forloop.counter }}</td>
-                                        <td>{{ t.name }}</td>
-                                        <td>{% for chip in t.subjects %}<span class="subject-chip">{{ chip }}</span>{% endfor %}</td>
-                                        <td class="num-cell">{{ t.hours }}</td>
-                                        <td class="num-cell">{{ t.min_grades }}</td>
-                                        <td class="num-cell">{{ t.grades_done }}</td>
-                                        <td class="num-cell"><strong>{{ t.fulfillment }}%</strong></td>
+                                        <td>
+                                            <span class="teacher-name">{{ t.name }}</span>
+                                            {% for chip in t.subjects %}<span class="subject-chip">{{ chip }}</span>{% endfor %}
+                                        </td>
+                                        <td class="num-cell">{{ t.hours }} соат<br><span class="norm-note">(меъёр: {{ t.min_grades }})</span></td>
+                                        <td class="num-cell"><strong>{{ t.grades_done }}</strong> / {{ t.fulfillment }}%</td>
                                         <td class="num-cell">
                                             {% if t.fulfillment >= 70 %}
                                                 <span class="status-badge status-green">🟢 Фаъол</span>

@@ -26,7 +26,7 @@ from .utils import (
     default_subjects_for_class, ensure_class_subjects, is_non_graded,
     get_school_number, is_academic_school, official_subjects
 )
-from .curriculum_hours import MIN_GRADES_BANDS
+from .curriculum_hours import MIN_GRADES_BANDS, weekly_hours, quarter_min_norm
 
 
 QUALITATIVE_CHOICES = [
@@ -2643,26 +2643,100 @@ def school_readiness_rating(request):
         item['rank'] = rank
 
     # Tab 2: live district grading-activity leaderboard.
-    # "Active students" excludes non-graded class levels ('0' and '1').
+    # "Active students" and norm expectations exclude non-graded class levels ('0' and '1').
+    NON_GRADED_RE = r'^(0|1)(-|$|[^0-9])'
     user_school = get_user_school(request.user)
     student_counts = dict(
         Student.objects.filter(school_id__in=school_ids)
-        .exclude(class_name__regex=r'^(0|1)(-|$|[^0-9])')
+        .exclude(class_name__regex=NON_GRADED_RE)
         .values_list('school_id').annotate(n=Count('id'))
     )
     grade_counts = dict(
         Grade.objects.filter(student__school_id__in=school_ids)
         .values_list('student__school_id').annotate(n=Count('id'))
     )
+    class_student_counts = {
+        (r['school_id'], r['class_name']): r['n']
+        for r in Student.objects.filter(school_id__in=school_ids)
+        .exclude(class_name__regex=NON_GRADED_RE)
+        .values('school_id', 'class_name').annotate(n=Count('id'))
+    }
+    pair_grade_counts = {
+        (r['student__school_id'], r['student__class_name'], r['subject']): r['n']
+        for r in Grade.objects.filter(student__school_id__in=school_ids)
+        .values('student__school_id', 'student__class_name', 'subject')
+        .annotate(n=Count('id'))
+    }
+    gpa_map = {
+        r['student__school_id']: round(r['avg'], 1)
+        for r in Grade.objects.filter(
+            student__school_id__in=school_ids, score__isnull=False
+        ).values('student__school_id').annotate(avg=Avg('score'))
+    }
+    class_subjects = list(
+        ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
+        .exclude(class_name__regex=NON_GRADED_RE)
+        .select_related('allocated_teacher', 'teacher')
+    )
+    school_cs = defaultdict(list)
+    for cs in class_subjects:
+        school_cs[cs.school_id].append(cs)
+    profiles_by_school = defaultdict(dict)
+    for tp in TeacherProfile.objects.filter(school_id__in=school_ids):
+        profiles_by_school[tp.school_id][tp.user_id] = tp
+
+    def class_sort(cn):
+        return (class_numeric_part(cn) or 0, cn)
+
     activity = []
     for school in schools:
         students_n = student_counts.get(school.id, 0)
         grades_n = grade_counts.get(school.id, 0)
+        user_to_profile = profiles_by_school[school.id]
+
+        expected_min = 0
+        norm_grades_done = 0
+        teacher_pairs = defaultdict(list)
+        for cs in school_cs.get(school.id, []):
+            n_students = class_student_counts.get((school.id, cs.class_name), 0)
+            expected_min += quarter_min_norm(cs.class_name, cs.subject) * n_students
+            norm_grades_done += pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
+            profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
+            if profile:
+                teacher_pairs[profile].append((cs.subject, cs.class_name))
+
+        teachers = []
+        for profile, pairs in teacher_pairs.items():
+            subj_classes = defaultdict(list)
+            hours = 0
+            min_grades = 0
+            grades_done = 0
+            for subject, cname in pairs:
+                subj_classes[subject].append(cname)
+                hours += weekly_hours(cname, subject)
+                min_grades += quarter_min_norm(cname, subject) * class_student_counts.get((school.id, cname), 0)
+                grades_done += pair_grade_counts.get((school.id, cname, subject), 0)
+            fulfillment = round(grades_done / min_grades * 100, 1) if min_grades else 0.0
+            teachers.append({
+                'name': profile.full_name,
+                'subjects': '; '.join(
+                    f"{subj}: {', '.join(sorted(set(cls), key=class_sort))}"
+                    for subj, cls in sorted(subj_classes.items())
+                ),
+                'hours': hours,
+                'min_grades': min_grades,
+                'grades_done': grades_done,
+                'fulfillment': fulfillment,
+            })
+        teachers.sort(key=lambda t: (-t['fulfillment'], -t['grades_done'], t['name']))
+
         activity.append({
             'school': school,
             'students': students_n,
             'total_grades': grades_n,
-            'avg_per_student': round(grades_n / students_n, 1) if students_n else 0.0,
+            'fulfillment': round(norm_grades_done / expected_min * 100, 1) if expected_min else 0.0,
+            'gpa': gpa_map.get(school.id, 0.0),
+            'teachers': teachers,
             'is_mine': bool(user_school and user_school.id == school.id),
         })
     activity.sort(key=lambda x: x['total_grades'], reverse=True)

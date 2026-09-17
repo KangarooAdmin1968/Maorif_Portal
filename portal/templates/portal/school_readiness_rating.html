@@ -59,6 +59,64 @@
     color: #3730a3;
   }
   .norm-legend strong { display: block; margin-bottom: .25rem; }
+
+  /* Norm fulfillment / GPA badges */
+  .norm-badge {
+    display: inline-block;
+    min-width: 3.4rem;
+    text-align: center;
+    padding: .15rem .6rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: .85rem;
+    color: #fff;
+  }
+  .norm-high { background: #16a34a; }
+  .norm-mid  { background: #f59e0b; }
+  .norm-low  { background: #dc2626; }
+  .gpa-badge {
+    display: inline-block;
+    min-width: 2.6rem;
+    text-align: center;
+    padding: .15rem .6rem;
+    border-radius: .375rem;
+    font-weight: 700;
+    font-size: .9rem;
+    background: #eef2ff;
+    color: #003366;
+    border: 1px solid #c7d2fe;
+  }
+
+  /* Accordion drilldown */
+  .school-row { cursor: pointer; }
+  .school-row:hover { background: #f0f4ff; }
+  .caret {
+    display: inline-block;
+    color: #003366;
+    margin-right: .35rem;
+    transition: transform .25s ease;
+    font-size: .85rem;
+  }
+  .school-row.open .caret { transform: rotate(90deg); }
+  .drill-hint { font-size: .8rem; color: #6b7280; }
+  .teacher-panel > td { padding: 0 !important; border-bottom: none; background: #f8fafc; }
+  .teacher-panel.open > td { border-bottom: 1px solid #e5e7eb; }
+  .teacher-wrap { max-height: 0; overflow: hidden; transition: max-height .4s ease; }
+  .teacher-panel.open .teacher-wrap { max-height: 2500px; }
+  .teacher-inner { padding: .75rem 1rem 1rem; }
+  .teacher-table th { background: #1e3a5f; font-size: .82rem; padding: .5rem .6rem; }
+  .teacher-table td { font-size: .88rem; padding: .5rem .6rem; }
+  .status-badge {
+    display: inline-block;
+    padding: .15rem .6rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: .8rem;
+    white-space: nowrap;
+  }
+  .status-green { background: #dcfce7; color: #166534; }
+  .status-amber { background: #fef3c7; color: #92400e; }
+  .status-red   { background: #fee2e2; color: #991b1b; }
 </style>
 {% endblock %}
 {% block content %}
@@ -113,7 +171,7 @@
 </div>
 
 <div id="tab-activity" class="tab-panel">
-    <p style="color:#4b5563;">Рейтинги зиндаи фаъолияти баҳогузорӣ дар ноҳия — шумораи умумии холҳои гузошташудаи ҳар муассиса.</p>
+    <p style="color:#4b5563;">Рейтинги зиндаи фаъолияти баҳогузорӣ дар ноҳия. <span class="drill-hint">🔍 Барои дидани омӯзгорони ҳар муассиса сатри онро пахш кунед.</span></p>
 
     <table class="data-table">
         <thead>
@@ -122,25 +180,78 @@
                 <th>Номи муассиса</th>
                 <th class="num-cell">Хонандагон</th>
                 <th class="num-cell">Ҳамагӣ холҳо</th>
-                <th class="num-cell">Холҳои миёна ба як хонанда</th>
+                <th class="num-cell">Иҷрои меъёр (%)</th>
+                <th class="num-cell">Баҳои миёна (1–10)</th>
             </tr>
         </thead>
         <tbody>
             {% for s in activity %}
-            <tr {% if s.is_mine %}class="my-school-row"{% endif %}>
+            <tr class="school-row {% if s.is_mine %}my-school-row{% endif %}" data-target="tp-{{ forloop.counter }}" title="🔍 Омӯзгорон (муфассал)">
                 <td class="rank-medal">
                     {% if s.rank == 1 %}🏆 1{% elif s.rank == 2 %}🥈 2{% elif s.rank == 3 %}🥉 3{% else %}{{ s.rank }}{% endif %}
                 </td>
                 <td>
+                    <span class="caret">▶</span>
                     {{ s.school.name }}
                     {% if s.is_mine %}<span class="mine-badge">Шумо</span>{% endif %}
                 </td>
                 <td class="num-cell">{{ s.students }}</td>
                 <td class="num-cell"><strong>{{ s.total_grades }}</strong></td>
-                <td class="num-cell">{{ s.avg_per_student }}</td>
+                <td class="num-cell">
+                    <span class="norm-badge {% if s.fulfillment >= 70 %}norm-high{% elif s.fulfillment >= 30 %}norm-mid{% else %}norm-low{% endif %}">{{ s.fulfillment }}%</span>
+                </td>
+                <td class="num-cell"><span class="gpa-badge">{{ s.gpa }}</span></td>
+            </tr>
+            <tr class="teacher-panel" id="tp-{{ forloop.counter }}">
+                <td colspan="6">
+                    <div class="teacher-wrap">
+                        <div class="teacher-inner">
+                            {% if s.teachers %}
+                            <table class="data-table teacher-table">
+                                <thead>
+                                    <tr>
+                                        <th>№</th>
+                                        <th>Номи омӯзгор</th>
+                                        <th>Фан ва синфҳо</th>
+                                        <th class="num-cell">Соати ҳафтаина</th>
+                                        <th class="num-cell">Меъёри ҳадди ақал</th>
+                                        <th class="num-cell">Ҳамагӣ холҳои гузошташуда</th>
+                                        <th class="num-cell">Иҷрошавӣ (%)</th>
+                                        <th class="num-cell">Ҳолат</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for t in s.teachers %}
+                                    <tr>
+                                        <td>{{ forloop.counter }}</td>
+                                        <td>{{ t.name }}</td>
+                                        <td>{{ t.subjects }}</td>
+                                        <td class="num-cell">{{ t.hours }}</td>
+                                        <td class="num-cell">{{ t.min_grades }}</td>
+                                        <td class="num-cell">{{ t.grades_done }}</td>
+                                        <td class="num-cell"><strong>{{ t.fulfillment }}%</strong></td>
+                                        <td class="num-cell">
+                                            {% if t.fulfillment >= 70 %}
+                                                <span class="status-badge status-green">🟢 Фаъол</span>
+                                            {% elif t.fulfillment >= 30 %}
+                                                <span class="status-badge status-amber">🟡 Муътадил</span>
+                                            {% else %}
+                                                <span class="status-badge status-red">🔴 Бефаъолият</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p style="color:#6b7280; margin:0;">Омӯзгорони тақсимшуда ёфт нашуд.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </td>
             </tr>
             {% empty %}
-            <tr><td colspan="5">Муассиса ёфт нашуд.</td></tr>
+            <tr><td colspan="6">Муассиса ёфт нашуд.</td></tr>
             {% endfor %}
         </tbody>
     </table>
@@ -176,6 +287,15 @@
     if (location.hash === '#activity') {
         activate('activity');
     }
+
+    document.querySelectorAll('.school-row').forEach(function (row) {
+        row.addEventListener('click', function () {
+            var panel = document.getElementById(row.dataset.target);
+            if (!panel) return;
+            var open = panel.classList.toggle('open');
+            row.classList.toggle('open', open);
+        });
+    });
 })();
 </script>
 {% endblock %}

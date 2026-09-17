@@ -78,7 +78,6 @@
                         <a href="{% url 'deactivation_requests' %}">📨 Дархостҳо</a>
                     {% endif %}
                     {% if user.is_superuser or user.is_staff or is_zavuch %}
-                        <a href="{% url 'monitoring_dashboard' %}">Назорати Муассисаҳо</a>
                         <a href="{% url 'school_readiness_rating' %}">🏆 Рейтинги муассисаҳо</a>
                         <a href="{% url 'school_documents' %}">📄 Ҳуҷҷатнигорӣ</a>
                     {% endif %}

@@ -2699,8 +2699,11 @@ def school_readiness_rating(request):
         teacher_pairs = defaultdict(list)
         for cs in school_cs.get(school.id, []):
             n_students = class_student_counts.get((school.id, cs.class_name), 0)
-            expected_min += quarter_min_norm(cs.class_name, cs.subject) * n_students
-            norm_grades_done += pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
+            # Un-graded subjects (e.g. СОАТИ ТАРБИЯВӢ) must not inflate the norm.
+            min_norm = quarter_min_norm(cs.class_name, cs.subject)
+            if min_norm:
+                expected_min += min_norm * n_students
+                norm_grades_done += pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
             profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
             if profile:
                 teacher_pairs[profile].append((cs.subject, cs.class_name))
@@ -2711,12 +2714,18 @@ def school_readiness_rating(request):
             hours = 0
             min_grades = 0
             grades_done = 0
+            norm_done = 0
             for subject, cname in pairs:
                 subj_classes[subject].append(cname)
                 hours += weekly_hours(cname, subject)
-                min_grades += quarter_min_norm(cname, subject) * class_student_counts.get((school.id, cname), 0)
-                grades_done += pair_grade_counts.get((school.id, cname, subject), 0)
-            fulfillment = round(grades_done / min_grades * 100, 1) if min_grades else 0.0
+                entered = pair_grade_counts.get((school.id, cname, subject), 0)
+                grades_done += entered
+                # Exclude un-graded subjects (norm == 0) from required minimum.
+                min_norm = quarter_min_norm(cname, subject)
+                if min_norm:
+                    min_grades += min_norm * class_student_counts.get((school.id, cname), 0)
+                    norm_done += entered
+            fulfillment = round(norm_done / min_grades * 100, 1) if min_grades else 0.0
             teachers.append({
                 'name': profile.full_name,
                 'subjects': '; '.join(

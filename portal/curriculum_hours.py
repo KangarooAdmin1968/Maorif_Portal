@@ -88,7 +88,7 @@ CURRICULUM_HOURS = {
         'ЗАБОНИ АНГЛИСӢ': 2, 'АЛГЕБРА': 3, 'ГЕОМЕТРИЯ': 2, 'ФИЗИКА': 2,
         'ХИМИЯ': 3, 'БИОЛОГИЯИ УМУМӢ': 2, 'ГЕОГРАФИЯ': 1,
         'ТАЪРИХИ ХАЛҚИ ТОҶИК': 1, 'ТАЪРИХИ УМУМӢ': 1, 'ҲУҚУҚИ ИНСОН': 1,
-        'МАЪРИФАТИ ОИЛАДОРӢ': 1, 'ТЕХНОЛОГИЯИ ИТТИЛООТӢ': 1,
+        'МАЪРИФАТИ ОИЛАДОРӢ': 1, 'ТЕХНОЛОГИЯИ ИТТИЛООТӢ': 2,
         'ТЕХНОЛОГИЯ': 1, 'ТАРБИЯИ ҶИСМОНӢ': 2,
         'ОМОДАГИИ ИБТИДОИИ ҲАРБӢ': 2, 'АДАБИЁТИ ҶАҲОН': 1,
         'НУҶУМ (АСТРОНОМИЯ)': 1, 'СОАТИ ТАРБИЯВӢ': 1,
@@ -98,7 +98,7 @@ CURRICULUM_HOURS = {
         'ЗАБОНИ АНГЛИСӢ': 2, 'АЛГЕБРА': 3, 'ГЕОМЕТРИЯ': 2, 'ФИЗИКА': 2,
         'ХИМИЯ': 3, 'БИОЛОГИЯИ УМУМӢ': 2, 'ГЕОГРАФИЯ': 1,
         'ТАЪРИХИ ХАЛҚИ ТОҶИК': 1, 'ТАЪРИХИ УМУМӢ': 1,
-        'НУҶУМ (АСТРОНОМИЯ)': 1, 'ТЕХНОЛОГИЯИ ИТТИЛООТӢ': 1,
+        'НУҶУМ (АСТРОНОМИЯ)': 1, 'ТЕХНОЛОГИЯИ ИТТИЛООТӢ': 2,
         'ҲУҚУҚИ ИНСОН': 1, 'АСОСҲОИ ИҚТИСОДИЁТ': 1,
         'ОМОДАГИИ ИБТИДОИИ ҲАРБӢ': 2, 'ТАРБИЯИ ҶИСМОНӢ': 2,
         'СОАТИ ТАРБИЯВӢ': 1,
@@ -107,6 +107,12 @@ CURRICULUM_HOURS = {
 
 # Fallback weekly hours when a subject/level is not listed in the annexes.
 DEFAULT_WEEKLY_HOURS = 2
+
+# Un-graded subjects: they still carry weekly hours (workload), but no
+# grades are required, so their quarter minimum norm is 0.
+UNGRADED_SUBJECTS = frozenset({
+    'СОАТИ ТАРБИЯВӢ',
+})
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +156,13 @@ def weekly_hours(class_name, subject):
 
 
 def quarter_min_norm(class_name, subject):
-    """Minimum grades per quarter for ``subject`` in ``class_name``."""
+    """Minimum grades per quarter for ``subject`` in ``class_name``.
+
+    Returns 0 for un-graded subjects (e.g. СОАТИ ТАРБИЯВӢ homeroom hour),
+    which still count toward weekly workload hours but require no grades.
+    """
+    if normalize_subject(subject) in UNGRADED_SUBJECTS:
+        return 0
     return quarter_minimum_grades(weekly_hours(class_name, subject))
 
 
@@ -158,6 +170,6 @@ def class_norms(class_name):
     """Return {subject: (weekly_hours, quarter_minimum)} for a class level."""
     level = grade_level(class_name)
     return {
-        subj: (hours, quarter_minimum_grades(hours))
+        subj: (hours, quarter_min_norm(class_name, subj))
         for subj, hours in CURRICULUM_HOURS.get(level, {}).items()
     }

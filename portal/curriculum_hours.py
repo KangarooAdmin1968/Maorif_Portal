@@ -58,7 +58,7 @@ CURRICULUM_HOURS = {
     },
     '7': {
         'ЗАБОНИ ТОҶИКӢ': 2, 'АДАБИЁТИ ТОҶИК': 2, 'ЗАБОНИ РУСӢ': 2,
-        'ЗАБОНИ АНГЛИСӢ': 2, 'АЛГЕБРА': 3, 'ГЕОМЕТРИЯ': 2, 'ГЕОГРАФИЯ': 1,
+        'ЗАБОНИ АНГЛИСӢ': 2, 'АЛГЕБРА': 2, 'ГЕОМЕТРИЯ': 2, 'ГЕОГРАФИЯ': 1,
         'ФИЗИКА': 2, 'ЗООЛОГИЯ': 2, 'ТАЪРИХИ ХАЛҚИ ТОҶИК': 1,
         'ТАЪРИХИ УМУМӢ': 1, 'ТЕХНОЛОГИЯИ ИТТИЛООТӢ': 1,
         'АЛИФБО ВА МАТНИ НИЁГОН': 1, 'САНЪАТИ ТАСВИРӢ': 1,
@@ -75,7 +75,7 @@ CURRICULUM_HOURS = {
     },
     '9': {
         'ЗАБОНИ ТОҶИКӢ': 2, 'АДАБИЁТИ ТОҶИК': 3, 'ЗАБОНИ РУСӢ': 2,
-        'ЗАБОНИ АНГЛИСӢ': 2, 'АЛГЕБРА': 3, 'ГЕОМЕТРИЯ': 2, 'ФИЗИКА': 2,
+        'ЗАБОНИ АНГЛИСӢ': 2, 'АЛГЕБРА': 3, 'ГЕОМЕТРИЯ': 1, 'ФИЗИКА': 2,
         'ХИМИЯ': 2, 'БИОЛОГИЯ': 2, 'ГЕОГРАФИЯ': 1,
         'ТАЪРИХИ ХАЛҚИ ТОҶИК': 1, 'ТАЪРИХИ УМУМӢ': 1, 'ТАЪРИХИ ДИН': 1,
         'АСОСҲОИ ДАВЛАТ ВА ҲУҚУҚИ ҶУМҲУРИИ ТОҶИКИСТОН': 1,
@@ -148,14 +148,26 @@ def grade_level(class_name):
     return m.group(1) if m else ''
 
 
-def weekly_hours(class_name, subject):
-    """Weekly hours for ``subject`` in the grade level of ``class_name``."""
+def weekly_hours(class_name, subject, class_subject=None):
+    """Weekly hours for ``subject`` in the grade level of ``class_name``.
+
+    If ``class_subject`` carries an explicit ``hours_per_week`` or
+    ``weekly_hours`` value (e.g. specialized/streamed classes), that
+    database value wins over the static annex table.
+    """
+    if class_subject is not None:
+        override = (
+            getattr(class_subject, 'hours_per_week', None)
+            or getattr(class_subject, 'weekly_hours', None)
+        )
+        if override:
+            return override
     level = grade_level(class_name)
     table = CURRICULUM_HOURS.get(level, {})
     return table.get(normalize_subject(subject), DEFAULT_WEEKLY_HOURS)
 
 
-def quarter_min_norm(class_name, subject):
+def quarter_min_norm(class_name, subject, class_subject=None):
     """Minimum grades per quarter for ``subject`` in ``class_name``.
 
     Returns 0 for un-graded subjects (e.g. СОАТИ ТАРБИЯВӢ homeroom hour),
@@ -163,7 +175,7 @@ def quarter_min_norm(class_name, subject):
     """
     if normalize_subject(subject) in UNGRADED_SUBJECTS:
         return 0
-    return quarter_minimum_grades(weekly_hours(class_name, subject))
+    return quarter_minimum_grades(weekly_hours(class_name, subject, class_subject))
 
 
 def class_norms(class_name):

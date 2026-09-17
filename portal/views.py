@@ -2700,13 +2700,13 @@ def school_readiness_rating(request):
         for cs in school_cs.get(school.id, []):
             n_students = class_student_counts.get((school.id, cs.class_name), 0)
             # Un-graded subjects (e.g. СОАТИ ТАРБИЯВӢ) must not inflate the norm.
-            min_norm = quarter_min_norm(cs.class_name, cs.subject)
+            min_norm = quarter_min_norm(cs.class_name, cs.subject, cs)
             if min_norm:
                 expected_min += min_norm * n_students
                 norm_grades_done += pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
             profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
             if profile:
-                teacher_pairs[profile].append((cs.subject, cs.class_name))
+                teacher_pairs[profile].append(cs)
 
         teachers = []
         for profile, pairs in teacher_pairs.items():
@@ -2715,15 +2715,15 @@ def school_readiness_rating(request):
             min_grades = 0
             grades_done = 0
             norm_done = 0
-            for subject, cname in pairs:
-                subj_classes[subject].append(cname)
-                hours += weekly_hours(cname, subject)
-                entered = pair_grade_counts.get((school.id, cname, subject), 0)
+            for cs in pairs:
+                subj_classes[cs.subject].append(cs.class_name)
+                hours += weekly_hours(cs.class_name, cs.subject, cs)
+                entered = pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
                 grades_done += entered
                 # Exclude un-graded subjects (norm == 0) from required minimum.
-                min_norm = quarter_min_norm(cname, subject)
+                min_norm = quarter_min_norm(cs.class_name, cs.subject, cs)
                 if min_norm:
-                    min_grades += min_norm * class_student_counts.get((school.id, cname), 0)
+                    min_grades += min_norm * class_student_counts.get((school.id, cs.class_name), 0)
                     norm_done += entered
             fulfillment = round(norm_done / min_grades * 100, 1) if min_grades else 0.0
             teachers.append({
@@ -2748,15 +2748,15 @@ def school_readiness_rating(request):
             'teachers': teachers,
             'is_mine': bool(user_school and user_school.id == school.id),
         })
-    activity.sort(key=lambda x: x['total_grades'], reverse=True)
+    activity.sort(key=lambda x: (-x['fulfillment'], -x['total_grades']))
 
-    # Dense ranking so tied grade counts share the same rank
+    # Dense ranking so tied fulfillment percentages share the same rank
     rank = 0
-    prev_grades = None
+    prev_fulfillment = None
     for item in activity:
-        if item['total_grades'] != prev_grades:
+        if item['fulfillment'] != prev_fulfillment:
             rank += 1
-            prev_grades = item['total_grades']
+            prev_fulfillment = item['fulfillment']
         item['rank'] = rank
 
     return render(request, 'portal/school_readiness_rating.html', {

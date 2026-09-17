@@ -2331,7 +2331,24 @@ def lesson_allocation(request):
     if not (request.user.is_superuser or _is_zavuch(request.user, get_user_role(request.user))):
         messages.error(request, 'Дастрасӣ маҳдуд аст. Ин бахш танҳо барои муовини директор (завуч) дастрас аст.')
         return redirect('dashboard')
-    school = get_user_school(request.user)
+
+    all_schools = None
+    if request.user.is_superuser:
+        # Superadmin may inspect/allocate any district school via ?school_id=
+        all_schools = School.objects.all().order_by('id')
+        school = None
+        school_id = request.GET.get('school_id') or request.GET.get('school')
+        if school_id:
+            try:
+                school = School.objects.get(pk=int(school_id))
+            except (ValueError, School.DoesNotExist):
+                school = None
+        if school is None:
+            school = get_user_school(request.user) or School.objects.order_by('id').first()
+    else:
+        # Zavuchs are strictly locked to their own school
+        school = get_user_school(request.user)
+
     if not school:
         messages.error(request, 'Муассисаи шумо муайян карда нашуд.')
         return redirect('dashboard')
@@ -2355,6 +2372,8 @@ def lesson_allocation(request):
 
     return render(request, 'school/lesson_allocation.html', {
         'school': school,
+        'selected_school': school,
+        'all_schools': all_schools,
         'class_subjects': class_subjects,
         'teachers': teachers,
         'is_superuser': request.user.is_superuser,
@@ -2371,6 +2390,13 @@ def save_lesson_allocation(request):
         messages.error(request, 'Дастрасӣ маҳдуд аст. Ин бахш танҳо барои муовини директор (завуч) дастрас аст.')
         return redirect('dashboard')
     school = get_user_school(request.user)
+    if request.user.is_superuser:
+        school_id = request.POST.get('school_id')
+        if school_id:
+            try:
+                school = School.objects.get(pk=int(school_id))
+            except (ValueError, School.DoesNotExist):
+                school = None
     if not school or not has_school_access(request.user, school):
         return redirect('dashboard')
 
@@ -2419,6 +2445,8 @@ def save_lesson_allocation(request):
         ClassSubject.objects.bulk_update(updated, ['allocated_teacher', 'teacher'], batch_size=100)
 
     messages.success(request, 'Тақсимоти дарсҳо ба омӯзгорон бо муваффақият сабт шуд.')
+    if request.user.is_superuser and school:
+        return redirect(f'{reverse("lesson_allocation")}?school_id={school.id}')
     return redirect('lesson_allocation')
 
 
@@ -2439,7 +2467,7 @@ def deactivate_subject(request):
     cs.is_active = False
     cs.save()
     messages.success(request, f'Фани «{cs.subject}» барои {cs.class_name} хориҷ шуд.')
-    return redirect('lesson_allocation')
+    return redirect(f'{reverse("lesson_allocation")}?school_id={cs.school_id}')
 
 
 @login_required

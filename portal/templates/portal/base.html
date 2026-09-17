@@ -66,9 +66,11 @@
                     {% if user.userprofile.school %}
                         <a href="{% url 'class_list' user.userprofile.school.id %}">Синфҳо</a>
                         <a href="{% url 'teacher_list' user.userprofile.school.id %}">Омӯзгорон</a>
-                        {% if user.is_superuser or is_zavuch %}
-                            <a href="{% url 'lesson_allocation' %}">Тақсимоти дарсҳо</a>
-                        {% endif %}
+                    {% endif %}
+                    {% if user.is_superuser %}
+                        <a href="{% url 'lesson_allocation' %}">Тақсимоти дарсҳо</a>
+                    {% elif is_zavuch and user.userprofile.school %}
+                        <a href="{% url 'lesson_allocation' %}">Тақсимоти дарсҳо</a>
                     {% endif %}
                     {% if not user.is_superuser %}
                         <span class="user">{{ user.username }}</span>

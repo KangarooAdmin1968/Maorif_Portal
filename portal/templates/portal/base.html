@@ -52,6 +52,70 @@
             }
             .site-footer h3 { font-size: 1.1rem; }
         }
+
+        /* Барои волидон — parent portal modal */
+        .parent-portal-btn { transition: transform .15s ease, box-shadow .15s ease; }
+        .parent-portal-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(2,132,199,.28); }
+        .parent-modal {
+            position: fixed; inset: 0; z-index: 2000;
+            display: flex; align-items: center; justify-content: center;
+            padding: 1rem;
+        }
+        .parent-modal[hidden] { display: none; }
+        .parent-modal-backdrop {
+            position: absolute; inset: 0;
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(4px);
+            opacity: 0; transition: opacity .2s ease;
+        }
+        .parent-modal.open .parent-modal-backdrop { opacity: 1; }
+        .parent-modal-dialog {
+            position: relative;
+            background: #fff;
+            border-radius: 14px;
+            width: 100%; max-width: 560px; max-height: 85vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 50px rgba(15,23,42,.35);
+            transform: translateY(14px) scale(.97);
+            opacity: 0;
+            transition: transform .22s ease, opacity .22s ease;
+        }
+        .parent-modal.open .parent-modal-dialog { transform: none; opacity: 1; }
+        .parent-modal-header {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 1rem; padding: 1rem 1.25rem;
+            border-bottom: 1px solid #e2e8f0;
+            position: sticky; top: 0; background: #fff; z-index: 1;
+            border-radius: 14px 14px 0 0;
+        }
+        .parent-modal-header h2 { margin: 0; font-size: 1.05rem; color: #0f172a; }
+        .parent-modal-close {
+            border: none; background: #f1f5f9; color: #475569;
+            width: 32px; height: 32px; border-radius: 50%;
+            font-size: 1rem; cursor: pointer; line-height: 1; flex: 0 0 auto;
+        }
+        .parent-modal-close:hover { background: #e2e8f0; color: #0f172a; }
+        .parent-modal-body { padding: 1.25rem; }
+        .parent-label { display: block; font-weight: 700; color: #1e293b; font-size: .95rem; margin-bottom: .5rem; }
+        .parent-select {
+            width: 100%; padding: .55rem .75rem;
+            border: 1px solid #94a3b8; border-radius: 8px;
+            font-size: .95rem; font-weight: 600; color: #0f172a; background: #fff;
+            margin-bottom: 1rem;
+        }
+        .parent-class-grid { display: flex; flex-wrap: wrap; gap: .5rem; }
+        .parent-class-chip {
+            display: inline-block; padding: .45rem .9rem;
+            background: #f0f9ff; color: #0369a1;
+            border: 1px solid #bae6fd; border-radius: 999px;
+            font-weight: 700; font-size: .9rem; text-decoration: none;
+            transition: background .15s ease, color .15s ease, transform .15s ease, box-shadow .15s ease;
+        }
+        .parent-class-chip:hover {
+            background: #0284c7; color: #fff; border-color: #0284c7;
+            transform: translateY(-1px); box-shadow: 0 3px 8px rgba(2,132,199,.3);
+        }
+        .parent-empty { color: #64748b; font-size: .95rem; margin: .5rem 0 0; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -62,7 +126,9 @@
             <div class="nav-links">
                 {% if user.is_authenticated %}
                     <a href="{% url 'dashboard' %}">Асосӣ</a>
-                    <a href="{% url 'school_list' %}">Муассисаҳо</a>
+                    {% if user.is_superuser %}
+                        <a href="{% url 'school_list' %}">Муассисаҳо</a>
+                    {% endif %}
                     {% if user.userprofile.school %}
                         <a href="{% url 'class_list' user.userprofile.school.id %}">Синфҳо</a>
                         <a href="{% url 'teacher_list' user.userprofile.school.id %}">Омӯзгорон</a>
@@ -88,6 +154,9 @@
                 {% else %}
                     <a href="{% url 'login' %}" class="btn">Вуруд</a>
                 {% endif %}
+                <button type="button" class="btn btn-outline parent-portal-btn" onclick="openParentModal()" style="display: inline-flex; align-items: center; gap: 6px; font-weight: 700; border-color: #38bdf8; color: #0284c7; background: #f0f9ff; padding: 0.4rem 0.85rem; border-radius: 999px;">
+                    <span>👨‍👩‍👧</span> <span>Барои волидон</span>
+                </button>
             </div>
         </div>
     </nav>
@@ -121,5 +190,74 @@
             </div>
         </div>
     </footer>
+
+    {{ parent_portal_data|json_script:"parent-portal-data" }}
+    <div id="parent-modal" class="parent-modal" hidden>
+        <div class="parent-modal-backdrop" onclick="closeParentModal()"></div>
+        <div class="parent-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="parent-modal-title">
+            <div class="parent-modal-header">
+                <h2 id="parent-modal-title">👨‍👩‍👧 Хидмати волидон — Интихоби муассиса ва синф</h2>
+                <button type="button" class="parent-modal-close" onclick="closeParentModal()" aria-label="Пӯшидан">✕</button>
+            </div>
+            <div class="parent-modal-body">
+                <label class="parent-label" for="parent-school-select">🏫 Интихоби муассиса:</label>
+                <select id="parent-school-select" class="parent-select"></select>
+                <div id="parent-class-grid" class="parent-class-grid"></div>
+                <p id="parent-empty" class="parent-empty" hidden>Синфҳо барои ин муассиса ёфт нашуданд.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        var dataEl = document.getElementById('parent-portal-data');
+        var DATA = dataEl ? JSON.parse(dataEl.textContent) : { schools: [], classes: {} };
+        var modal = document.getElementById('parent-modal');
+        var select = document.getElementById('parent-school-select');
+        var grid = document.getElementById('parent-class-grid');
+        var empty = document.getElementById('parent-empty');
+        var populated = false;
+
+        function renderClasses(sid) {
+            grid.innerHTML = '';
+            var classes = DATA.classes[String(sid)] || [];
+            empty.hidden = classes.length > 0;
+            classes.forEach(function (c) {
+                var a = document.createElement('a');
+                a.className = 'parent-class-chip';
+                a.href = '/school/' + encodeURIComponent(sid) + '/class/' + encodeURIComponent(c) + '/';
+                a.textContent = c;
+                grid.appendChild(a);
+            });
+        }
+
+        window.openParentModal = function () {
+            if (!populated) {
+                DATA.schools.forEach(function (s) {
+                    var opt = document.createElement('option');
+                    opt.value = s.id;
+                    opt.textContent = s.name;
+                    select.appendChild(opt);
+                });
+                populated = true;
+            }
+            modal.hidden = false;
+            requestAnimationFrame(function () { modal.classList.add('open'); });
+            document.body.style.overflow = 'hidden';
+            renderClasses(select.value);
+        };
+
+        window.closeParentModal = function () {
+            modal.classList.remove('open');
+            document.body.style.overflow = '';
+            setTimeout(function () { modal.hidden = true; }, 220);
+        };
+
+        select.addEventListener('change', function () { renderClasses(select.value); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !modal.hidden) closeParentModal();
+        });
+    })();
+    </script>
 </body>
 </html>

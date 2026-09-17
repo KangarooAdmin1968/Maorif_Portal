@@ -46,6 +46,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'portal.context_processors.user_role',
+                'portal.context_processors.parent_portal',
             ],
         },
     },

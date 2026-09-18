@@ -20,6 +20,12 @@
 #daily-date { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; }
 .offline-banner { background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 0.75rem 1rem; border-radius: 0.5rem; margin: 1rem 0; display: none; }
 .sync-toast { background: #f0fdf4; border: 1px solid #22c55e; color: #166534; padding: 0.75rem 1rem; border-radius: 0.5rem; margin: 1rem 0; display: none; }
+.assessment-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+.assessment-bar select { max-width: 100%; padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; }
+.assessment-form { display: none; flex-wrap: wrap; gap: 0.5rem; align-items: center; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 0.75rem; margin-bottom: 1rem; }
+.assessment-form input[type="text"], .assessment-form input[type="number"] { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; max-width: 100%; }
+.assessment-form .af-number { width: 70px; }
+.mini-btn { padding: 0.3rem 0.6rem; }
 </style>
 
 <form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
@@ -36,6 +42,29 @@
     <label for="daily-date">Сана:</label>
     <input type="date" id="daily-date" name="date" value="{{ date|date:'Y-m-d' }}" onchange="window.location.href='?date='+this.value">
   </div>
+  {% if not non_graded %}
+  <div class="assessment-bar">
+    <span>Навъ:</span>
+    <label><input type="radio" name="grade_kind" value="current" checked onchange="setGradeKind('current')"> Ҷорӣ</label>
+    <label><input type="radio" name="grade_kind" value="control" onchange="setGradeKind('control')"> Назорат</label>
+    <span id="assessment-picker" style="display:none;">
+      <select id="assessment-select" onchange="onAssessmentChange()"></select>
+      <button type="button" class="btn btn-secondary mini-btn" onclick="editSelectedAssessment()" title="Таҳрир">✏️</button>
+      <button type="button" class="btn btn-secondary mini-btn" onclick="toggleAssessmentForm(true, null)">+ Нав</button>
+    </span>
+  </div>
+  <div id="assessment-form" class="assessment-form">
+    <input type="hidden" id="af-id">
+    <label for="af-title">Ном:</label>
+    <input type="text" id="af-title" maxlength="255">
+    <label for="af-number">№:</label>
+    <input type="number" id="af-number" class="af-number" min="1">
+    <label><input type="checkbox" id="af-ajm"> АҶМ</label>
+    <button type="button" class="btn btn-primary mini-btn" onclick="saveAssessment()">Сабт</button>
+    <button type="button" class="btn btn-secondary mini-btn" onclick="toggleAssessmentForm(false)">Бекор</button>
+    <span class="save-status" id="af-status"></span>
+  </div>
+  {% endif %}
   {% if daily_quarter_locked %}
   <div class="alert alert-error">Ин чоряк баста шудааст. Холҳои ҳаррӯзагӣ тағйир дода намешаванд.</div>
   {% endif %}
@@ -172,6 +201,9 @@
 </div>
 </form>
 
+{{ control_assessments|json_script:"assessments-data" }}
+{{ assessment_grade_map|json_script:"assessment-grades-data" }}
+
 <script>
 function openTab(id, btn) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -187,9 +219,17 @@ function getCsrfToken() {
 }
 const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
+const assessmentSaveUrl = "{% url 'assessment_save' %}";
+const classSubjectId = "{{ class_subject_id|default:'' }}";
 const schoolId = "{{ school.id }}";
 const className = "{{ class_name|escapejs }}";
 const subjectName = "{{ subject|escapejs }}";
+let assessments = [];
+let assessmentGrades = {};
+try {
+  assessments = JSON.parse(document.getElementById('assessments-data').textContent || '[]');
+  assessmentGrades = JSON.parse(document.getElementById('assessment-grades-data').textContent || '{}');
+} catch(e) { assessments = []; assessmentGrades = {}; }
 function getStorageKey() {
     return `maorif_grade_${schoolId}_${className}_${subjectName}_${document.getElementById('daily-date').value}`;
 }
@@ -275,18 +315,145 @@ async function syncPending() {
     else { showOfflineBanner(); }
     saveState();
 }
+let gradeKind = 'current';
+let currentAssessmentId = null;
+let dailySnapshot = null;
+function scoreInputs() { return Array.from(document.querySelectorAll('.daily-input')); }
+function findAssessment(id) { return assessments.find(a => String(a.id) === String(id)) || null; }
+function renderAssessmentPicker() {
+  const sel = document.getElementById('assessment-select');
+  if (!sel) return;
+  sel.innerHTML = '';
+  if (!assessments.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '— Санҷиш нест —';
+    sel.appendChild(opt);
+    return;
+  }
+  assessments.forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = a.label;
+    sel.appendChild(opt);
+  });
+}
+function setGradeKind(kind) {
+  if (kind === gradeKind) return;
+  backupDrafts();
+  if (kind === 'control') enterControlMode(); else exitControlMode();
+  gradeKind = kind;
+}
+function enterControlMode() {
+  document.getElementById('assessment-picker').style.display = '';
+  dailySnapshot = {};
+  scoreInputs().forEach(inp => { dailySnapshot[inp.dataset.studentId] = inp.value; });
+  document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => { el.dataset.wasDisabled = el.disabled ? '1' : '0'; });
+  if (!currentAssessmentId && assessments.length) currentAssessmentId = assessments[0].id;
+  renderAssessmentPicker();
+  const sel = document.getElementById('assessment-select');
+  sel.value = currentAssessmentId || '';
+  loadAssessmentValues();
+}
+function loadAssessmentValues() {
+  const aid = currentAssessmentId;
+  const map = (aid && assessmentGrades[aid]) || {};
+  const a = findAssessment(aid);
+  const locked = a ? !!a.locked : false;
+  scoreInputs().forEach(inp => {
+    inp.name = 'ascore_' + aid + '_' + inp.dataset.studentId;
+    inp.dataset.assessmentId = aid || '';
+    inp.type = 'text';
+    inp.value = map[inp.dataset.studentId] || '';
+    inp.dataset.origValue = inp.value;
+    inp.disabled = !aid || locked || inp.dataset.wasDisabled === '1';
+  });
+  document.querySelectorAll('.daily-att, .daily-behavior').forEach(el => { el.disabled = true; });
+}
+function exitControlMode() {
+  document.getElementById('assessment-picker').style.display = 'none';
+  toggleAssessmentForm(false);
+  scoreInputs().forEach(inp => {
+    inp.name = 'score_' + inp.dataset.studentId;
+    delete inp.dataset.assessmentId;
+    inp.type = 'number';
+    inp.value = dailySnapshot ? (dailySnapshot[inp.dataset.studentId] || '') : inp.value;
+    inp.dataset.origValue = inp.value;
+    inp.disabled = inp.dataset.wasDisabled === '1';
+  });
+  document.querySelectorAll('.daily-att, .daily-behavior').forEach(el => { el.disabled = el.dataset.wasDisabled === '1'; });
+}
+function onAssessmentChange() {
+  const sel = document.getElementById('assessment-select');
+  currentAssessmentId = sel.value || null;
+  loadAssessmentValues();
+}
+function toggleAssessmentForm(show, assessment) {
+  const form = document.getElementById('assessment-form');
+  if (!form) return;
+  if (!show) { form.style.display = 'none'; return; }
+  assessment = assessment || null;
+  document.getElementById('af-id').value = assessment ? assessment.id : '';
+  document.getElementById('af-title').value = assessment ? (assessment.title || '') : '';
+  document.getElementById('af-number').value = assessment ? (assessment.number || '') : '';
+  document.getElementById('af-ajm').checked = assessment ? !!assessment.is_ajm : false;
+  form.style.display = 'flex';
+}
+function editSelectedAssessment() { toggleAssessmentForm(true, findAssessment(currentAssessmentId)); }
+function saveAssessment() {
+  const status = document.getElementById('af-status');
+  if (!navigator.onLine) { showStatus(status, 'Интернет лозим аст.'); showOfflineBanner(); return; }
+  const params = new URLSearchParams({
+    class_subject_id: classSubjectId,
+    assessment_id: document.getElementById('af-id').value,
+    date: document.getElementById('daily-date').value,
+    title: document.getElementById('af-title').value,
+    number: document.getElementById('af-number').value,
+    is_ajm: document.getElementById('af-ajm').checked ? '1' : '0',
+  });
+  fetch(assessmentSaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
+  .then(r => r.json())
+  .then(resp => {
+    if (resp.success && resp.assessment) {
+      const a = resp.assessment;
+      const idx = assessments.findIndex(x => String(x.id) === String(a.id));
+      if (idx >= 0) assessments[idx] = Object.assign({}, assessments[idx], a);
+      else assessments.push(a);
+      currentAssessmentId = a.id;
+      renderAssessmentPicker();
+      document.getElementById('assessment-select').value = String(a.id);
+      loadAssessmentValues();
+      toggleAssessmentForm(false);
+      showStatus(status, '✔ Сабт шуд!');
+    } else {
+      showStatus(status, resp.message || 'Хатo');
+    }
+  })
+  .catch(() => { showStatus(status, 'Хатo'); showOfflineBanner(); });
+}
 function saveDaily(input) {
   const field = input.dataset.field || 'score';
   let value = input.value;
+  const assessmentId = input.dataset.assessmentId;
   if (field === 'score') {
-    value = toCleanInt(input.value);
-    if (value === null) return;
+    if (assessmentId) {
+      value = String(input.value).trim();
+      if (value !== '' && !/^\d+(\/\d+){0,2}$/.test(value)) {
+        const status0 = document.getElementById('daily-status-' + input.dataset.rowId);
+        showStatus(status0, 'Формат: 9 ё 8/9 ё 8/9/10');
+        return;
+      }
+    } else {
+      value = toCleanInt(input.value);
+      if (value === null) return;
+    }
   } else if (field === 'behavior_score') {
     if (value && !Number.isInteger(Number(value))) return;
   }
   if (value === input.dataset.origValue) return;
   const status = document.getElementById('daily-status-' + input.dataset.rowId);
   const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: document.getElementById('daily-date').value, type: 'daily'};
+  if (assessmentId) params.assessment_id = assessmentId;
   params[field] = value;
   pushPending({name: input.name, value: value, rowId: input.dataset.rowId, params: params});
   backupDrafts();

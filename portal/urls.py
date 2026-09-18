@@ -20,6 +20,7 @@ urlpatterns = [
     path('school/<int:school_id>/class/<str:class_name>/grade/<str:subject>/', views.grade_entry, name='grade_entry'),
     path('school/<int:school_id>/class/<str:class_name>/grade/<str:subject>/calc-quarter/', views.calc_quarter_from_daily, name='calc_quarter_from_daily'),
     path('save-grade-ajax/', views.save_grade_ajax, name='save_grade_ajax'),
+    path('assessment-save/', views.assessment_save, name='assessment_save'),
     path('school/<int:school_id>/class/<str:class_name>/subjects/', views.add_remove_subject, name='add_remove_subject'),
     path('class/<str:class_name>/download-template/', views.download_template, name='download_template'),
     path('class/<str:class_name>/import/', views.import_excel, name='import_excel_class'),

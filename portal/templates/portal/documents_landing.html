@@ -73,7 +73,12 @@
                         {% endfor %}
                     </ul>
                 </td>
-                <td style="text-align:center; font-weight:700;">{{ w.total_hours }}</td>
+                <td style="text-align:center; font-weight:700;">
+                    {{ w.total_hours }}
+                    {% if w.homeroom_hours %}
+                    <div style="font-size:.72rem; font-weight:400; color:#6b7280;">+ {{ w.homeroom_hours }} с. тарбиявӣ</div>
+                    {% endif %}
+                </td>
                 <td class="sig-row"></td>
             </tr>
             {% empty %}

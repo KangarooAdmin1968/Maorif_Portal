@@ -26,7 +26,7 @@ from .utils import (
     default_subjects_for_class, ensure_class_subjects, is_non_graded,
     get_school_number, is_academic_school, official_subjects
 )
-from .curriculum_hours import MIN_GRADES_BANDS, weekly_hours, quarter_min_norm
+from .curriculum_hours import MIN_GRADES_BANDS, UNGRADED_SUBJECTS, weekly_hours, quarter_min_norm
 
 
 QUALITATIVE_CHOICES = [
@@ -181,6 +181,20 @@ def _is_zavuch(user, role=None):
     return (role and role.lower() == 'zavuch') or user.username.lower().startswith('zavuch_')
 
 
+def _is_regular_teacher(user, role=None):
+    """Return True for an authenticated teacher without superuser/zavuch privileges."""
+    if not user or not user.is_authenticated or user.is_superuser:
+        return False
+    if role is None:
+        role = get_user_role(user)
+    return role == settings.ROLE_TEACHER and not _is_zavuch(user, role)
+
+
+def _teacher_assignment_filter(user):
+    """Q filter matching the ClassSubjects a teacher is assigned to (either field)."""
+    return Q(teacher=user) | Q(allocated_teacher__user=user)
+
+
 CLASS_NAME_RE = re.compile(rf'^(?:[1-9]|1[0-1])-[{CLASS_LETTERS}]$')
 
 
@@ -316,9 +330,7 @@ def can_edit_grade_journal(user, school, class_name, subject):
         # any active subject assignment inside this classroom grants full access
         if not is_non_graded(class_name):
             qs = qs.filter(subject=normalize_subject(subject))
-        return qs.filter(
-            Q(teacher=user) | Q(allocated_teacher__user=user)
-        ).exists()
+        return qs.filter(_teacher_assignment_filter(user)).exists()
     return False
 
 
@@ -827,6 +839,15 @@ def class_list(request, school_id=None):
     subject_classes = {c for c in ClassSubject.objects.filter(school=school).values_list('class_name', flat=True).distinct()}
     class_names = sorted(student_classes | subject_classes, key=class_numeric_part)
 
+    # Regular teachers only see the classes they are assigned to in "Тақсимоти дарсҳо"
+    if _is_regular_teacher(request.user, role):
+        assigned_class_names = set(
+            ClassSubject.objects.filter(school=school, is_active=True)
+            .filter(_teacher_assignment_filter(request.user))
+            .values_list('class_name', flat=True)
+        )
+        class_names = [c for c in class_names if c in assigned_class_names]
+
     student_counts = dict(
         Student.objects.filter(school=school).values('class_name').annotate(count=Count('id')).values_list('class_name', 'count')
     )
@@ -960,7 +981,7 @@ def class_detail(request, school_id, class_name):
             if not ClassSubject.objects.filter(
                 school=school, class_name=class_name, is_active=True
             ).filter(
-                Q(teacher=request.user) | Q(allocated_teacher__user=request.user)
+                _teacher_assignment_filter(request.user)
             ).exists():
                 messages.warning(request, 'Ин синф ё фан ба шумо вобаста карда нашудааст!')
                 return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
@@ -974,6 +995,9 @@ def class_detail(request, school_id, class_name):
     subjects = ClassSubject.objects.filter(
         school=school, class_name=class_name, is_active=True, subject__in=official_subjects()
     ).order_by('subject')
+    # Regular teachers only see their own assigned subjects in the journal picker
+    if _is_regular_teacher(request.user):
+        subjects = subjects.filter(_teacher_assignment_filter(request.user))
     non_graded = is_non_graded(class_name)
     all_classes = sorted({
         c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()
@@ -2836,15 +2860,21 @@ def school_documents(request):
 
         for profile, subj_map in grouped.items():
             items = []
-            total_hours = 0
+            academic_hours = 0
+            homeroom_hours = 0
             for subject, classes in sorted(subj_map.items(), key=lambda kv: kv[0]):
                 classes_sorted = sorted(set(classes), key=class_sort)
                 items.append({'subject': subject, 'classes': classes_sorted})
-                total_hours += default_hours if normalize_subject(subject) not in hours_map else hours_map[normalize_subject(subject)] * len(classes_sorted)
+                hours = default_hours if normalize_subject(subject) not in hours_map else hours_map[normalize_subject(subject)] * len(classes_sorted)
+                if normalize_subject(subject) in UNGRADED_SUBJECTS:
+                    homeroom_hours += hours
+                else:
+                    academic_hours += hours
             workload.append({
                 'teacher': profile,
                 'items': items,
-                'total_hours': total_hours,
+                'total_hours': academic_hours,
+                'homeroom_hours': homeroom_hours,
             })
         workload.sort(key=lambda w: w['teacher'].full_name)
 

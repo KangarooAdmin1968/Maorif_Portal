@@ -15,7 +15,7 @@
 <div id="add-student-modal" class="modal" style="display:none;">
     <div class="modal-content" style="padding:1.5rem; border-radius:0.5rem;">
         <h3>Илова кардани хонанда</h3>
-        <form action="{% url 'add_student' school.id class_name %}" method="post">
+        <form action="{% url 'add_student' school.id class_name %}" method="post" onsubmit="return saveScrollPos();">
             {% csrf_token %}
             <label for="full_name" style="display:block; margin-top:0.5rem;">Ному насаби хонанда</label>
             <input type="text" id="full_name" name="full_name" placeholder="Номи хонандаро ворид кунед" required style="width:100%; padding:0.5rem; margin:0.5rem 0 1rem; border:1px solid #d1d5db; border-radius:0.25rem;">
@@ -30,7 +30,7 @@
 <div id="edit-student-modal" class="modal" style="display:none;">
     <div class="modal-content" style="padding:1.5rem; border-radius:0.5rem;">
         <h3>Таҳрири хонанда</h3>
-        <form action="{% url 'edit_student' school.id class_name %}" method="post" onsubmit="return validateEditForm(this);">
+        <form action="{% url 'edit_student' school.id class_name %}" method="post" onsubmit="return validateEditForm(this) && saveScrollPos('student-' + document.getElementById('edit-student-id').value);">
             {% csrf_token %}
             <input type="hidden" id="edit-student-id" name="student_id" value="">
             <label for="edit-student-name" style="display:block; margin-top:0.5rem;">Ному насаби хонанда</label>
@@ -135,7 +135,7 @@
         <thead><tr><th>№</th><th>Ному насаб</th><th>Ҷинс</th><th>Амал</th></tr></thead>
         <tbody>
             {% for s in students %}
-            <tr>
+            <tr id="student-{{ s.id }}">
                 <td>{{ forloop.counter }}</td>
                 <td><a href="{% url 'student_detail' s.id %}">{{ s.full_name }}</a></td>
                 <td>
@@ -144,7 +144,7 @@
                 <td>
                     {% if can_manage %}
                     <button type="button" class="btn btn-primary btn-sm" data-id="{{ s.id }}" data-name="{{ s.full_name }}" data-gender="{{ s.gender|default_if_none:'' }}" onclick="openEditStudentModal(this)">Таҳрир</button>
-                    <form action="{% url 'remove_student' school.id class_name %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед хонандаро хориҷ кунед?');" style="display:inline;">
+                    <form action="{% url 'remove_student' school.id class_name %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед хонандаро хориҷ кунед?') && saveScrollPos();" style="display:inline;">
                         {% csrf_token %}
                         <input type="hidden" name="student_id" value="{{ s.id }}">
                         <button type="submit" class="btn btn-danger btn-sm">Хориҷ кардан</button>
@@ -243,6 +243,31 @@
 const TAJIK_LETTERS = 'АБВГҒДЕЁЖЗИӢЙКҚЛМНОПРСТУӮФХҲЧҶШЪЭЮЯ';
 const LATIN_TO_CYRILLIC = {'A':'А','B':'Б','C':'В','K':'К'};
 const ALL_CLASSES = [{% for c in all_classes %}'{{ c }}'{% if not forloop.last %},{% endif %}{% endfor %}];
+
+// Preserve scroll position across student add/edit/remove redirects
+const SCROLL_KEY = 'classDetailScroll:' + location.pathname;
+function saveScrollPos(rowId) {
+    sessionStorage.setItem(SCROLL_KEY, JSON.stringify({
+        y: window.scrollY || window.pageYOffset || 0,
+        row: rowId || ''
+    }));
+    return true;
+}
+(function restoreScrollPos() {
+    const raw = sessionStorage.getItem(SCROLL_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(SCROLL_KEY);
+    let saved;
+    try { saved = JSON.parse(raw); } catch (e) { saved = {y: parseInt(raw, 10) || 0, row: ''}; }
+    window.addEventListener('load', function () {
+        const el = saved.row ? document.getElementById(saved.row) : null;
+        if (el) {
+            el.scrollIntoView({block: 'center'});
+        } else {
+            window.scrollTo(0, saved.y);
+        }
+    });
+})();
 
 function toCyrillicLetter(letter) {
     return LATIN_TO_CYRILLIC[letter] || letter;

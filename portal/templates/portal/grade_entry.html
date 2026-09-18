@@ -283,6 +283,30 @@ function removePending(name) {
 function showOfflineBanner() { const b = document.getElementById('offline-banner'); if (b) b.style.display = 'block'; }
 function hideOfflineBanner() { const b = document.getElementById('offline-banner'); if (b) b.style.display = 'none'; }
 function showSyncToast() { const t = document.getElementById('sync-toast'); if (t) { t.style.display = 'block'; setTimeout(() => { t.style.display = 'none'; }, 4000); } }
+function projMark(p) { return p ? ' <sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;">Ҷ</sup>' : ''; }
+function updateCalcSpans(rowId, resp) {
+  if (resp.semi_annual_1 === undefined || !document.getElementById('sa1-' + rowId)) return;
+  document.getElementById('sa1-' + rowId).innerHTML = (resp.semi_annual_1 ?? '-') + projMark(resp.semi_annual_1_proj);
+  document.getElementById('sa2-' + rowId).innerHTML = (resp.semi_annual_2 ?? '-') + projMark(resp.semi_annual_2_proj);
+  document.getElementById('annual-' + rowId).innerHTML = (resp.annual ?? '-') + projMark(resp.annual_proj);
+  document.getElementById('final-' + rowId).innerHTML = (resp.final ?? '-') + projMark(resp.final_proj);
+}
+function updateQuarterCell(studentId, quarter, value, isLive) {
+  const inp = document.querySelector('input[name="q_' + quarter + '_' + studentId + '"]');
+  if (!inp) return;
+  inp.value = value == null ? '' : value;
+  inp.dataset.origValue = inp.value;
+  const td = inp.closest('td');
+  if (!td) return;
+  td.querySelectorAll('sup').forEach(s => s.remove());
+  if (isLive) {
+    const sup = document.createElement('sup');
+    sup.title = 'Ҷорӣ (прогноз)';
+    sup.style.cssText = 'color:#f59e0b;font-size:0.7em;';
+    sup.textContent = ' Ҷ';
+    td.appendChild(sup);
+  }
+}
 async function syncPending() {
     if (!state.pending.length) return;
     hideOfflineBanner();
@@ -295,18 +319,27 @@ async function syncPending() {
             if (!resp.success) throw new Error(resp.message || 'error');
             const el = document.querySelector('[name="' + item.name + '"]');
             if (el) {
-                el.value = item.value;
-                el.dataset.origValue = item.value;
+                const disp = (el.dataset.assessmentId && resp.score !== undefined)
+                    ? (resp.score == null ? '' : String(resp.score))
+                    : item.value;
+                el.value = disp;
+                el.dataset.origValue = disp;
+                if (el.dataset.assessmentId) {
+                    if (!assessmentGrades[el.dataset.assessmentId]) assessmentGrades[el.dataset.assessmentId] = {};
+                    assessmentGrades[el.dataset.assessmentId][el.dataset.studentId] = disp;
+                }
                 const status = document.getElementById('daily-status-' + el.dataset.rowId);
                 if (status) showStatus(status, '✔ Сабт шуд!');
                 const rowId = el.dataset.rowId;
                 if (resp.semi_annual_1 !== undefined && document.getElementById('sa1-' + rowId)) {
-                    const projMark = p => p ? ' <sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;">Ҷ</sup>' : '';
                     document.getElementById('sa1-' + rowId).innerHTML = (resp.semi_annual_1 ?? '-') + projMark(resp.semi_annual_1_proj);
                     document.getElementById('sa2-' + rowId).innerHTML = (resp.semi_annual_2 ?? '-') + projMark(resp.semi_annual_2_proj);
                     document.getElementById('annual-' + rowId).innerHTML = (resp.annual ?? '-') + projMark(resp.annual_proj);
                     document.getElementById('final-' + rowId).innerHTML = (resp.final ?? '-') + projMark(resp.final_proj);
                 }
+            }
+            if (resp.quarter !== undefined) {
+                updateQuarterCell(el ? el.dataset.studentId : item.params.student_id, resp.quarter, resp.quarter_value, resp.quarter_live);
             }
             removePending(item.name);
         } catch (err) { console.error(err); break; }
@@ -463,8 +496,22 @@ function saveDaily(input) {
   .then(r => r.json())
   .then(resp => {
     if (resp.success) {
-      input.value = value;
-      input.dataset.origValue = value;
+      if (assessmentId && resp.score !== undefined) {
+        // Backend-authoritative echo: the cell shows the combined numeric
+        // result (8/9 -> 8.5); components remain stored server-side.
+        const saved = resp.score == null ? '' : String(resp.score);
+        input.value = saved;
+        input.dataset.origValue = saved;
+        if (!assessmentGrades[assessmentId]) assessmentGrades[assessmentId] = {};
+        assessmentGrades[assessmentId][input.dataset.studentId] = saved;
+      } else {
+        input.value = value;
+        input.dataset.origValue = value;
+      }
+      if (resp.quarter !== undefined) {
+        updateQuarterCell(input.dataset.studentId, resp.quarter, resp.quarter_value, resp.quarter_live);
+      }
+      updateCalcSpans(input.dataset.rowId, resp);
       removePending(input.name);
       showStatus(status, '✔ Сабт шуд!');
     } else {

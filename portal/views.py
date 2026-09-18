@@ -1685,6 +1685,8 @@ def grade_entry(request, school_id, class_name, subject):
             })
 
     # Saved per-student results for each assessment: {assessment_id: {student_id: display}}
+    # Cells show the authoritative combined score (8.5), not the raw '8/9'
+    # input — components stay stored on the row for calculation/metadata.
     assessment_grade_map = {}
     if control_assessments:
         for g in Grade.objects.filter(
@@ -1692,12 +1694,7 @@ def grade_entry(request, school_id, class_name, subject):
             subject=subject,
             assessment_id__in=[a['id'] for a in control_assessments],
         ):
-            if g.components:
-                display_value = '/'.join(
-                    str(int(c)) if isinstance(c, (int, float)) and float(c).is_integer() else str(c)
-                    for c in g.components
-                )
-            elif g.score is not None:
+            if g.score is not None:
                 display_value = str(int(g.score)) if float(g.score).is_integer() else str(g.score)
             else:
                 display_value = ''
@@ -2025,11 +2022,52 @@ def save_grade_ajax(request):
                 st = request.POST.get('sticker', '').strip()
                 grade.sticker = st if st in ('⭐', '☀️', '🌸', '📖') else None
 
-            if grade.score is None and not grade.attendance and grade.behavior_score is None and not grade.sticker:
+            deleted = grade.score is None and not grade.attendance and grade.behavior_score is None and not grade.sticker
+            if deleted:
                 grade.delete()
             else:
                 grade.save()
-            return JsonResponse({'success': True, 'saved': True}, status=200)
+
+            resp = {'success': True, 'saved': True}
+            if assessment is not None:
+                # Authoritative echo for immediate UI sync: the combined
+                # result, its display form, and the recalculated quarter
+                # projection (official QuarterGrade still wins over live).
+                if deleted or grade.score is None:
+                    resp['score'] = None
+                    resp['display'] = ''
+                else:
+                    resp['score'] = grade.score
+                    if grade.components:
+                        resp['display'] = '/'.join(
+                            str(int(c)) if isinstance(c, (int, float)) and float(c).is_integer() else str(c)
+                            for c in grade.components
+                        )
+                    else:
+                        resp['display'] = str(int(grade.score)) if float(grade.score).is_integer() else str(grade.score)
+                official = {}
+                for qg in QuarterGrade.objects.filter(student=student, class_name=class_name, subject=subject):
+                    if qg.quarter == 0 and qg.att_grade is not None:
+                        official['att'] = qg.att_grade
+                    elif qg.grade is not None:
+                        official[qg.quarter] = qg.grade
+                qmap = {}
+                live_flags = set()
+                for q in (1, 2, 3, 4):
+                    if q in official:
+                        qmap[q] = official[q]
+                    else:
+                        current_scores, ajm_results = collect_quarter_inputs(student, subject, q)
+                        value = calc_quarter_value(current_scores, ajm_results)
+                        if value is not None:
+                            qmap[q] = std_round(value)
+                            live_flags.add(q)
+                qmap['att'] = official.get('att')
+                resp.update(calc_quarterly(qmap, live_flags))
+                resp['quarter'] = assessment.quarter
+                resp['quarter_value'] = qmap.get(assessment.quarter)
+                resp['quarter_live'] = assessment.quarter in live_flags
+            return JsonResponse(resp, status=200)
 
         elif grade_type == 'quarterly':
             try:

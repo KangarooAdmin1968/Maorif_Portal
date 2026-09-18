@@ -520,6 +520,92 @@ class LegacyAndContextTests(GoldenBase):
         self.assertEqual(items[0]['id'], a.id)
         self.assertTrue(items[0]['is_ajm'])
         self.assertIn('АҶМ', items[0]['label'])
+        # Cells display the authoritative combined score, not '8/9'.
         self.assertEqual(
-            resp.context['assessment_grade_map'][a.id][self.s1.id], '8/9'
+            resp.context['assessment_grade_map'][a.id][self.s1.id], '8.5'
+        )
+
+
+# ---------------------------------------------------------------------------
+# Live-sync response contract — the AJAX response must carry everything the
+# page needs to reflect the saved result without a reload.
+# ---------------------------------------------------------------------------
+
+
+class AssessmentSyncResponseTests(GoldenBase):
+    def setUp(self):
+        self.client.force_login(self.teacher_a)
+        self.a = make_control(self.cs_a, number=1)
+
+    # 1 — current-grade auto-save contract unchanged
+    def test_daily_response_shape_unchanged(self):
+        resp = post_grade(self.client, self.s1, score='9')
+        data = resp.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(set(data), {'success', 'saved'})
+
+    # 2-3 — 3/2 saves through the same AJAX flow and becomes ONE result.
+    # The cell contract: resp.score is what the saved cell displays.
+    def test_3_2_components_result_2_5(self):
+        resp = post_grade(self.client, self.s1, score='3/2', assessment=self.a)
+        data = resp.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['score'], 2.5)   # cell shows "2.5"
+        self.assertEqual(data['display'], '3/2')  # component metadata kept
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertEqual((g.score, g.components), (2.5, [3, 2]))
+        self.assertEqual(
+            Grade.objects.filter(student=self.s1, assessment=self.a).count(), 1
+        )
+
+    # 4
+    def test_8_9_result_8_5_display(self):
+        resp = post_grade(self.client, self.s1, score='8/9', assessment=self.a)
+        data = resp.json()
+        self.assertEqual(data['score'], 8.5)   # cell shows "8.5"
+        self.assertEqual(data['display'], '8/9')
+
+    # 5
+    def test_8_9_10_result_9_display(self):
+        resp = post_grade(self.client, self.s1, score='8/9/10', assessment=self.a)
+        data = resp.json()
+        self.assertEqual(data['score'], 9.0)   # cell shows "9"
+        self.assertEqual(data['display'], '8/9/10')
+
+    def test_single_score_display_echo(self):
+        resp = post_grade(self.client, self.s1, score='9', assessment=self.a)
+        self.assertEqual(resp.json()['display'], '9')
+
+    # 6-8 — response carries the authoritative quarter projection
+    def test_response_carries_quarter_projection(self):
+        make_grade(self.s1, score=9, date=D_Q1)
+        self.a.is_ajm = True
+        self.a.save()
+        resp = post_grade(self.client, self.s1, score='8/9', assessment=self.a)
+        data = resp.json()
+        # AT = 9, AJM = 8.5 -> АҶЧ = 8.75 -> std_round -> 9
+        self.assertEqual(data['quarter'], 1)
+        self.assertEqual(data['quarter_value'], 9)
+        self.assertTrue(data['quarter_live'])
+        # Full calc payload for the semi-annual/annual/final spans.
+        self.assertEqual(data['semi_annual_1'], 9)
+        self.assertTrue(data['semi_annual_1_proj'])
+
+    def test_official_quartergrade_wins_in_response(self):
+        make_quarter_grade(self.s1, quarter=1, grade=10)
+        resp = post_grade(self.client, self.s1, score='8/9', assessment=self.a)
+        data = resp.json()
+        self.assertEqual(data['quarter_value'], 10)
+        self.assertFalse(data['quarter_live'])
+
+    def test_clear_response_marks_empty(self):
+        post_grade(self.client, self.s1, score='8/9', assessment=self.a)
+        resp = post_grade(self.client, self.s1, score='', assessment=self.a)
+        data = resp.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['display'], '')
+        self.assertIsNone(data['score'])
+        self.assertIsNone(data['quarter_value'])
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment=self.a).exists()
         )

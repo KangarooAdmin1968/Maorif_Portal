@@ -106,8 +106,16 @@
   .drill-hint { font-size: .8rem; color: #6b7280; }
   .teacher-panel > td { padding: 0 !important; border-bottom: none; background: #f8fafc; }
   .teacher-panel.open > td { border-bottom: 1px solid #e5e7eb; }
-  .teacher-wrap { max-height: 0; overflow: hidden; transition: max-height .4s ease; }
-  .teacher-panel.open .teacher-wrap { max-height: 2500px; }
+  /* Accordion sized by real content height (0fr→1fr) — a fixed max-height
+     cap would clip long teacher lists, especially as mobile stacked cards */
+  .teacher-wrap {
+    display: grid;
+    grid-template-rows: 0fr;
+    overflow: hidden;
+    transition: grid-template-rows .4s ease;
+  }
+  .teacher-wrap > .teacher-inner { min-height: 0; overflow: hidden; }
+  .teacher-panel.open .teacher-wrap { grid-template-rows: 1fr; }
   .teacher-inner { padding: .9rem 1.1rem 1.1rem; }
   .teacher-card {
     background: #f8fafc;

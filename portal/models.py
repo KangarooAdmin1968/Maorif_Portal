@@ -233,6 +233,46 @@ class ClassSubject(models.Model):
         super().save(*args, **kwargs)
 
 
+class Lesson(models.Model):
+    class_subject = models.ForeignKey(ClassSubject, on_delete=models.CASCADE)
+    date = models.DateField('Сана')
+    lesson_number = models.PositiveSmallIntegerField('Рақами дарс', default=1)
+    topic = models.CharField('Мавзӯъ', max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('class_subject', 'date', 'lesson_number')
+        ordering = ['-date', 'lesson_number']
+
+    def __str__(self):
+        return f"{self.class_subject} — {self.date} — дарси {self.lesson_number}"
+
+
+class Assessment(models.Model):
+    CATEGORY_CHOICES = [
+        ('current', 'Ҷорӣ'),
+        ('control', 'Назорат'),
+    ]
+
+    class_subject = models.ForeignKey(ClassSubject, on_delete=models.CASCADE)
+    lesson = models.ForeignKey(Lesson, on_delete=models.SET_NULL, null=True, blank=True)
+    date = models.DateField('Сана')
+    quarter = models.IntegerField('Чорак', choices=[(1, '1'), (2, '2'), (3, '3'), (4, '4')])
+    category = models.CharField('Категория', max_length=20, choices=CATEGORY_CHOICES)
+    number = models.PositiveSmallIntegerField('Рақам', null=True, blank=True)
+    title = models.CharField('Ном', max_length=255, blank=True)
+    is_ajm = models.BooleanField('АҶМ', default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['class_subject', 'quarter', 'category']),
+        ]
+
+    def __str__(self):
+        return f"{self.get_category_display()} — {self.class_subject} — {self.date}"
+
+
 class Grade(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name='Хонанда')
     subject = models.CharField('Фан', max_length=100)
@@ -242,6 +282,8 @@ class Grade(models.Model):
     attendance = models.CharField('Давомат', max_length=10, blank=True, null=True, choices=[('+', '+ (босабаб)'), ('-', '- (бесабаб)')])
     behavior_score = models.IntegerField('Хулқ-атвор', blank=True, null=True, choices=[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)])
     sticker = models.CharField('Стикер', max_length=10, blank=True, null=True, choices=[('⭐', 'Ситора'), ('☀️', 'Офтобак'), ('🌸', 'Гул'), ('📖', 'Китоб')])
+    lesson = models.ForeignKey(Lesson, on_delete=models.SET_NULL, null=True, blank=True)
+    assessment = models.ForeignKey(Assessment, on_delete=models.SET_NULL, null=True, blank=True)
 
     class Meta:
         verbose_name = 'Хол'

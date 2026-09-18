@@ -9,6 +9,7 @@ from .forms import ClassSubjectAdminForm, BulkClassSubjectForm
 from .models import (
     School, Teacher, Student, Grade, QuarterGrade, QuarterLock,
     ClassSubject, UserProfile, SubjectDeactivationRequest,
+    Lesson, Assessment,
     normalize_class_name, normalize_subject,
 )
 from .utils import class_numeric_part
@@ -221,6 +222,22 @@ class SubjectDeactivationRequestAdmin(admin.ModelAdmin):
             reviewed_at=now,
         )
         self.message_user(request, 'Дархостҳои интихобшуда рад шуданд.', messages.SUCCESS)
+
+
+@admin.register(Lesson)
+class LessonAdmin(admin.ModelAdmin):
+    list_display = ['class_subject', 'date', 'lesson_number', 'topic', 'created_at']
+    list_filter = ['date', 'class_subject__school']
+    search_fields = ['topic', 'class_subject__subject', 'class_subject__class_name']
+    date_hierarchy = 'date'
+
+
+@admin.register(Assessment)
+class AssessmentAdmin(admin.ModelAdmin):
+    list_display = ['class_subject', 'date', 'quarter', 'category', 'number', 'title', 'is_ajm', 'lesson']
+    list_filter = ['quarter', 'category', 'is_ajm', 'class_subject__school']
+    search_fields = ['title', 'class_subject__subject', 'class_subject__class_name']
+    date_hierarchy = 'date'
 
 
 @admin.register(QuarterLock)

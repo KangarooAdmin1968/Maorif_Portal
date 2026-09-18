@@ -149,6 +149,74 @@
   .status-green { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
   .status-amber { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
   .status-red   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+
+  /* Mobile: transform tables into stacked cards — zero horizontal scroll */
+  @media (max-width: 768px) {
+    .data-table thead { display: none; }
+    .data-table, .data-table tbody { display: block; width: 100%; }
+    .data-table tbody tr {
+      display: block;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      margin-bottom: .75rem;
+      padding: .35rem .75rem;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .06);
+    }
+    .data-table td {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: .75rem;
+      padding: .45rem 0;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: .9rem;
+      text-align: right;
+    }
+    .data-table td:last-child { border-bottom: none; }
+    .data-table td::before {
+      content: attr(data-label);
+      font-weight: 700;
+      color: #64748b;
+      font-size: .75rem;
+      text-align: left;
+      flex: 0 0 auto;
+      margin-right: .5rem;
+    }
+    .data-table td > div { flex: 1; min-width: 0; }
+
+    /* Drilldown panel stays a plain expanding block attached to its card */
+    .data-table tbody tr.teacher-panel {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      padding: 0;
+      margin: 0;
+    }
+    .data-table tbody tr.teacher-panel.open { margin: -.4rem 0 .75rem; }
+    .data-table tr.teacher-panel > td {
+      display: block;
+      padding: 0 !important;
+      border-bottom: none;
+      text-align: left;
+    }
+    .data-table tr.teacher-panel > td::before { content: none; }
+    .data-table tbody tr.school-row.open {
+      border-radius: 8px 8px 0 0;
+      margin-bottom: 0;
+      border-bottom-color: transparent;
+    }
+    .school-row.open + .teacher-panel > td {
+      border: 1px solid #e2e8f0;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      background: #f8fafc;
+    }
+
+    .teacher-card { padding: .6rem .65rem; }
+    .teacher-inner { padding: .5rem .5rem .75rem; }
+    .subject-chip { white-space: normal; }
+  }
 </style>
 {% endblock %}
 {% block content %}
@@ -176,17 +244,17 @@
         <tbody>
             {% for s in stats %}
             <tr>
-                <td class="rank-medal">
+                <td class="rank-medal" data-label="Ҷой">
                     {% if s.rank == 1 %}🥇 1{% elif s.rank == 2 %}🥈 2{% elif s.rank == 3 %}🥉 3{% else %}{{ s.rank }}{% endif %}
                 </td>
-                <td>
+                <td data-label="Муассиса">
                     {{ s.school.name }}
                     {% if s.percentage == 100 %}<span class="done-check" title="Ҳама дарсҳо тақсим шудаанд">✅</span>{% endif %}
                 </td>
-                <td>{{ s.zavuch_username }}</td>
-                <td>{% if s.zavuch_last_login %}{{ s.zavuch_last_login|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
-                <td>{{ s.assigned }} / {{ s.total }}</td>
-                <td>
+                <td data-label="Завуч">{{ s.zavuch_username }}</td>
+                <td data-label="Охирин фаъолият">{% if s.zavuch_last_login %}{{ s.zavuch_last_login|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
+                <td data-label="Тақсимшуда">{{ s.assigned }} / {{ s.total }}</td>
+                <td data-label="Тақсимоти дарсҳо">
                     <div style="display:flex; align-items:center; gap:.6rem;">
                         <div class="readiness-bar" style="flex:1;">
                             <div class="readiness-fill {% if s.percentage >= 80 %}fill-green{% elif s.percentage >= 50 %}fill-amber{% else %}fill-red{% endif %}" style="width: {{ s.percentage }}%;"></div>
@@ -219,20 +287,20 @@
         <tbody>
             {% for s in activity %}
             <tr class="school-row {% if s.is_mine %}my-school-row{% endif %}" data-target="tp-{{ forloop.counter }}" title="🔍 Омӯзгорон (муфассал)">
-                <td class="rank-medal">
+                <td class="rank-medal" data-label="Ҷой">
                     {% if s.rank == 1 %}🏆 1{% elif s.rank == 2 %}🥈 2{% elif s.rank == 3 %}🥉 3{% else %}{{ s.rank }}{% endif %}
                 </td>
-                <td>
+                <td data-label="Муассиса">
                     <span class="caret">▶</span>
                     {{ s.school.name }}
                     {% if s.is_mine %}<span class="mine-badge">Шумо</span>{% endif %}
                 </td>
-                <td class="num-cell">{{ s.students }}</td>
-                <td class="num-cell"><strong>{{ s.total_grades }}</strong></td>
-                <td class="num-cell">
+                <td class="num-cell" data-label="Хонандагон">{{ s.students }}</td>
+                <td class="num-cell" data-label="Ҳамагӣ холҳо"><strong>{{ s.total_grades }}</strong></td>
+                <td class="num-cell" data-label="Иҷрои меъёр (%)">
                     <span class="norm-badge {% if s.fulfillment >= 70 %}norm-high{% elif s.fulfillment >= 30 %}norm-mid{% else %}norm-low{% endif %}">{{ s.fulfillment }}%</span>
                 </td>
-                <td class="num-cell"><span class="gpa-badge">{{ s.gpa|floatformat:2 }}</span></td>
+                <td class="num-cell" data-label="Баҳои миёна"><span class="gpa-badge">{{ s.gpa|floatformat:2 }}</span></td>
             </tr>
             <tr class="teacher-panel" id="tp-{{ forloop.counter }}">
                 <td colspan="6">
@@ -253,14 +321,14 @@
                                 <tbody>
                                     {% for t in s.teachers %}
                                     <tr>
-                                        <td>{{ forloop.counter }}</td>
-                                        <td>
+                                        <td data-label="№">{{ forloop.counter }}</td>
+                                        <td data-label="Омӯзгор ва фанҳо">
                                             <span class="teacher-name">{{ t.name }}</span>
                                             {% for chip in t.subjects %}<span class="subject-chip">{{ chip }}</span>{% endfor %}
                                         </td>
-                                        <td class="num-cell">{{ t.hours }} соат<br><span class="norm-note">(меъёр: {{ t.min_grades }})</span></td>
-                                        <td class="num-cell"><strong>{{ t.grades_done }}</strong> / {{ t.fulfillment }}%</td>
-                                        <td class="num-cell">
+                                        <td class="num-cell" data-label="Соат / Меъёр">{{ t.hours }} соат<br><span class="norm-note">(меъёр: {{ t.min_grades }})</span></td>
+                                        <td class="num-cell" data-label="Холҳо / Иҷрошавӣ"><strong>{{ t.grades_done }}</strong> / {{ t.fulfillment }}%</td>
+                                        <td class="num-cell" data-label="Ҳолат">
                                             {% if t.fulfillment >= 70 %}
                                                 <span class="status-badge status-green">🟢 Фаъол</span>
                                             {% elif t.fulfillment >= 30 %}

@@ -284,6 +284,7 @@ class Grade(models.Model):
     sticker = models.CharField('Стикер', max_length=10, blank=True, null=True, choices=[('⭐', 'Ситора'), ('☀️', 'Офтобак'), ('🌸', 'Гул'), ('📖', 'Китоб')])
     lesson = models.ForeignKey(Lesson, on_delete=models.SET_NULL, null=True, blank=True)
     assessment = models.ForeignKey(Assessment, on_delete=models.SET_NULL, null=True, blank=True)
+    components = models.JSONField('Ҷузъҳо', null=True, blank=True)
 
     class Meta:
         verbose_name = 'Хол'

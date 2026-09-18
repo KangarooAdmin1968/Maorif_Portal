@@ -106,6 +106,91 @@ def get_date_quarter(date):
     return None
 
 
+def grade_component_result(grade):
+    """Return the student's single result for a Grade row.
+
+    A row carrying component scores (e.g. [8, 9] for one 8/9 assessment)
+    contributes their arithmetic mean — exactly once. Empty or malformed
+    component data falls back to Grade.score, which always remains the
+    authoritative combined score.
+    """
+    comps = grade.components
+    if isinstance(comps, (list, tuple)) and comps:
+        values = []
+        for c in comps:
+            if isinstance(c, bool) or not isinstance(c, (int, float)):
+                values = []
+                break
+            values.append(float(c))
+        if values:
+            return sum(values) / len(values)
+    return grade.score
+
+
+def _split_quarter_grades(grades, quarter):
+    """Split one student's Grade rows for a subject into quarter pools.
+
+    Returns (current_scores, ajm_results). Legacy rows (assessment NULL) and
+    rows linked to a non-АҶМ assessment count as current grades; a row's
+    quarter is its Assessment.quarter when linked, otherwise the existing
+    get_date_quarter of grade.date — identical for all legacy data. Rows
+    linked to an АҶМ assessment are grouped by assessment_id so each
+    assessment contributes exactly one result (the mean of its row results;
+    normally a single row).
+    """
+    current_scores = []
+    ajm_groups = {}
+    for g in grades:
+        a = g.assessment
+        gq = a.quarter if a is not None else get_date_quarter(g.date)
+        if gq != quarter:
+            continue
+        result = grade_component_result(g)
+        if result is None:
+            continue
+        if a is not None and a.is_ajm:
+            ajm_groups.setdefault(a.id, []).append(result)
+        else:
+            current_scores.append(result)
+    ajm_results = [sum(rows) / len(rows) for rows in ajm_groups.values()]
+    return current_scores, ajm_results
+
+
+def collect_quarter_inputs(student, subject, quarter):
+    """Return (current_scores, ajm_results) for one student+subject+quarter.
+
+    Uses the same scored-row pool as the existing daily calculations
+    (period='Холҳои ҷорӣ (Онлайн)').
+    """
+    grades = Grade.objects.filter(
+        student=student,
+        subject=subject,
+        period='Холҳои ҷорӣ (Онлайн)',
+        score__isnull=False,
+    ).select_related('assessment')
+    return _split_quarter_grades(grades, quarter)
+
+
+def calc_quarter_value(current_scores, ajm_results):
+    """АҶЧ for one quarter, as a precise float (callers apply std_round).
+
+    - No АҶМ  -> АҶЧ = АТ (never halved; identical to legacy behavior).
+    - АТ+АҶМ  -> АҶЧ = (АТ + АҶМ) / 2, where АҶМ is the mean of the
+      per-assessment results (each assessment counted once).
+    - АҶМ only (АТ missing) -> АҶЧ = АҶМ. Missing АТ is never treated as
+      zero and never halved; this fallback is deliberately symmetric with
+      the no-АҶМ rule and lives only here.
+    - Neither -> None (nothing to display, as before).
+    """
+    at = sum(current_scores) / len(current_scores) if current_scores else None
+    ajm = sum(ajm_results) / len(ajm_results) if ajm_results else None
+    if at is not None and ajm is not None:
+        return (at + ajm) / 2
+    if at is not None:
+        return at
+    return ajm
+
+
 def is_quarter_locked(school, class_name, subject, quarter):
     """Return True if the given quarter is administratively locked."""
     if quarter is None:
@@ -1435,17 +1520,17 @@ def grade_entry(request, school_id, class_name, subject):
         elif g.grade is not None:
             qmap_by_student[sid][g.quarter] = g.grade
 
-    # Aggregate daily grades by quarter for live quarter bridging
-    daily_by_q = defaultdict(lambda: defaultdict(list))
+    # Collect scored daily rows per student for live quarter bridging.
+    # Rows are split into current (legacy + non-АҶМ) and АҶМ pools inside
+    # _split_quarter_grades; each АҶМ assessment contributes exactly once.
+    grades_by_student = defaultdict(list)
     for g in Grade.objects.filter(
         student__in=students,
         subject=subject,
         period='Холҳои ҷорӣ (Онлайн)',
         score__isnull=False
-    ):
-        q = get_date_quarter(g.date)
-        if q:
-            daily_by_q[g.student_id][q].append(float(g.score))
+    ).select_related('assessment'):
+        grades_by_student[g.student_id].append(g)
 
     quarter_grades = {}
     display_quarter_grades = {}
@@ -1463,9 +1548,12 @@ def grade_entry(request, school_id, class_name, subject):
                 qmap[q] = official_grade
                 display[q] = official_grade
             else:
-                scores = daily_by_q.get(sid, {}).get(q, [])
-                if scores:
-                    avg = std_round(sum(scores) / len(scores))
+                current_scores, ajm_results = _split_quarter_grades(
+                    grades_by_student.get(sid, ()), q
+                )
+                value = calc_quarter_value(current_scores, ajm_results)
+                if value is not None:
+                    avg = std_round(value)
                     qmap[q] = avg
                     display[q] = avg
                     live_flags.add(q)
@@ -1850,32 +1938,21 @@ def calc_quarter_from_daily(request, school_id, class_name, subject):
             subject=subject,
             period='Холҳои ҷорӣ (Онлайн)',
             score__isnull=False
-        )
-        sums = {1: [0.0, 0], 2: [0.0, 0], 3: [0.0, 0], 4: [0.0, 0]}
-        for g in grades:
-            m = g.date.month
-            if m in (9, 10, 11):
-                q = 1
-            elif m in (12, 1, 2):
-                q = 2
-            elif m in (3, 4, 5):
-                q = 3
-            elif m in (6, 7, 8):
-                q = 4
-            else:
+        ).select_related('assessment')
+        for q in (1, 2, 3, 4):
+            if is_quarter_locked(school, class_name, subject, q):
                 continue
-            sums[q][0] += g.score
-            sums[q][1] += 1
-        for q, (s, c) in sums.items():
-            if c and not is_quarter_locked(school, class_name, subject, q):
-                avg = std_round(s / c)
-                QuarterGrade.objects.update_or_create(
-                    student=student,
-                    class_name=class_name,
-                    subject=subject,
-                    quarter=q,
-                    defaults={'grade': avg}
-                )
+            current_scores, ajm_results = _split_quarter_grades(grades, q)
+            value = calc_quarter_value(current_scores, ajm_results)
+            if value is None:
+                continue
+            QuarterGrade.objects.update_or_create(
+                student=student,
+                class_name=class_name,
+                subject=subject,
+                quarter=q,
+                defaults={'grade': std_round(value)}
+            )
     return redirect('grade_entry', school_id=school.id, class_name=class_name, subject=subject)
 
 

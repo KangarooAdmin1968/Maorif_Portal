@@ -1176,7 +1176,9 @@ def edit_student(request, school_id, class_name):
     ensure_class_subjects(school, target_class)
     _deactivate_empty_class(school, class_name)
     messages.success(request, f'Хонанда {full_name} таҳрир шуд.')
-    return redirect('class_detail', school_id=school.id, class_name=target_class)
+    # Stay on the source class so the zavuch can transfer the next student
+    # without navigating back.
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
 
 
 @login_required

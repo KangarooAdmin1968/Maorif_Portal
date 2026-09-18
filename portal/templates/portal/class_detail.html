@@ -263,7 +263,13 @@ function saveScrollPos(rowId) {
         const el = saved.row ? document.getElementById(saved.row) : null;
         if (el) {
             el.scrollIntoView({block: 'center'});
-        } else {
+            return;
+        }
+        let hashTarget = null;
+        if (location.hash.length > 1) {
+            try { hashTarget = document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (e) {}
+        }
+        if (!hashTarget) {
             window.scrollTo(0, saved.y);
         }
     });

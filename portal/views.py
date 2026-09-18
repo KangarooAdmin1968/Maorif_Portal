@@ -1168,7 +1168,7 @@ def edit_student(request, school_id, class_name):
         return redirect('class_detail', school_id=school.id, class_name=class_name)
 
     try:
-        _move_student(school, student, target_class, full_name, gender=gender)
+        student = _move_student(school, student, target_class, full_name, gender=gender)
     except ValueError as e:
         messages.error(request, str(e))
         return redirect('class_detail', school_id=school.id, class_name=class_name)
@@ -1177,8 +1177,8 @@ def edit_student(request, school_id, class_name):
     _deactivate_empty_class(school, class_name)
     messages.success(request, f'Хонанда {full_name} таҳрир шуд.')
     # Stay on the source class so the zavuch can transfer the next student
-    # without navigating back.
-    return redirect('class_detail', school_id=school.id, class_name=class_name)
+    # without navigating back; the #student-ID fragment focuses the row.
+    return redirect(reverse('class_detail', args=[school.id, class_name]) + f'#student-{student.id}')
 
 
 @login_required

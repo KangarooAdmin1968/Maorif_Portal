@@ -314,13 +314,29 @@ function updateQuarterCell(studentId, quarter, value, isLive) {
 async function syncPending() {
     if (!state.pending.length) return;
     hideOfflineBanner();
+    let networkError = false;
     for (const item of state.pending) {
         const data = new URLSearchParams(item.params);
         try {
             const r = await fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data});
-            if (!r.ok) throw new Error('network');
+            if (r.status >= 500) {
+                // Potentially transient server failure — keep the item queued.
+                const el0 = document.querySelector('[name="' + item.name + '"]');
+                const st0 = el0 && document.getElementById('daily-status-' + el0.dataset.rowId);
+                showStatus(st0, 'Сервер дастрас нест — баъдтар такрор мешавад.');
+                break;
+            }
+            if (!r.ok) { removePending(item.name); continue; }
             const resp = await r.json();
-            if (!resp.success) throw new Error(resp.message || 'error');
+            if (!resp.success) {
+                // Deterministic business rejection — it can never succeed on
+                // replay, so drop the item instead of looping forever.
+                const bad = document.querySelector('[name="' + item.name + '"]');
+                const badStatus = bad && document.getElementById('daily-status-' + bad.dataset.rowId);
+                showStatus(badStatus, resp.message || 'Хатo');
+                removePending(item.name);
+                continue;
+            }
             const el = document.querySelector('[name="' + item.name + '"]');
             if (el) {
                 const disp = (el.dataset.assessmentId && resp.score !== undefined)
@@ -346,10 +362,10 @@ async function syncPending() {
                 updateQuarterCell(el ? el.dataset.studentId : item.params.student_id, resp.quarter, resp.quarter_value, resp.quarter_live);
             }
             removePending(item.name);
-        } catch (err) { console.error(err); break; }
+        } catch (err) { console.error(err); networkError = true; break; }
     }
     if (!state.pending.length) { hideOfflineBanner(); showSyncToast(); }
-    else { showOfflineBanner(); }
+    else if (networkError) { showOfflineBanner(); }
     saveState();
 }
 let gradeKind = 'current';
@@ -557,8 +573,20 @@ function saveDaily(input) {
   if (!navigator.onLine) { showOfflineBanner(); return; }
   const data = new URLSearchParams(params);
   fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
-  .then(r => r.json())
+  .then(r => {
+    if (r.status >= 500) { const e = new Error('server'); e.serverDown = true; throw e; }
+    if (!r.ok) {
+      // Deterministic 4xx — the server rejected this request for good;
+      // retrying cannot help, so drop the queued item instead of looping.
+      removePending(input.name);
+      r.json().then(j => showStatus(status, (j && j.message) || 'Хатo'))
+              .catch(() => showStatus(status, 'Хатo'));
+      return null;
+    }
+    return r.json();
+  })
   .then(resp => {
+    if (!resp) return;
     if (resp.success) {
       if (assessmentId && resp.score !== undefined) {
         // Backend-authoritative echo: the cell shows the combined numeric
@@ -579,10 +607,16 @@ function saveDaily(input) {
       removePending(input.name);
       showStatus(status, '✔ Сабт шуд!');
     } else {
+      // HTTP 200 + success:false is a deterministic business rejection —
+      // drop the queued item; it can never succeed on replay.
+      removePending(input.name);
       showStatus(status, resp.message || 'Хатo');
     }
   })
-  .catch(() => { showStatus(status, 'Хатo'); showOfflineBanner(); });
+  .catch(err => {
+    if (err && err.serverDown) { showStatus(status, 'Сервер дастрас нест — баъдтар такрор мешавад.'); }
+    else { showStatus(status, 'Хатo'); showOfflineBanner(); }
+  });
 }
 function saveQuarter(input) {
   const scoreVal = toCleanInt(input.value);
@@ -593,11 +627,27 @@ function saveQuarter(input) {
   pushPending({name: input.name, value: scoreVal, rowId: rowId, params: params});
   backupDrafts();
   if (!navigator.onLine) { showOfflineBanner(); return; }
+  const qstatus = document.getElementById('daily-status-' + rowId);
   const data = new URLSearchParams(params);
   fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
-  .then(r => r.json())
+  .then(r => {
+    if (r.status >= 500) { const e = new Error('server'); e.serverDown = true; throw e; }
+    if (!r.ok) {
+      removePending(input.name);
+      r.json().then(j => showStatus(qstatus, (j && j.message) || 'Хатo'))
+              .catch(() => showStatus(qstatus, 'Хатo'));
+      return null;
+    }
+    return r.json();
+  })
   .then(resp => {
-    if (!resp.success) return;
+    if (!resp) return;
+    if (!resp.success) {
+      // Deterministic business rejection — drop the queued item.
+      removePending(input.name);
+      showStatus(qstatus, resp.message || 'Хатo');
+      return;
+    }
     input.value = scoreVal;
     input.dataset.origValue = scoreVal;
     removePending(input.name);
@@ -609,7 +659,10 @@ function saveQuarter(input) {
       document.getElementById('final-' + rowId).innerHTML = (resp.final ?? '-') + projMark(resp.final_proj);
     }
   })
-  .catch(() => { showOfflineBanner(); });
+  .catch(err => {
+    if (err && err.serverDown) { showStatus(qstatus, 'Сервер дастрас нест — баъдтар такрор мешавад.'); }
+    else { showOfflineBanner(); }
+  });
 }
 function saveAll() {
   document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {

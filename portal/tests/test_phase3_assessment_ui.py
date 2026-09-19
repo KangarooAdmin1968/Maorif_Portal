@@ -825,3 +825,72 @@ class ModeExclusivityTests(GoldenBase):
         self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 8)
         self.assertFalse(resp.context['date_is_control'])
         self.assertFalse(resp.context['assessment_grade_map'])
+
+
+# ---------------------------------------------------------------------------
+# Offline pending queue — deterministic rejections must not create zombie
+# items that replay forever and keep the offline banner visible.
+# ---------------------------------------------------------------------------
+
+
+class PendingQueueContractTests(GoldenBase):
+    """Pin the fetch-outcome classification shipped in grade_entry.html.
+
+    The JS pushes a pending item before fetch() and must drop it on
+    deterministic rejections (HTTP 4xx, HTTP 200 + success:false) while
+    keeping it for network exceptions and HTTP 5xx. These tests assert the
+    shipped script keeps that contract, plus the server response shapes the
+    JS keys on.
+    """
+
+    def setUp(self):
+        self.client.force_login(self.teacher_a)
+
+    def _js(self):
+        resp = self.client.get(
+            reverse('grade_entry', args=[self.school_a.id, '7-А', MATH])
+        )
+        self.assertEqual(resp.status_code, 200)
+        return resp.content.decode('utf-8')
+
+    def test_5xx_keeps_pending_with_server_message(self):
+        js = self._js()
+        self.assertIn('r.status >= 500', js)
+        self.assertIn('serverDown', js)
+        self.assertIn('Сервер дастрас нест', js)
+
+    def test_deterministic_rejections_drop_pending(self):
+        js = self._js()
+        # saveDaily + saveQuarter drop the item on success, 4xx, and
+        # business rejection; syncPending on success, 4xx, business.
+        self.assertGreaterEqual(js.count('removePending(input.name)'), 5)
+        self.assertGreaterEqual(js.count('removePending(item.name)'), 3)
+
+    def test_offline_banner_only_for_network_errors(self):
+        js = self._js()
+        self.assertIn('networkError = true', js)
+        self.assertIn('else if (networkError) { showOfflineBanner(); }', js)
+
+    def test_offline_queue_path_unchanged(self):
+        js = self._js()
+        # Items are still queued before fetch and kept while offline.
+        self.assertIn('pushPending({name: input.name', js)
+        self.assertIn(
+            'if (!navigator.onLine) { showOfflineBanner(); return; }', js
+        )
+        # Storage key format is untouched.
+        self.assertIn('maorif_grade_', js)
+
+    def test_server_business_rejection_contract(self):
+        # HTTP 200 + success:false is the deterministic signal the JS drops.
+        make_control(self.cs_a, date=D_Q1, number=1)
+        resp = post_grade(self.client, self.s1, score='9', date=D_Q1)
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()['success'])
+
+    def test_server_permission_rejection_contract(self):
+        # 403 + success:false is the deterministic 4xx signal.
+        self.client.force_login(self.teacher_b)
+        resp = post_grade(self.client, self.s1, score='9', date=D_Q1_B)
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(resp.json()['success'])

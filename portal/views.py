@@ -191,6 +191,35 @@ def calc_quarter_value(current_scores, ajm_results):
     return ajm
 
 
+def _live_quarter_payload(student, subject, class_name):
+    """Live quarter projection for one student: (qmap, live_flags).
+
+    Mirrors the grade_entry live bridge — an official QuarterGrade always
+    wins; otherwise the quarter is projected from the current Grade rows.
+    Used by AJAX responses so the page can sync quarter cells immediately
+    after a save or assessment deletion without reloading.
+    """
+    official = {}
+    for qg in QuarterGrade.objects.filter(student=student, class_name=class_name, subject=subject):
+        if qg.quarter == 0 and qg.att_grade is not None:
+            official['att'] = qg.att_grade
+        elif qg.grade is not None:
+            official[qg.quarter] = qg.grade
+    qmap = {}
+    live_flags = set()
+    for q in (1, 2, 3, 4):
+        if q in official:
+            qmap[q] = official[q]
+        else:
+            current_scores, ajm_results = collect_quarter_inputs(student, subject, q)
+            value = calc_quarter_value(current_scores, ajm_results)
+            if value is not None:
+                qmap[q] = std_round(value)
+                live_flags.add(q)
+    qmap['att'] = official.get('att')
+    return qmap, live_flags
+
+
 def parse_result_input(raw):
     """Parse an assessment-linked result input: '9', '8/9' or '8/9/10'.
 
@@ -1462,10 +1491,20 @@ def grade_entry(request, school_id, class_name, subject):
 
         daily_q = get_date_quarter(date)
         daily_locked = is_quarter_locked(school, class_name, subject, daily_q)
+        # Mode exclusivity: a control assessment on this date makes it
+        # Назорат-only — batch daily writes are skipped like a locked day.
+        daily_is_control = Assessment.objects.filter(
+            class_subject__school=school,
+            class_subject__class_name=class_name,
+            class_subject__subject=subject,
+            class_subject__is_active=True,
+            category='control',
+            date=date,
+        ).exists()
 
         for student in students:
             # daily grade fallback (skip if quarter is locked)
-            if not daily_locked:
+            if not daily_locked and not daily_is_control:
                 grade, _ = get_or_create_grade(
                     student=student,
                     subject=subject,
@@ -1565,7 +1604,11 @@ def grade_entry(request, school_id, class_name, subject):
         student__class_name=class_name,
         subject=subject,
         period='Холҳои ҷорӣ (Онлайн)',
-        date=selected_date
+        date=selected_date,
+        # Assessment-linked rows belong to Назорат mode only — they must
+        # never leak into the Ҷорӣ daily cells for the same date.
+        assessment__isnull=True,
+        lesson__isnull=True,
     ):
         if g.score is not None:
             daily_grades[g.student_id] = int(g.score) if g.score.is_integer() else g.score
@@ -1579,7 +1622,8 @@ def grade_entry(request, school_id, class_name, subject):
     for g in Grade.objects.filter(
         student__in=students,
         behavior_score__isnull=False,
-        date__lt=selected_date
+        date__lt=selected_date,
+        assessment__isnull=True,
     ).order_by('student_id', '-date'):
         if g.student_id not in prior_behavior:
             prior_behavior[g.student_id] = g.behavior_score
@@ -1670,6 +1714,7 @@ def grade_entry(request, school_id, class_name, subject):
         school=school, class_name=class_name, subject=subject, is_active=True
     ).order_by('pk').first()
     control_assessments = []
+    date_is_control = False
     if class_subject is not None:
         for a in Assessment.objects.filter(
             class_subject=class_subject, category='control'
@@ -1683,6 +1728,8 @@ def grade_entry(request, school_id, class_name, subject):
                 'date': a.date.isoformat(),
                 'locked': is_quarter_locked(school, class_name, subject, a.quarter),
             })
+            if a.date == selected_date:
+                date_is_control = True
 
     # Saved per-student results for each assessment: {assessment_id: {student_id: display}}
     # Cells show the authoritative combined score (8.5), not the raw '8/9'
@@ -1721,6 +1768,7 @@ def grade_entry(request, school_id, class_name, subject):
         'class_subject_id': class_subject.id if class_subject else None,
         'control_assessments': control_assessments,
         'assessment_grade_map': assessment_grade_map,
+        'date_is_control': date_is_control,
     })
 
 
@@ -1964,6 +2012,17 @@ def save_grade_ajax(request):
                 except ValueError:
                     return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
                 lock_quarter = get_date_quarter(date)
+                # Mode exclusivity: a date that already has a control
+                # assessment is Назорат-only — plain Ҷорӣ writes are refused.
+                if Assessment.objects.filter(
+                    class_subject__school=student.school,
+                    class_subject__class_name=class_name,
+                    class_subject__subject=subject,
+                    class_subject__is_active=True,
+                    category='control',
+                    date=date,
+                ).exists():
+                    return JsonResponse({'success': False, 'message': 'Ин сана барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.'}, status=200)
 
             if is_quarter_locked(student.school, class_name, subject, lock_quarter):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
@@ -2045,24 +2104,7 @@ def save_grade_ajax(request):
                         )
                     else:
                         resp['display'] = str(int(grade.score)) if float(grade.score).is_integer() else str(grade.score)
-                official = {}
-                for qg in QuarterGrade.objects.filter(student=student, class_name=class_name, subject=subject):
-                    if qg.quarter == 0 and qg.att_grade is not None:
-                        official['att'] = qg.att_grade
-                    elif qg.grade is not None:
-                        official[qg.quarter] = qg.grade
-                qmap = {}
-                live_flags = set()
-                for q in (1, 2, 3, 4):
-                    if q in official:
-                        qmap[q] = official[q]
-                    else:
-                        current_scores, ajm_results = collect_quarter_inputs(student, subject, q)
-                        value = calc_quarter_value(current_scores, ajm_results)
-                        if value is not None:
-                            qmap[q] = std_round(value)
-                            live_flags.add(q)
-                qmap['att'] = official.get('att')
+                qmap, live_flags = _live_quarter_payload(student, subject, class_name)
                 resp.update(calc_quarterly(qmap, live_flags))
                 resp['quarter'] = assessment.quarter
                 resp['quarter_value'] = qmap.get(assessment.quarter)
@@ -2275,6 +2317,57 @@ def assessment_save(request):
             'is_ajm': assessment.is_ajm,
             'date': assessment.date.isoformat(),
         }}, status=200)
+    except Exception as e:
+        return JsonResponse({'success': False, 'message': str(e)}, status=200)
+
+
+@login_required
+@require_POST
+def assessment_delete(request):
+    """Delete a control Assessment together with its linked Grade rows.
+
+    Deliberate teacher action (the UI confirms first). Linked Grade rows
+    are removed rather than detached — Grade.assessment is SET_NULL, and
+    letting it detach would silently turn control results into ordinary
+    Ҷорӣ daily grades on that date. Once the assessment is gone the date
+    becomes eligible for Ҷорӣ entry again.
+    """
+    try:
+        assessment_id = request.POST.get('assessment_id', '').strip()
+        try:
+            assessment = Assessment.objects.select_related('class_subject__school').get(pk=assessment_id)
+        except (Assessment.DoesNotExist, ValueError, TypeError):
+            return JsonResponse({'success': False, 'message': 'Санҷиш ёфт нашуд.'}, status=200)
+        cs = assessment.class_subject
+        if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
+            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+        if is_quarter_locked(cs.school, cs.class_name, cs.subject, assessment.quarter):
+            return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
+        deleted_quarter = assessment.quarter
+        affected_ids = list(
+            Grade.objects.filter(assessment=assessment).values_list('student_id', flat=True).distinct()
+        )
+        with transaction.atomic():
+            # Deliberate, narrowly scoped exception to the "grades are never
+            # silently deleted" rule: ONLY rows linked to this Assessment are
+            # removed, and they must be deleted rather than detached — letting
+            # Grade.assessment SET_NULL fire would silently convert control
+            # results into ordinary Ҷорӣ daily grades on that date.
+            Grade.objects.filter(assessment=assessment).delete()
+            assessment.delete()
+        # Return the recalculated quarter for every affected student so the
+        # page can refresh quarter cells immediately — the deleted grades no
+        # longer contribute to the projection.
+        students_payload = {}
+        for sid in affected_ids:
+            st = Student.objects.get(pk=sid)
+            qmap, live_flags = _live_quarter_payload(st, cs.subject, cs.class_name)
+            entry = calc_quarterly(qmap, live_flags)
+            entry['quarter'] = deleted_quarter
+            entry['quarter_value'] = qmap.get(deleted_quarter)
+            entry['quarter_live'] = deleted_quarter in live_flags
+            students_payload[str(sid)] = entry
+        return JsonResponse({'success': True, 'students': students_payload}, status=200)
     except Exception as e:
         return JsonResponse({'success': False, 'message': str(e)}, status=200)
 

@@ -12,7 +12,7 @@ import datetime
 
 from django.urls import reverse
 
-from portal.models import Assessment, ClassSubject, Grade, Lesson, QuarterGrade
+from portal.models import Assessment, ClassSubject, Grade, Lesson, QuarterGrade, Student
 from portal.tests.helpers import (
     D_Q1, D_Q1_B, D_Q2, MATH, TAJIK, GoldenBase, lock_quarter,
     make_class_subject, make_grade, make_quarter_grade,
@@ -257,7 +257,7 @@ class AssessmentGradeSaveTests(GoldenBase):
 
     # 16 — legacy daily path unchanged
     def test_daily_slash_still_rejected(self):
-        resp = post_grade(self.client, self.s1, score='8/9')
+        resp = post_grade(self.client, self.s1, score='8/9', date=D_Q1_B)
         self.assertFalse(resp.json()['success'])
         # No score was stored and no assessment link was created.
         self.assertFalse(
@@ -291,7 +291,7 @@ class AssessmentGradeSaveTests(GoldenBase):
         self.assertEqual(Grade.objects.filter(student=self.s1).count(), 2)
 
     def test_linked_row_coexists_with_daily_row(self):
-        post_grade(self.client, self.s1, score='7')
+        post_grade(self.client, self.s1, score='7', date=D_Q1_B)
         post_grade(self.client, self.s1, score='9', assessment=self.a)
         self.assertEqual(Grade.objects.filter(student=self.s1).count(), 2)
         daily = Grade.objects.get(student=self.s1, assessment__isnull=True)
@@ -299,7 +299,7 @@ class AssessmentGradeSaveTests(GoldenBase):
 
     # 19-20
     def test_clearing_removes_only_targeted_grade(self):
-        post_grade(self.client, self.s1, score='7')
+        post_grade(self.client, self.s1, score='7', date=D_Q1_B)
         post_grade(self.client, self.s1, score='8', assessment=self.a)
         resp = post_grade(self.client, self.s1, score='', assessment=self.a)
         self.assertTrue(resp.json()['success'])
@@ -539,7 +539,7 @@ class AssessmentSyncResponseTests(GoldenBase):
 
     # 1 — current-grade auto-save contract unchanged
     def test_daily_response_shape_unchanged(self):
-        resp = post_grade(self.client, self.s1, score='9')
+        resp = post_grade(self.client, self.s1, score='9', date=D_Q1_B)
         data = resp.json()
         self.assertTrue(data['success'])
         self.assertEqual(set(data), {'success', 'saved'})
@@ -609,3 +609,219 @@ class AssessmentSyncResponseTests(GoldenBase):
         self.assertFalse(
             Grade.objects.filter(student=self.s1, assessment=self.a).exists()
         )
+
+
+# ---------------------------------------------------------------------------
+# Mode exclusivity: a date with a control assessment is Назорат-only.
+# ---------------------------------------------------------------------------
+
+DELETE_URL = reverse('assessment_delete')
+
+
+class ModeExclusivityTests(GoldenBase):
+    def setUp(self):
+        self.client.force_login(self.teacher_a)
+        self.a = make_control(self.cs_a, date=D_Q1, number=1)
+
+    def _journal_get(self, date=D_Q1):
+        return self.client.get(
+            reverse('grade_entry', args=[self.school_a.id, '7-А', MATH]),
+            {'date': date.isoformat()},
+        )
+
+    def test_assessment_grade_not_in_daily_map(self):
+        post_grade(self.client, self.s1, score='8/9', assessment=self.a)
+        resp = self._journal_get()
+        self.assertEqual(resp.status_code, 200)
+        # Linked grade is invisible to the Ҷорӣ daily cells...
+        self.assertNotIn(self.s1.id, resp.context['daily_grades'])
+        # ...and present only through the assessment map.
+        self.assertEqual(
+            resp.context['assessment_grade_map'][self.a.id][self.s1.id], '8.5'
+        )
+        self.assertTrue(resp.context['date_is_control'])
+
+    def test_non_control_date_flag_false(self):
+        make_grade(self.s1, score=8, date=D_Q1_B)
+        resp = self._journal_get(date=D_Q1_B)
+        self.assertFalse(resp.context['date_is_control'])
+        self.assertEqual(resp.context['daily_grades'][self.s1.id], 8)
+
+    def test_daily_write_blocked_on_control_date(self):
+        resp = post_grade(self.client, self.s1, score='9', date=D_Q1)
+        self.assertFalse(resp.json()['success'])
+        # The guard runs before row creation — not even an empty row.
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment__isnull=True).exists()
+        )
+
+    def test_daily_write_allowed_on_normal_date(self):
+        resp = post_grade(self.client, self.s1, score='9', date=D_Q1_B)
+        self.assertTrue(resp.json()['success'])
+        self.assertTrue(
+            Grade.objects.filter(student=self.s1, assessment__isnull=True).exists()
+        )
+
+    def test_batch_post_daily_skipped_on_control_date(self):
+        resp = self.client.post(
+            reverse('grade_entry', args=[self.school_a.id, '7-А', MATH]),
+            {'date': D_Q1.isoformat(), f'score_{self.s1.id}': '9',
+             f'q_1_{self.s1.id}': '8'},
+        )
+        self.assertEqual(resp.status_code, 302)
+        # Daily write skipped; quarterly writes are unaffected.
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment__isnull=True).exists()
+        )
+        self.assertTrue(
+            QuarterGrade.objects.filter(student=self.s1, quarter=1, grade=8).exists()
+        )
+
+    def test_clearing_one_student_keeps_control_mode(self):
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        post_grade(self.client, self.s1, score='', assessment=self.a)
+        resp = self._journal_get()
+        # The assessment still exists — the date stays Назорат.
+        self.assertTrue(resp.context['date_is_control'])
+        self.assertTrue(Assessment.objects.filter(pk=self.a.pk).exists())
+
+    def test_assessment_delete_removes_assessment_and_linked_grades(self):
+        post_grade(self.client, self.s1, score='8/9', assessment=self.a)
+        resp = self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertTrue(resp.json()['success'])
+        self.assertFalse(Assessment.objects.filter(pk=self.a.pk).exists())
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment_id=self.a.id).exists()
+        )
+
+    def test_assessment_delete_preserves_unrelated_grades(self):
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        daily = make_grade(self.s2, score=7, date=D_Q1)
+        self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertTrue(Grade.objects.filter(pk=daily.pk).exists())
+
+    def test_assessment_delete_unlocks_date(self):
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        resp = self._journal_get()
+        self.assertFalse(resp.context['date_is_control'])
+        # Ҷорӣ entry is accepted again on the same date.
+        resp = post_grade(self.client, self.s1, score='9', date=D_Q1)
+        self.assertTrue(resp.json()['success'])
+
+    def test_delete_requires_permission(self):
+        self.client.force_login(self.teacher_b)
+        resp = self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(Assessment.objects.filter(pk=self.a.pk).exists())
+
+    def test_delete_rejects_foreign_assessment(self):
+        foreign = make_control(self.cs_b)
+        resp = self.client.post(DELETE_URL, {'assessment_id': foreign.id})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(Assessment.objects.filter(pk=foreign.pk).exists())
+
+    def test_delete_blocked_in_locked_quarter(self):
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        resp = self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertFalse(resp.json()['success'])
+        self.assertTrue(Assessment.objects.filter(pk=self.a.pk).exists())
+        # A blocked delete is fully atomic — linked grades survive too.
+        self.assertTrue(
+            Grade.objects.filter(student=self.s1, assessment=self.a).exists()
+        )
+
+    # --- narrow deletion scope: ONLY rows linked to THIS assessment ---
+    def test_delete_removes_only_linked_rows(self):
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        post_grade(self.client, self.s2, score='9', assessment=self.a)
+        self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertFalse(
+            Grade.objects.filter(assessment_id=self.a.id).exists()
+        )
+
+    def test_delete_preserves_same_student_daily_grade(self):
+        # An ordinary Ҷорӣ row — even on the very same date — is never
+        # touched by assessment_delete.
+        daily_same_date = make_grade(self.s1, score=7, date=D_Q1)
+        daily_other_date = make_grade(self.s1, score=6, date=D_Q1_B)
+        post_grade(self.client, self.s1, score='9', assessment=self.a)
+        self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertTrue(Grade.objects.filter(pk=daily_same_date.pk).exists())
+        self.assertTrue(Grade.objects.filter(pk=daily_other_date.pk).exists())
+
+    def test_delete_preserves_other_assessment_grades(self):
+        b = make_control(self.cs_a, date=D_Q1_B, number=2)
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        post_grade(self.client, self.s1, score='9', assessment=b)
+        self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertTrue(
+            Grade.objects.filter(student=self.s1, assessment=b).exists()
+        )
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment=self.a).exists()
+        )
+
+    def test_delete_preserves_unrelated_records(self):
+        make_quarter_grade(self.s1, quarter=1, grade=9)
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        self.assertTrue(
+            QuarterGrade.objects.filter(student=self.s1, quarter=1).exists()
+        )
+        self.assertTrue(Student.objects.filter(pk=self.s1.pk).exists())
+        self.assertTrue(ClassSubject.objects.filter(pk=self.cs_a.pk).exists())
+
+    # --- linked rows must never reach Ҷорӣ, with or without a lesson ---
+    def test_linked_grade_without_lesson_not_in_daily(self):
+        post_grade(self.client, self.s1, score='8', assessment=self.a)
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertIsNone(g.lesson_id)
+        resp = self._journal_get()
+        self.assertNotIn(self.s1.id, resp.context['daily_grades'])
+        self.assertIn(
+            self.s1.id, resp.context['assessment_grade_map'][self.a.id]
+        )
+
+    def test_linked_grade_with_lesson_not_in_daily(self):
+        lesson = Lesson.objects.create(
+            class_subject=self.cs_a, date=D_Q1, lesson_number=1
+        )
+        post_grade(
+            self.client, self.s1, score='9', assessment=self.a,
+            extra={'lesson_id': lesson.id},
+        )
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertEqual(g.lesson_id, lesson.id)
+        resp = self._journal_get()
+        self.assertNotIn(self.s1.id, resp.context['daily_grades'])
+        self.assertIn(
+            self.s1.id, resp.context['assessment_grade_map'][self.a.id]
+        )
+
+    # --- deletion refreshes the quarter immediately, no stale value ---
+    def test_delete_refreshes_quarter_projection(self):
+        self.a.is_ajm = True
+        self.a.save()
+        post_grade(self.client, self.s1, score='8', date=D_Q1_B)
+        post_grade(self.client, self.s1, score='10', assessment=self.a)
+        # АҶЧ = (АТ 8 + АҶМ 10) / 2 = 9 as a live projection.
+        resp = self._journal_get()
+        self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 9)
+        self.assertIn(1, resp.context['live_quarter_flags'][self.s1.id])
+        resp = self.client.post(DELETE_URL, {'assessment_id': self.a.id})
+        data = resp.json()
+        self.assertTrue(data['success'])
+        # The response carries the recalculated quarter for each affected
+        # student — only s1 had a linked grade.
+        self.assertEqual(set(data['students']), {str(self.s1.id)})
+        entry = data['students'][str(self.s1.id)]
+        self.assertEqual(entry['quarter'], 1)
+        self.assertEqual(entry['quarter_value'], 8)
+        self.assertTrue(entry['quarter_live'])
+        # Reloading shows АТ-only 8 — the deleted АҶМ result is gone, not stale.
+        resp = self._journal_get()
+        self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 8)
+        self.assertFalse(resp.context['date_is_control'])
+        self.assertFalse(resp.context['assessment_grade_map'])

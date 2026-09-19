@@ -51,7 +51,9 @@
       <select id="assessment-select" onchange="onAssessmentChange()"></select>
       <button type="button" class="btn btn-secondary mini-btn" onclick="editSelectedAssessment()" title="Таҳрир">✏️</button>
       <button type="button" class="btn btn-secondary mini-btn" onclick="toggleAssessmentForm(true, null)">+ Нав</button>
+      <button type="button" class="btn btn-secondary mini-btn" onclick="deleteSelectedAssessment()" title="Нест кардани кори санҷишӣ">🗑</button>
     </span>
+    <span id="mode-hint" style="font-size:0.85rem; color:#92400e;"></span>
   </div>
   <div id="assessment-form" class="assessment-form">
     <input type="hidden" id="af-id">
@@ -220,7 +222,9 @@ function getCsrfToken() {
 const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
 const assessmentSaveUrl = "{% url 'assessment_save' %}";
+const assessmentDeleteUrl = "{% url 'assessment_delete' %}";
 const classSubjectId = "{{ class_subject_id|default:'' }}";
+const dateIsControl = {{ date_is_control|yesno:"true,false" }};
 const schoolId = "{{ school.id }}";
 const className = "{{ class_name|escapejs }}";
 const subjectName = "{{ subject|escapejs }}";
@@ -371,8 +375,21 @@ function renderAssessmentPicker() {
     sel.appendChild(opt);
   });
 }
+// Mode exclusivity: a date with a control assessment is Назорат-only.
+function controlDateLocked() {
+  const d = document.getElementById('daily-date').value;
+  return assessments.some(a => a.date === d);
+}
+function updateModeHint() {
+  const locked = controlDateLocked();
+  const hint = document.getElementById('mode-hint');
+  if (hint) hint.textContent = locked ? 'Ин сана кори санҷишӣ дорад — холи ҷорӣ ғайрифаъол аст.' : '';
+  const r = document.querySelector('input[name="grade_kind"][value="current"]');
+  if (r) r.disabled = locked;
+}
 function setGradeKind(kind) {
   if (kind === gradeKind) return;
+  if (kind === 'current' && controlDateLocked()) { updateModeHint(); return; }
   backupDrafts();
   if (kind === 'control') enterControlMode(); else exitControlMode();
   gradeKind = kind;
@@ -433,6 +450,52 @@ function toggleAssessmentForm(show, assessment) {
   form.style.display = 'flex';
 }
 function editSelectedAssessment() { toggleAssessmentForm(true, findAssessment(currentAssessmentId)); }
+function deleteSelectedAssessment() {
+  const a = findAssessment(currentAssessmentId);
+  if (!a) return;
+  if (!confirm('«' + a.label + '» ва холҳои алоқамандаш нест карда мешаванд. Идома додан?')) return;
+  if (!navigator.onLine) { showOfflineBanner(); return; }
+  const params = new URLSearchParams({assessment_id: a.id});
+  fetch(assessmentDeleteUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
+  .then(r => r.json())
+  .then(resp => {
+    if (resp.success) {
+      assessments = assessments.filter(x => String(x.id) !== String(a.id));
+      delete assessmentGrades[a.id];
+      // Refresh quarter cells/calc spans for every affected student — the
+      // deleted grades no longer contribute to the live projection.
+      if (resp.students) {
+        Object.keys(resp.students).forEach(sid => {
+          const q = resp.students[sid];
+          if (q.quarter !== undefined) updateQuarterCell(sid, q.quarter, q.quarter_value, q.quarter_live);
+          const any = document.querySelector('[data-student-id="' + sid + '"]');
+          if (any) updateCalcSpans(any.dataset.rowId, q);
+        });
+      }
+      renderAssessmentPicker();
+      updateModeHint();
+      if (!controlDateLocked()) {
+        // No assessment remains on this date -> Ҷорӣ is eligible again,
+        // return to daily mode immediately without navigation.
+        currentAssessmentId = null;
+        if (gradeKind === 'control') {
+          exitControlMode();
+          gradeKind = 'current';
+          const r = document.querySelector('input[name="grade_kind"][value="current"]');
+          if (r) r.checked = true;
+        }
+      } else {
+        const onDate = assessments.find(x => x.date === document.getElementById('daily-date').value);
+        currentAssessmentId = onDate ? onDate.id : (assessments.length ? assessments[0].id : null);
+        document.getElementById('assessment-select').value = currentAssessmentId || '';
+        loadAssessmentValues();
+      }
+    } else {
+      alert(resp.message || 'Хатo');
+    }
+  })
+  .catch(() => { showOfflineBanner(); });
+}
 function saveAssessment() {
   const status = document.getElementById('af-status');
   if (!navigator.onLine) { showStatus(status, 'Интернет лозим аст.'); showOfflineBanner(); return; }
@@ -457,6 +520,7 @@ function saveAssessment() {
       document.getElementById('assessment-select').value = String(a.id);
       loadAssessmentValues();
       toggleAssessmentForm(false);
+      updateModeHint();
       showStatus(status, '✔ Сабт шуд!');
     } else {
       showStatus(status, resp.message || 'Хатo');
@@ -598,5 +662,15 @@ document.getElementById('grade-form').addEventListener('submit', handleFormSubmi
 restoreDrafts();
 backupDrafts();
 window.addEventListener('online', syncPending);
+// A date that already has a control assessment reopens in Назорат mode;
+// the Ҷорӣ radio is locked out with an explanatory hint.
+if (dateIsControl) {
+  const onDate = assessments.find(a => a.date === document.getElementById('daily-date').value);
+  if (onDate) currentAssessmentId = onDate.id;
+  setGradeKind('control');
+  const rc = document.querySelector('input[name="grade_kind"][value="control"]');
+  if (rc) rc.checked = true;
+}
+updateModeHint();
 </script>
 {% endblock %}

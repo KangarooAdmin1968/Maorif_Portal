@@ -208,6 +208,15 @@ class Student(models.Model):
                     subject=subj,
                     defaults={'is_default': True, 'is_active': True}
                 )
+            # School-scoped extras (e.g. the Uzbek classes at School No. 5)
+            from .utils import extra_subjects_for
+            for subj in extra_subjects_for(self.school, self.class_name):
+                ClassSubject.objects.get_or_create(
+                    school=self.school,
+                    class_name=self.class_name,
+                    subject=subj,
+                    defaults={'is_default': False, 'is_active': True}
+                )
 
 
 class ClassSubject(models.Model):

@@ -24,7 +24,8 @@ from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, C
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
     default_subjects_for_class, ensure_class_subjects, is_non_graded,
-    get_school_number, is_academic_school, official_subjects
+    get_school_number, is_academic_school, official_subjects,
+    official_subjects_for
 )
 from .curriculum_hours import MIN_GRADES_BANDS, UNGRADED_SUBJECTS, weekly_hours, quarter_min_norm
 
@@ -1195,7 +1196,8 @@ def class_detail(request, school_id, class_name):
     male_count = students.filter(gender='M').count()
     female_count = students.filter(gender='F').count()
     subjects = ClassSubject.objects.filter(
-        school=school, class_name=class_name, is_active=True, subject__in=official_subjects()
+        school=school, class_name=class_name, is_active=True,
+        subject__in=official_subjects_for(school, class_name)
     ).order_by('subject')
     # Regular teachers only see their own assigned subjects in the journal picker
     if _is_regular_teacher(request.user):

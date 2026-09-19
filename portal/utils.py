@@ -102,6 +102,65 @@ def default_subjects_for_class(class_name):
     return TJC_SUBJECTS.get(num, TJC_SUBJECTS.get('5', []))
 
 
+# School+class-scoped subject configuration layered on top of the national
+# curriculum (TJC_SUBJECTS). Keys are get_school_number() slugs — NOT
+# database ids — so the config survives id changes and stays readable.
+#
+#   'extra'    — subjects seeded as additional ClassSubject rows
+#                (is_default=False). They belong to the class's official
+#                set, so ensure_class_subjects() never deactivates them.
+#   'preserve' — subjects that must not be deactivated by
+#                ensure_class_subjects() if a row already exists, but are
+#                NOT auto-created when absent.
+SCHOOL_CLASS_SUBJECTS = {
+    '5': {  # МТМУ №5 — Uzbek-language classes
+        '3-Д': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '4-Ғ': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '4-Д': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '5-Д': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '5-Е': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '6-Д': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '6-Е': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '7-Д': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '8-Е': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+        '9-Д': {'extra': ('Забон ва адабиёти ӯзбек',), 'preserve': ('Забони давлатӣ',)},
+    },
+}
+
+
+def _school_subject_overrides(school, class_name):
+    if school is None:
+        return {}
+    return SCHOOL_CLASS_SUBJECTS.get(get_school_number(school), {}).get(
+        normalize_class_name(class_name), {}
+    )
+
+
+def extra_subjects_for(school, class_name):
+    """School+class-scoped subjects seeded on top of the curriculum."""
+    return [
+        normalize_subject(s)
+        for s in _school_subject_overrides(school, class_name).get('extra', ())
+    ]
+
+
+def preserved_subjects_for(school, class_name):
+    """Existing school-scoped rows ensure_class_subjects() must not deactivate."""
+    return [
+        normalize_subject(s)
+        for s in _school_subject_overrides(school, class_name).get('preserve', ())
+    ]
+
+
+def official_subjects_for(school, class_name):
+    """Subject set visible for a school+class: curriculum ∪ extras ∪ preserved."""
+    return (
+        official_subjects()
+        | set(extra_subjects_for(school, class_name))
+        | set(preserved_subjects_for(school, class_name))
+    )
+
+
 def is_non_graded(class_name):
     num = str(class_numeric_part(class_name))
     return num in NON_GRADED_CLASSES or num == '0'
@@ -111,7 +170,12 @@ def ensure_class_subjects(school, class_name):
     """Create default ClassSubject records for a school/class and deactivate non-official ones."""
     class_name = normalize_class_name(class_name)
     subjects = default_subjects_for_class(class_name)
-    official = {normalize_subject(s) for s in subjects}
+    extras = extra_subjects_for(school, class_name)
+    official = (
+        {normalize_subject(s) for s in subjects}
+        | set(extras)
+        | set(preserved_subjects_for(school, class_name))
+    )
     created = 0
     for subj in subjects:
         subj = normalize_subject(subj)
@@ -128,6 +192,27 @@ def ensure_class_subjects(school, class_name):
                 obj.is_default = True
                 obj.save()
         # Preserve any approved deactivation: do not reactivate and clear assigned teacher.
+        if obj.is_active and SubjectDeactivationRequest.objects.filter(class_subject=obj, status='approved').exists():
+            obj.is_active = False
+            obj.teacher = None
+            obj.allocated_teacher = None
+            obj.save()
+
+    # School-scoped extras (e.g. the Uzbek classes at School No. 5) are
+    # additions to the curriculum, not defaults — is_default stays False but
+    # they are part of `official` so the sweep below never removes them.
+    for subj in extras:
+        obj, c = ClassSubject.objects.get_or_create(
+            school=school,
+            class_name=class_name,
+            subject=subj,
+            defaults={'is_default': False, 'is_active': True}
+        )
+        if c:
+            created += 1
+        elif not obj.is_active:
+            obj.is_active = True
+            obj.save()
         if obj.is_active and SubjectDeactivationRequest.objects.filter(class_subject=obj, status='approved').exists():
             obj.is_active = False
             obj.teacher = None

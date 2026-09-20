@@ -5,6 +5,7 @@
 <h1>{{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}</h1>
 
 <a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
+<a href="{% url 'monthly_journal' school.id class_name subject %}" class="btn btn-secondary" style="margin-bottom:1rem;">📅 Ҷурнали моҳона</a>
 
 <style>
 .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 2px solid #e5e7eb; }
@@ -26,10 +27,17 @@
 .assessment-form input[type="text"], .assessment-form input[type="number"] { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; max-width: 100%; }
 .assessment-form .af-number { width: 70px; }
 .mini-btn { padding: 0.3rem 0.6rem; }
+.lesson-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-bottom: 0.75rem; }
+.lesson-chip { padding: 0.35rem 0.8rem; border: 1px solid #d1d5db; border-radius: 999px; background: #fff; cursor: pointer; font-size: 0.9rem; }
+.lesson-chip.active { background: #003366; color: #fff; border-color: #003366; }
+.lesson-chip.lesson-add { border-style: dashed; color: #003366; }
+.lesson-chip.lesson-del { color: #b91c1c; }
+.lesson-topic { font-size: 0.85rem; color: #6b7280; font-style: italic; }
 </style>
 
 <form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
 {% csrf_token %}
+{% if selected_lesson %}<input type="hidden" name="lesson_id" value="{{ selected_lesson.id }}">{% endif %}
 <div id="offline-banner" class="offline-banner">⚠️ Алоқа бо сомона канда шуд. Маълумот дар хотираи телефон ҳифз шуд ва ба таври автоматикӣ ҳангоми пайдо шудани интернет сабт мешавад.</div>
 <div id="sync-toast" class="sync-toast">✅ Маълумоти ҳифзшуда ба таври автоматикӣ бо сомона ҳамоҳанг ва сабт карда шуд!</div>
 <div class="tabs">
@@ -40,8 +48,29 @@
 <div id="daily" class="tab-content active">
   <div class="toolbar" style="margin-bottom:1rem;">
     <label for="daily-date">Сана:</label>
-    <input type="date" id="daily-date" name="date" value="{{ date|date:'Y-m-d' }}" onchange="window.location.href='?date='+this.value">
+    <button type="button" class="btn btn-secondary mini-btn" onclick="navDate(-1)" title="Рӯзи қаблӣ">◀</button>
+    <input type="date" id="daily-date" name="date" value="{{ date|date:'Y-m-d' }}" onchange="navToDate(this.value)">
+    <button type="button" class="btn btn-secondary mini-btn" onclick="navDate(1)" title="Рӯзи оянда">▶</button>
   </div>
+  {% if class_subject_id %}
+  <div class="lesson-bar" id="lesson-bar">
+    {% if lessons %}
+    <button type="button" class="lesson-chip {% if not selected_lesson %}active{% endif %}" onclick="selectLesson('')">Умумӣ</button>
+    {% for l in lessons %}
+    <button type="button" class="lesson-chip {% if selected_lesson and selected_lesson.id == l.id %}active{% endif %}" onclick="selectLesson('{{ l.id }}')"{% if l.topic %} title="{{ l.topic }}"{% endif %}>Дарси {{ l.lesson_number }}{% if l.mode == 'control' %} · Назорат{% endif %}</button>
+    {% endfor %}
+    {% endif %}
+    {% if not daily_quarter_locked %}
+    <button type="button" class="lesson-chip lesson-add" onclick="createLesson()">+ Дарси нав</button>
+    {% endif %}
+    {% if selected_lesson %}
+    {% if not selected_lesson_has_data and not daily_quarter_locked %}
+    <button type="button" class="lesson-chip lesson-del" onclick="deleteLesson()" title="Нест кардани дарси холӣ">🗑</button>
+    {% endif %}
+    {% if selected_lesson.topic %}<span class="lesson-topic">{{ selected_lesson.topic }}</span>{% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
   {% if not non_graded %}
   <div class="assessment-bar">
     <span>Навъ:</span>
@@ -57,6 +86,13 @@
   </div>
   <div id="assessment-form" class="assessment-form">
     <input type="hidden" id="af-id">
+    <label for="af-worktype">Навъи кор:</label>
+    <select id="af-worktype">
+      <option value="">— оддӣ —</option>
+      {% for code, label in work_type_choices %}
+      <option value="{{ code }}">{{ label }}</option>
+      {% endfor %}
+    </select>
     <label for="af-title">Ном:</label>
     <input type="text" id="af-title" maxlength="255">
     <label for="af-number">№:</label>
@@ -223,7 +259,11 @@ const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
 const assessmentSaveUrl = "{% url 'assessment_save' %}";
 const assessmentDeleteUrl = "{% url 'assessment_delete' %}";
+const lessonSaveUrl = "{% url 'lesson_save' %}";
+const lessonDeleteUrl = "{% url 'lesson_delete' %}";
 const classSubjectId = "{{ class_subject_id|default:'' }}";
+const selectedLessonId = "{{ selected_lesson.id|default:'' }}";
+const selectedLessonNumber = "{{ selected_lesson.lesson_number|default:'' }}";
 const dateIsControl = {{ date_is_control|yesno:"true,false" }};
 const schoolId = "{{ school.id }}";
 const className = "{{ class_name|escapejs }}";
@@ -235,7 +275,60 @@ try {
   assessmentGrades = JSON.parse(document.getElementById('assessment-grades-data').textContent || '{}');
 } catch(e) { assessments = []; assessmentGrades = {}; }
 function getStorageKey() {
-    return `maorif_grade_${schoolId}_${className}_${subjectName}_${document.getElementById('daily-date').value}`;
+    // Lesson-aware key: lesson 1 and lesson 2 drafts/pending queues are
+    // fully independent; the legacy key (no _l suffix) is untouched.
+    let k = `maorif_grade_${schoolId}_${className}_${subjectName}_${document.getElementById('daily-date').value}`;
+    if (selectedLessonId) k += `_l${selectedLessonId}`;
+    return k;
+}
+function navToDate(value) {
+    if (!value) return;
+    let url = '?date=' + value;
+    if (selectedLessonNumber) url += '&ln=' + selectedLessonNumber;
+    window.location.href = url;
+}
+function navDate(offset) {
+    const el = document.getElementById('daily-date');
+    const d = new Date(el.value + 'T00:00:00');
+    if (isNaN(d)) return;
+    d.setDate(d.getDate() + offset);
+    navToDate(d.toISOString().slice(0, 10));
+}
+function selectLesson(id) {
+    const d = document.getElementById('daily-date').value;
+    window.location.href = '?date=' + d + (id ? '&lesson=' + id : '');
+}
+function createLesson() {
+    if (!navigator.onLine) { showOfflineBanner(); return; }
+    const topic = prompt('Мавзӯъи дарс (ихтиёрӣ):', '') || '';
+    const params = new URLSearchParams({
+        class_subject_id: classSubjectId,
+        date: document.getElementById('daily-date').value,
+        topic: topic,
+    });
+    fetch(lessonSaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
+    .then(r => r.json())
+    .then(resp => {
+        if (resp.success && resp.lesson) {
+            selectLesson(String(resp.lesson.id));
+        } else {
+            alert(resp.message || 'Хатo');
+        }
+    })
+    .catch(() => showOfflineBanner());
+}
+function deleteLesson() {
+    if (!selectedLessonId) return;
+    if (!confirm('Дарси интихобшуда нест карда мешавад. Идома додан?')) return;
+    if (!navigator.onLine) { showOfflineBanner(); return; }
+    const params = new URLSearchParams({lesson_id: selectedLessonId});
+    fetch(lessonDeleteUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
+    .then(r => r.json())
+    .then(resp => {
+        if (resp.success) { selectLesson(''); }
+        else { alert(resp.message || 'Хатo'); }
+    })
+    .catch(() => showOfflineBanner());
 }
 let state = {draft: {}, pending: []};
 function loadState() { try { state = JSON.parse(localStorage.getItem(getStorageKey()) || '{"draft":{},"pending":[]}'); } catch(e) { state = {draft: {}, pending: []}; } }
@@ -373,28 +466,35 @@ let currentAssessmentId = null;
 let dailySnapshot = null;
 function scoreInputs() { return Array.from(document.querySelectorAll('.daily-input')); }
 function findAssessment(id) { return assessments.find(a => String(a.id) === String(id)) || null; }
+// The picker is lesson-scoped: with a lesson selected it lists only that
+// lesson's assessments; without one it lists the legacy lesson-less slot.
+function scopedAssessments() {
+  return assessments.filter(a => String(a.lesson_id || '') === selectedLessonId);
+}
 function renderAssessmentPicker() {
   const sel = document.getElementById('assessment-select');
   if (!sel) return;
+  const scoped = scopedAssessments();
   sel.innerHTML = '';
-  if (!assessments.length) {
+  if (!scoped.length) {
     const opt = document.createElement('option');
     opt.value = '';
     opt.textContent = '— Санҷиш нест —';
     sel.appendChild(opt);
     return;
   }
-  assessments.forEach(a => {
+  scoped.forEach(a => {
     const opt = document.createElement('option');
     opt.value = a.id;
     opt.textContent = a.label;
     sel.appendChild(opt);
   });
 }
-// Mode exclusivity: a date with a control assessment is Назорат-only.
+// Mode exclusivity: a control assessment locks only its own slot —
+// the selected lesson, or the legacy lesson-less date.
 function controlDateLocked() {
   const d = document.getElementById('daily-date').value;
-  return assessments.some(a => a.date === d);
+  return assessments.some(a => a.date === d && String(a.lesson_id || '') === selectedLessonId);
 }
 function updateModeHint() {
   const locked = controlDateLocked();
@@ -415,7 +515,11 @@ function enterControlMode() {
   dailySnapshot = {};
   scoreInputs().forEach(inp => { dailySnapshot[inp.dataset.studentId] = inp.value; });
   document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => { el.dataset.wasDisabled = el.disabled ? '1' : '0'; });
-  if (!currentAssessmentId && assessments.length) currentAssessmentId = assessments[0].id;
+  const scoped = scopedAssessments();
+  if ((!currentAssessmentId || !findAssessment(currentAssessmentId) ||
+       String(findAssessment(currentAssessmentId).lesson_id || '') !== selectedLessonId) && scoped.length) {
+    currentAssessmentId = scoped[0].id;
+  }
   renderAssessmentPicker();
   const sel = document.getElementById('assessment-select');
   sel.value = currentAssessmentId || '';
@@ -460,6 +564,7 @@ function toggleAssessmentForm(show, assessment) {
   if (!show) { form.style.display = 'none'; return; }
   assessment = assessment || null;
   document.getElementById('af-id').value = assessment ? assessment.id : '';
+  document.getElementById('af-worktype').value = assessment ? (assessment.work_type || '') : '';
   document.getElementById('af-title').value = assessment ? (assessment.title || '') : '';
   document.getElementById('af-number').value = assessment ? (assessment.number || '') : '';
   document.getElementById('af-ajm').checked = assessment ? !!assessment.is_ajm : false;
@@ -501,8 +606,9 @@ function deleteSelectedAssessment() {
           if (r) r.checked = true;
         }
       } else {
-        const onDate = assessments.find(x => x.date === document.getElementById('daily-date').value);
-        currentAssessmentId = onDate ? onDate.id : (assessments.length ? assessments[0].id : null);
+        const scoped = scopedAssessments();
+        const onDate = scoped.find(x => x.date === document.getElementById('daily-date').value);
+        currentAssessmentId = onDate ? onDate.id : (scoped.length ? scoped[0].id : null);
         document.getElementById('assessment-select').value = currentAssessmentId || '';
         loadAssessmentValues();
       }
@@ -522,6 +628,8 @@ function saveAssessment() {
     title: document.getElementById('af-title').value,
     number: document.getElementById('af-number').value,
     is_ajm: document.getElementById('af-ajm').checked ? '1' : '0',
+    work_type: document.getElementById('af-worktype').value,
+    lesson_id: selectedLessonId,
   });
   fetch(assessmentSaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
   .then(r => r.json())
@@ -548,13 +656,36 @@ function saveDaily(input) {
   const field = input.dataset.field || 'score';
   let value = input.value;
   const assessmentId = input.dataset.assessmentId;
+  let points = null;
   if (field === 'score') {
     if (assessmentId) {
       value = String(input.value).trim();
-      if (value !== '' && !/^\d+(\/\d+){0,2}$/.test(value)) {
+      const a = findAssessment(assessmentId);
+      const sem = a && a.semantics;
+      const wt = a && a.work_type;
+      let ok, hint;
+      if (sem === 'paired_grades') {
+        ok = /^\d+$|^\d+\/\d+$/.test(value);
+        hint = 'Формат: 9 ё 8/9 (мундариҷа/саводнокӣ)';
+      } else if (wt === 'test') {
+        ok = /^\d+$|^\d+(\.\d+)?\/\d+(\.\d+)?$/.test(value);
+        hint = 'Формат: 9 ё холҳои ҷамъшуда/имконпазир (18/20)';
+      } else if (sem === 'single') {
+        ok = /^\d+$/.test(value);
+        hint = 'Формат: 9 (як баҳо)';
+      } else {
+        ok = /^\d+(\/\d+){0,2}$/.test(value);
+        hint = 'Формат: 9 ё 8/9 ё 8/9/10';
+      }
+      if (value !== '' && !ok) {
         const status0 = document.getElementById('daily-status-' + input.dataset.rowId);
-        showStatus(status0, 'Формат: 9 ё 8/9 ё 8/9/10');
+        showStatus(status0, hint);
         return;
+      }
+      // For tests '18/20' means raw points, not paired grades.
+      if (wt === 'test' && /^\d+(\.\d+)?\/\d+(\.\d+)?$/.test(value)) {
+        const parts = value.split('/');
+        points = {achieved: parts[0], possible: parts[1]};
       }
     } else {
       value = toCleanInt(input.value);
@@ -563,11 +694,17 @@ function saveDaily(input) {
   } else if (field === 'behavior_score') {
     if (value && !Number.isInteger(Number(value))) return;
   }
-  if (value === input.dataset.origValue) return;
+  if (value === input.dataset.origValue && !points) return;
   const status = document.getElementById('daily-status-' + input.dataset.rowId);
   const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: document.getElementById('daily-date').value, type: 'daily'};
   if (assessmentId) params.assessment_id = assessmentId;
-  params[field] = value;
+  if (selectedLessonId) params.lesson_id = selectedLessonId;
+  if (points) {
+    params.points_achieved = points.achieved;
+    params.points_possible = points.possible;
+  } else {
+    params[field] = value;
+  }
   pushPending({name: input.name, value: value, rowId: input.dataset.rowId, params: params});
   backupDrafts();
   if (!navigator.onLine) { showOfflineBanner(); return; }
@@ -718,7 +855,7 @@ window.addEventListener('online', syncPending);
 // A date that already has a control assessment reopens in Назорат mode;
 // the Ҷорӣ radio is locked out with an explanatory hint.
 if (dateIsControl) {
-  const onDate = assessments.find(a => a.date === document.getElementById('daily-date').value);
+  const onDate = scopedAssessments().find(a => a.date === document.getElementById('daily-date').value);
   if (onDate) currentAssessmentId = onDate.id;
   setGradeKind('control');
   const rc = document.querySelector('input[name="grade_kind"][value="control"]');

@@ -234,8 +234,8 @@ class LessonAdmin(admin.ModelAdmin):
 
 @admin.register(Assessment)
 class AssessmentAdmin(admin.ModelAdmin):
-    list_display = ['class_subject', 'date', 'quarter', 'category', 'number', 'title', 'is_ajm', 'lesson']
-    list_filter = ['quarter', 'category', 'is_ajm', 'class_subject__school']
+    list_display = ['class_subject', 'date', 'quarter', 'category', 'number', 'title', 'is_ajm', 'lesson', 'purpose', 'work_type', 'summative_scope']
+    list_filter = ['quarter', 'category', 'is_ajm', 'work_type', 'class_subject__school']
     search_fields = ['title', 'class_subject__subject', 'class_subject__class_name']
     date_hierarchy = 'date'
 

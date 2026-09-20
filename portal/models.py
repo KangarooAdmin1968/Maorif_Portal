@@ -262,6 +262,20 @@ class Assessment(models.Model):
         ('current', 'Ҷорӣ'),
         ('control', 'Назорат'),
     ]
+    PURPOSE_CHOICES = [
+        ('diagnostic', 'Арзёбии ташхисӣ'),
+        ('formative', 'Арзёбии ташаккулдиҳанда'),
+        ('summative', 'Арзёбии ҷамъбастӣ'),
+    ]
+    SCOPE_CHOICES = [
+        ('none', '—'),
+        ('intermediate', 'Миёна'),
+        ('final', 'Ниҳоӣ'),
+        ('quarter', 'Чоряк'),
+        ('semester', 'Нимсола'),
+        ('annual', 'Солона'),
+        ('attestation', 'Аттестатсия'),
+    ]
 
     class_subject = models.ForeignKey(ClassSubject, on_delete=models.CASCADE)
     lesson = models.ForeignKey(Lesson, on_delete=models.SET_NULL, null=True, blank=True)
@@ -271,6 +285,11 @@ class Assessment(models.Model):
     number = models.PositiveSmallIntegerField('Рақам', null=True, blank=True)
     title = models.CharField('Ном', max_length=255, blank=True)
     is_ajm = models.BooleanField('АҶМ', default=False)
+    # Methodology layer (neutral codes; legacy rows stay blank -> explicit
+    # compatibility mapping in assessment_catalog.result_semantics_for()).
+    purpose = models.CharField('Мақсад', max_length=20, choices=PURPOSE_CHOICES, blank=True, default='')
+    work_type = models.CharField('Навъи кор', max_length=30, blank=True, default='')
+    summative_scope = models.CharField('Доираи ҷамъбастӣ', max_length=20, choices=SCOPE_CHOICES, default='none', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -294,6 +313,11 @@ class Grade(models.Model):
     lesson = models.ForeignKey(Lesson, on_delete=models.SET_NULL, null=True, blank=True)
     assessment = models.ForeignKey(Assessment, on_delete=models.SET_NULL, null=True, blank=True)
     components = models.JSONField('Ҷузъҳо', null=True, blank=True)
+    # Raw test points (converted_points semantics): enough data is stored to
+    # re-derive percentage and the 10-point score if the conversion table
+    # changes. Both are NULL for non-test rows.
+    points_achieved = models.FloatField('Холҳои гирифташуда', blank=True, null=True)
+    points_possible = models.FloatField('Холҳои имконпазир', blank=True, null=True)
 
     class Meta:
         verbose_name = 'Хол'

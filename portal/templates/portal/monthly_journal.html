@@ -1,0 +1,113 @@
+{% extends 'portal/base.html' %}
+{% load portal_extras %}
+{% block title %}Ҷурнали моҳона — {{ class_name }} — {{ subject }}{% endblock %}
+{% block content %}
+<h1>Ҷурнали моҳона — {{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}</h1>
+
+<a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
+<a href="{% url 'grade_entry' school.id class_name subject %}" class="btn btn-secondary" style="margin-bottom:1rem;">📝 Ҷурнали ҳаррӯза</a>
+
+<style>
+.month-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 1rem 0; }
+.month-toolbar input[type="month"] { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 0.25rem; }
+.legend { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.85rem; color: #374151; margin-bottom: 0.75rem; }
+.legend span::before { content: ''; display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 0.2rem; margin-right: 0.3rem; vertical-align: -0.1rem; }
+.legend .lg-complete::before { background: #dcfce7; border: 1px solid #22c55e; }
+.legend .lg-partial::before { background: #fef9c3; border: 1px solid #eab308; }
+.legend .lg-empty::before { background: #f3f4f6; border: 1px solid #d1d5db; }
+.legend .lg-control::before { background: #fee2e2; border: 1px solid #ef4444; }
+.month-wrap { overflow-x: auto; }
+.month-table { border-collapse: collapse; font-size: 0.85rem; }
+.month-table th, .month-table td { border: 1px solid #e5e7eb; padding: 0.25rem 0.4rem; text-align: center; min-width: 2.2rem; }
+.month-table th.date-head { background: #003366; color: #fff; font-weight: 600; white-space: nowrap; }
+.month-table th.date-head.status-complete { background: #166534; }
+.month-table th.date-head.status-partial { background: #a16207; }
+.month-table th.date-head.status-empty { background: #4b5563; }
+.month-table th.sub-head { background: #f3f4f6; font-size: 0.75rem; color: #374151; white-space: nowrap; }
+.month-table th.sub-head.ctl { background: #fee2e2; color: #991b1b; }
+.month-table td.cell-control { background: #fef2f2; color: #991b1b; font-weight: 600; }
+.month-table td.cell-absent { color: #b91c1c; }
+.month-table td.cell-empty { background: #fafafa; }
+.month-table th.stu-head, .month-table td.stu-cell { text-align: left; white-space: nowrap; position: sticky; left: 0; background: #fff; z-index: 1; }
+.month-table th.stu-head { background: #003366; color: #fff; }
+.day-list { display: none; }
+.day-card { border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 0.6rem 0.75rem; margin-bottom: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.day-card .d-date { font-weight: 600; min-width: 4rem; }
+.day-card .d-status { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; }
+.day-card .d-status.status-complete { background: #dcfce7; color: #166534; }
+.day-card .d-status.status-partial { background: #fef9c3; color: #a16207; }
+.day-card .d-status.status-empty { background: #f3f4f6; color: #6b7280; }
+.day-card .d-flag { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; background: #fee2e2; color: #991b1b; }
+.day-card .d-lessons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.day-card .d-lesson { font-size: 0.8rem; padding: 0.2rem 0.6rem; border: 1px solid #d1d5db; border-radius: 999px; text-decoration: none; color: #003366; }
+@media (max-width: 768px) {
+  .month-wrap { display: none; }
+  .day-list { display: block; }
+}
+</style>
+
+<div class="month-toolbar">
+  <label for="month-input">Моҳ:</label>
+  <a class="btn btn-secondary" href="?month={{ prev_month|date:'Y-m' }}" title="Моҳи қаблӣ">◀</a>
+  <input type="month" id="month-input" value="{{ month_start|date:'Y-m' }}" onchange="location.href='?month='+this.value">
+  <a class="btn btn-secondary" href="?month={{ next_month|date:'Y-m' }}" title="Моҳи оянда">▶</a>
+  <a class="btn btn-secondary" href="{% url 'export_journal_excel' school.id class_name subject %}?month={{ month_start|date:'Y-m' }}">📊 Excel</a>
+</div>
+
+<div class="legend">
+  <span class="lg-complete">Пурра</span>
+  <span class="lg-partial">Нимра</span>
+  <span class="lg-empty">Холӣ</span>
+  <span class="lg-control">Назорат</span>
+</div>
+
+<div class="month-wrap">
+<table class="month-table">
+  <thead>
+    <tr>
+      <th class="stu-head" rowspan="2">Ному насаб</th>
+      {% for g in header_groups %}
+      <th class="date-head status-{{ g.status }}" colspan="{{ g.span }}">{{ g.date|date:'d' }}</th>
+      {% endfor %}
+    </tr>
+    <tr>
+      {% for col in columns %}
+      <th class="sub-head{% if col.control %} ctl{% endif %}">{% if col.lesson_number %}Д{{ col.lesson_number }}{% else %}—{% endif %}{% if col.control %} Н{% endif %}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in table_rows %}
+    <tr>
+      <td class="stu-cell">{{ forloop.counter }}. {{ row.student.full_name }}</td>
+      {% for cell_list in row.cells %}
+      <td>{% for c in cell_list %}<span class="{% if c.control %}cell-control{% elif c.absent %}cell-absent{% endif %}"{% if c.control %} style="background:#fee2e2;border-radius:0.2rem;padding:0 0.2rem;"{% endif %}>{{ c.text }}</span>{% if not forloop.last %} {% endif %}{% empty %}<span class="cell-empty"></span>{% endfor %}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<div class="day-list">
+  {% for d in day_rows %}
+  <div class="day-card">
+    <span class="d-date">{{ d.date|date:'d.m' }}</span>
+    <span class="d-status status-{{ d.status }}">{% if d.status == 'complete' %}Пурра{% elif d.status == 'partial' %}Нимра{% else %}Холӣ{% endif %}</span>
+    {% if d.has_control %}<span class="d-flag">Назорат</span>{% endif %}
+    <span class="d-lessons">
+      {% if d.lessons %}
+        {% for l in d.lessons %}
+        <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}&lesson={{ l.id }}">Дарси {{ l.lesson_number }}</a>
+        {% endfor %}
+        {% if d.has_legacy_data %}
+        <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Умумӣ</a>
+        {% endif %}
+      {% else %}
+        <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Кушодан</a>
+      {% endif %}
+    </span>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

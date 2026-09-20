@@ -368,7 +368,9 @@ class AssessmentGradeSaveTests(GoldenBase):
         )
         self.assertFalse(resp.json()['success'])
 
-    def test_lesson_without_assessment_rejected(self):
+    def test_lesson_without_assessment_accepted_phase4(self):
+        # PHASE 4 CONTRACT CHANGE: lesson_id without assessment_id is now a
+        # valid lesson-scoped Ҷорӣ save (previously rejected outright).
         lesson = Lesson.objects.create(
             class_subject=self.cs_a, date=D_Q1, lesson_number=1,
         )
@@ -376,7 +378,10 @@ class AssessmentGradeSaveTests(GoldenBase):
             self.client, self.s1, score='9',
             extra={'lesson_id': lesson.id},
         )
-        self.assertFalse(resp.json()['success'])
+        self.assertTrue(resp.json()['success'])
+        g = Grade.objects.get(student=self.s1, lesson=lesson)
+        self.assertEqual(g.score, 9)
+        self.assertIsNone(g.assessment_id)
 
     def test_valid_lesson_accepted(self):
         lesson = Lesson.objects.create(

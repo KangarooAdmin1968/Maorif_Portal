@@ -376,6 +376,8 @@ def parse_import_excel(school, class_name, file_obj):
                         student=student,
                         subject=subj,
                         period='Холҳои ҷорӣ (Онлайн)',
+                        assessment=None,
+                        lesson=None,
                         defaults={'score': score}
                     )
                     imported += 1

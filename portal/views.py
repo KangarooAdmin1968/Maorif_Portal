@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Avg, Count, Sum, Q, Max
+import calendar
 import io
 import json
 import re
@@ -14,6 +15,7 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Side
 from django.http import HttpResponse, JsonResponse
+from django.urls import reverse
 from django.utils import timezone
 from django.conf import settings
 from django.contrib import messages
@@ -28,6 +30,13 @@ from .utils import (
     official_subjects_for
 )
 from .curriculum_hours import MIN_GRADES_BANDS, UNGRADED_SUBJECTS, weekly_hours, quarter_min_norm
+from .assessment_catalog import (
+    ASSESSMENT_PURPOSES, SUMMATIVE_SCOPES,
+    SEMANTIC_SINGLE, SEMANTIC_PAIRED, SEMANTIC_CONVERTED,
+    get_work_type, work_type_choices, work_type_label,
+    result_semantics_for, assessment_purpose, assessment_scope,
+    test_percentage, convert_test_points,
+)
 
 
 QUALITATIVE_CHOICES = [
@@ -119,6 +128,11 @@ def grade_component_result(grade):
     if isinstance(comps, (list, tuple)) and comps:
         values = []
         for c in comps:
+            # Structured components store {'aspect': ..., 'value': n};
+            # legacy rows store plain numbers. Both mean the same for the
+            # contribution aggregation.
+            if isinstance(c, dict):
+                c = c.get('value')
             if isinstance(c, bool) or not isinstance(c, (int, float)):
                 values = []
                 break
@@ -221,18 +235,27 @@ def _live_quarter_payload(student, subject, class_name):
     return qmap, live_flags
 
 
-def parse_result_input(raw):
-    """Parse an assessment-linked result input: '9', '8/9' or '8/9/10'.
+def parse_result_input(raw, work_type=None):
+    """Parse an assessment-linked result input under the work type's
+    component semantics.
 
     Returns (score, components):
     - empty input      -> (None, None) meaning "clear the value"
-    - single score     -> (numeric score, None) using the same rules as the
-      existing daily parser (float->int truncation, range 1-10)
-    - slash components -> (precise float mean, [ints]) for 2-3 integer
-      components each in 1-10
+    - single score     -> (numeric score, None)
+    - slash components -> semantics-dependent:
+        'single'          -> rejected (dictation takes ONE journal grade)
+        'paired_grades'   -> exactly 2 parts -> (mean scalar, structured
+                           [{'aspect','value'}] list). The pair is two
+                           journal grades — Grade.score keeps the mean only
+                           as the period-contribution aggregation; the
+                           journal display shows the pair itself.
+        'mean' / legacy   -> 2-3 parts -> (precise float mean, [ints])
+        'converted_points'-> score field accepts only a direct 1-10 result;
+                           raw points travel via points_achieved/
+                           points_possible params, not this field.
 
     Raises ValueError for malformed input. Grade.score must never be a
-    string, so a slash list is always converted to its numeric mean here.
+    string, so multi-value input always resolves to a numeric scalar here.
     """
     if raw is None:
         return None, None
@@ -248,8 +271,17 @@ def parse_result_input(raw):
         if not (1 <= score <= 10):
             raise ValueError('Хол бояд аз 1 то 10 бошад.')
         return score, None
+    cfg = get_work_type(work_type) if work_type else None
+    semantics = cfg['semantics'] if cfg else 'mean'
+    max_parts = (cfg or {}).get('max_components') or 3
+
+    if cfg is not None and not cfg.get('slash_allowed'):
+        raise ValueError('Ин навъи кор танҳо як баҳо мегирад.')
     parts = [p.strip() for p in text.split('/')]
-    if not (2 <= len(parts) <= 3):
+    if semantics == SEMANTIC_PAIRED:
+        if len(parts) != 2:
+            raise ValueError('Ин навъи кор ду баҳо мегирад (масалан 8/9).')
+    elif not (2 <= len(parts) <= max_parts):
         raise ValueError('Ҷузъҳо бояд 2 ё 3 адад бошанд (масалан 8/9).')
     values = []
     for part in parts:
@@ -259,7 +291,37 @@ def parse_result_input(raw):
         if not (1 <= v <= 10):
             raise ValueError('Ҷузъҳо бояд аз 1 то 10 бошанд.')
         values.append(v)
-    return sum(values) / len(values), values
+    if semantics == SEMANTIC_PAIRED:
+        aspects = cfg.get('aspects') or ()
+        components = [
+            {'aspect': aspects[i] if i < len(aspects) else f'part{i + 1}', 'value': v}
+            for i, v in enumerate(values)
+        ]
+    else:
+        components = values
+    return sum(values) / len(values), components
+
+
+def result_display(grade, semantics_cfg=None):
+    """Journal display string for a Grade row under its work-type semantics.
+
+    paired_grades -> '8/9' (the two journal grades, never the mean);
+    everything else -> the combined score ('8.5' for legacy mean rows).
+    """
+    if grade is None or (grade.score is None and not grade.components):
+        return ''
+    cfg = semantics_cfg or result_semantics_for(getattr(grade, 'assessment', None))
+    if cfg.get('semantics') == SEMANTIC_PAIRED and grade.components:
+        parts = []
+        for c in grade.components:
+            v = c.get('value') if isinstance(c, dict) else c
+            if isinstance(v, (int, float)) and float(v).is_integer():
+                v = int(v)
+            parts.append(str(v))
+        return '/'.join(parts)
+    if grade.score is None:
+        return ''
+    return str(int(grade.score)) if float(grade.score).is_integer() else str(grade.score)
 
 
 def _resolve_assessment_for_grade(student, subject, assessment_id, lesson_id=None):
@@ -295,6 +357,10 @@ def _resolve_assessment_for_grade(student, subject, assessment_id, lesson_id=Non
             raise ValueError('Дарс ба ин санҷиш тааллуқ надорад.')
     if lesson is None:
         lesson = assessment.lesson
+    if lesson is not None and lesson.date != assessment.date:
+        # A Grade row's date comes from the Assessment; it must never
+        # disagree with the date of the Lesson it is filed under.
+        raise ValueError('Дарс ба ин сана тааллуқ надорад.')
     return assessment, lesson
 
 
@@ -1491,27 +1557,59 @@ def grade_entry(request, school_id, class_name, subject):
         except ValueError:
             date = datetime.date.today()
 
+        # Batch POST may carry a lesson context — same scope validation as
+        # the AJAX path: the Lesson must belong to this school/class/subject
+        # and live on the posted date.
+        post_lesson_id = request.POST.get('lesson_id', '').strip()
+        post_lesson = None
+        if post_lesson_id:
+            try:
+                post_lesson = Lesson.objects.select_related('class_subject').get(pk=post_lesson_id)
+            except (Lesson.DoesNotExist, ValueError, TypeError):
+                return HttpResponse('Дарс ёфт нашуд.', status=400)
+            pcs = post_lesson.class_subject
+            if (
+                pcs.school_id != school.id
+                or normalize_class_name(pcs.class_name) != class_name
+                or normalize_subject(pcs.subject) != subject
+                or not pcs.is_active
+                or post_lesson.date != date
+            ):
+                return HttpResponse('Дарс ба ин синф, фан ё сана тааллуқ надорад.', status=400)
+
         daily_q = get_date_quarter(date)
         daily_locked = is_quarter_locked(school, class_name, subject, daily_q)
         # Mode exclusivity: a control assessment on this date makes it
         # Назорат-only — batch daily writes are skipped like a locked day.
-        daily_is_control = Assessment.objects.filter(
+        # Scoped per lesson: an assessment attached to a specific Lesson
+        # locks only that lesson's slot; the lesson-less slot keeps the
+        # legacy date-wide check (lesson__isnull=True).
+        control_q = Assessment.objects.filter(
             class_subject__school=school,
             class_subject__class_name=class_name,
             class_subject__subject=subject,
             class_subject__is_active=True,
             category='control',
             date=date,
-        ).exists()
+        )
+        if post_lesson is not None:
+            daily_is_control = control_q.filter(lesson=post_lesson).exists()
+        else:
+            daily_is_control = control_q.filter(lesson__isnull=True).exists()
 
         for student in students:
             # daily grade fallback (skip if quarter is locked)
             if not daily_locked and not daily_is_control:
+                # Explicit lesson=None/assessment=None: the legacy daily
+                # write must never match a lesson-linked or assessment-linked
+                # row for the same student/subject/date.
                 grade, _ = get_or_create_grade(
                     student=student,
                     subject=subject,
                     period='Холҳои ҷорӣ (Онлайн)',
                     date=date,
+                    assessment=None,
+                    lesson=post_lesson,
                     defaults={'score': None, 'attendance': None, 'behavior_score': None}
                 )
 
@@ -1590,13 +1688,48 @@ def grade_entry(request, school_id, class_name, subject):
                         QuarterGrade.objects.filter(
                             student=student, class_name=class_name, subject=subject, quarter=q
                         ).delete()
-        return redirect('grade_entry', school_id=school.id, class_name=class_name, subject=subject)
+        back = f"?date={date.isoformat()}"
+        if post_lesson is not None:
+            back += f"&lesson={post_lesson.id}"
+        return redirect(
+            reverse('grade_entry', kwargs={
+                'school_id': school.id, 'class_name': class_name, 'subject': subject
+            }) + back
+        )
 
     date_str = request.GET.get('date', '')
     try:
         selected_date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
     except ValueError:
         selected_date = datetime.date.today()
+
+    # Lessons for this ClassSubject on the selected date. 'lesson' carries a
+    # lesson id; 'ln' carries a lesson number (date navigation keeps the
+    # same position across days when it exists).
+    class_subject = ClassSubject.objects.filter(
+        school=school, class_name=class_name, subject=subject, is_active=True
+    ).order_by('pk').first()
+    day_lessons = []
+    selected_lesson = None
+    if class_subject is not None:
+        day_lessons = list(
+            Lesson.objects.filter(class_subject=class_subject, date=selected_date)
+            .order_by('lesson_number')
+        )
+        lesson_param = request.GET.get('lesson', '').strip()
+        ln_param = request.GET.get('ln', '').strip()
+        if lesson_param:
+            selected_lesson = next(
+                (l for l in day_lessons if str(l.id) == lesson_param), None
+            )
+        elif ln_param:
+            try:
+                ln = int(ln_param)
+                selected_lesson = next(
+                    (l for l in day_lessons if l.lesson_number == ln), None
+                )
+            except ValueError:
+                selected_lesson = None
 
     daily_grades = {}
     daily_attendance = {}
@@ -1610,7 +1743,7 @@ def grade_entry(request, school_id, class_name, subject):
         # Assessment-linked rows belong to Назорат mode only — they must
         # never leak into the Ҷорӣ daily cells for the same date.
         assessment__isnull=True,
-        lesson__isnull=True,
+        lesson=selected_lesson,
     ):
         if g.score is not None:
             daily_grades[g.student_id] = int(g.score) if g.score.is_integer() else g.score
@@ -1712,9 +1845,6 @@ def grade_entry(request, school_id, class_name, subject):
     daily_quarter_locked = is_quarter_locked(school, class_name, subject, get_date_quarter(selected_date))
 
     # Control (Назорат) assessments for this ClassSubject, for the picker.
-    class_subject = ClassSubject.objects.filter(
-        school=school, class_name=class_name, subject=subject, is_active=True
-    ).order_by('pk').first()
     control_assessments = []
     date_is_control = False
     if class_subject is not None:
@@ -1728,26 +1858,60 @@ def grade_entry(request, school_id, class_name, subject):
                 'title': a.title,
                 'is_ajm': a.is_ajm,
                 'date': a.date.isoformat(),
+                'lesson_id': a.lesson_id,
+                'purpose': a.purpose,
+                'work_type': a.work_type,
+                'work_type_label': work_type_label(a.work_type),
+                'summative_scope': a.summative_scope,
+                'semantics': result_semantics_for(a).get('semantics'),
                 'locked': is_quarter_locked(school, class_name, subject, a.quarter),
             })
-            if a.date == selected_date:
+            # Mode lock is slot-scoped: with a lesson selected only that
+            # lesson's assessments lock it; otherwise only the legacy
+            # lesson-less slot counts — a lesson-scoped assessment never
+            # flips the whole date.
+            if a.date == selected_date and a.lesson_id == (
+                selected_lesson.id if selected_lesson else None
+            ):
                 date_is_control = True
 
+    # Lesson picker payload: each lesson carries its mode so the UI can mark
+    # Ҷорӣ/Назорат per lesson without a second query.
+    lessons_payload = []
+    for l in day_lessons:
+        has_control = any(
+            a['lesson_id'] == l.id and a['date'] == selected_date.isoformat()
+            for a in control_assessments
+        )
+        has_data = (
+            has_control
+            or Grade.objects.filter(lesson=l).exists()
+            or Assessment.objects.filter(lesson=l).exists()
+        )
+        lessons_payload.append({
+            'id': l.id,
+            'lesson_number': l.lesson_number,
+            'topic': l.topic,
+            'mode': 'control' if has_control else 'current',
+            'has_data': has_data,
+        })
+
     # Saved per-student results for each assessment: {assessment_id: {student_id: display}}
-    # Cells show the authoritative combined score (8.5), not the raw '8/9'
-    # input — components stay stored on the row for calculation/metadata.
+    # Display follows the work type's semantics: paired-grade works show the
+    # journal pair ('8/9'), legacy/untyped rows show the combined score.
     assessment_grade_map = {}
     if control_assessments:
+        sem_by_id = {}
+        for a in Assessment.objects.filter(id__in=[a['id'] for a in control_assessments]):
+            sem_by_id[a.id] = result_semantics_for(a)
         for g in Grade.objects.filter(
             student__in=students,
             subject=subject,
             assessment_id__in=[a['id'] for a in control_assessments],
-        ):
-            if g.score is not None:
-                display_value = str(int(g.score)) if float(g.score).is_integer() else str(g.score)
-            else:
-                display_value = ''
-            assessment_grade_map.setdefault(g.assessment_id, {})[g.student_id] = display_value
+        ).select_related('assessment'):
+            assessment_grade_map.setdefault(g.assessment_id, {})[g.student_id] = result_display(
+                g, sem_by_id.get(g.assessment_id)
+            )
 
     return render(request, 'portal/grade_entry.html', {
         'school': school,
@@ -1768,10 +1932,293 @@ def grade_entry(request, school_id, class_name, subject):
         'locked_quarters': locked_quarters,
         'daily_quarter_locked': daily_quarter_locked,
         'class_subject_id': class_subject.id if class_subject else None,
+        'lessons': lessons_payload,
+        'selected_lesson': selected_lesson,
+        'selected_lesson_has_data': next(
+            (l['has_data'] for l in lessons_payload
+             if selected_lesson and l['id'] == selected_lesson.id), False
+        ),
         'control_assessments': control_assessments,
         'assessment_grade_map': assessment_grade_map,
         'date_is_control': date_is_control,
+        'work_type_choices': work_type_choices(),
     })
+
+
+@login_required
+def monthly_journal(request, school_id, class_name, subject):
+    """Month-overview journal: students × (date, lesson-slot) grid.
+
+    Read-only review companion to the daily journal. Every Lesson of the
+    same subject/day gets its own column so same-day lessons are never
+    collapsed; the legacy lesson-less slot appears only when it holds data.
+    """
+    school = get_object_or_404(School, id=school_id)
+    class_name = normalize_class_name(class_name)
+    subject = normalize_subject(subject)
+    user_school = get_user_school(request.user)
+    role = get_user_role(request.user)
+    is_zavuch = _is_zavuch(request.user, role)
+    if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER:
+        if school != user_school:
+            messages.warning(request, 'Ин муассиса ба шумо тааллуқ надорад!')
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+        if not can_view_grade_journal(request.user, school, class_name, subject):
+            messages.warning(request, 'Ин синф ё фан ба шумо вобаста карда нашудааст!')
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+    elif not has_school_access(request.user, school):
+        return redirect('dashboard')
+    elif not can_view_grade_journal(request.user, school, class_name, subject):
+        return HttpResponse('Дастрасӣ манъ аст.', status=403)
+
+    # Month resolution: ?month=YYYY-MM, default = current month.
+    month_str = request.GET.get('month', '').strip()
+    month_start = None
+    if month_str:
+        try:
+            year, mon = (int(p) for p in month_str.split('-', 1))
+            month_start = datetime.date(year, mon, 1)
+        except (ValueError, TypeError):
+            month_start = None
+    if month_start is None:
+        month_start = timezone.localdate().replace(day=1)
+    last_day = calendar.monthrange(month_start.year, month_start.month)[1]
+    month_end = month_start.replace(day=last_day)
+    prev_month = (month_start - datetime.timedelta(days=1)).replace(day=1)
+    next_month = (month_end + datetime.timedelta(days=1)).replace(day=1)
+
+    students = list(Student.objects.filter(
+        school=school, class_name=class_name
+    ).order_by('full_name'))
+
+    class_subject = ClassSubject.objects.filter(
+        school=school, class_name=class_name, subject=subject, is_active=True
+    ).order_by('pk').first()
+
+    lessons_by_date = defaultdict(list)
+    if class_subject is not None:
+        for l in Lesson.objects.filter(
+            class_subject=class_subject,
+            date__range=(month_start, month_end),
+        ).order_by('date', 'lesson_number'):
+            lessons_by_date[l.date].append(l)
+
+    # Control assessments in the month, keyed by (date, lesson_id) so each
+    # column can show its own Назорат marker.
+    control_slots = set()
+    if class_subject is not None:
+        for a in Assessment.objects.filter(
+            class_subject=class_subject,
+            category='control',
+            date__range=(month_start, month_end),
+        ):
+            control_slots.add((a.date, a.lesson_id))
+
+    # Grade cells: (date, lesson_id) -> student_id -> [cell, ...]
+    cells = defaultdict(dict)
+    if students:
+        sem_cache = {}
+        month_grades = Grade.objects.filter(
+            student__in=students,
+            subject=subject,
+            period='Холҳои ҷорӣ (Онлайн)',
+            date__range=(month_start, month_end),
+        ).select_related('assessment')
+        for g in month_grades:
+            if g.assessment_id and g.assessment_id not in sem_cache:
+                sem_cache[g.assessment_id] = result_semantics_for(g.assessment)
+            text = result_display(g, sem_cache.get(g.assessment_id))
+            cell = {
+                'text': text,
+                'control': bool(g.assessment_id),
+                'absent': g.attendance == '-',
+            }
+            if not text and g.attendance == '-':
+                cell['text'] = 'н'
+            if cell['text'] or cell['absent']:
+                cells[(g.date, g.lesson_id)].setdefault(g.student_id, []).append(cell)
+
+    # Flat column list: for each day, one column per Lesson; the lesson-less
+    # legacy slot only appears when it actually holds data for that date.
+    columns = []
+    header_groups = []
+    day_rows = []
+    total_students = len(students)
+    for i in range(last_day):
+        d = month_start + datetime.timedelta(days=i)
+        day_lessons = lessons_by_date.get(d, [])
+        day_columns = []
+        if day_lessons:
+            if cells.get((d, None)):
+                day_columns.append({
+                    'date': d, 'lesson_id': None, 'lesson_number': None,
+                    'control': (d, None) in control_slots,
+                })
+            for l in day_lessons:
+                day_columns.append({
+                    'date': d, 'lesson_id': l.id,
+                    'lesson_number': l.lesson_number,
+                    'control': (d, l.id) in control_slots,
+                })
+        else:
+            day_columns.append({
+                'date': d, 'lesson_id': None, 'lesson_number': None,
+                'control': (d, None) in control_slots,
+            })
+        columns.extend(day_columns)
+
+        has_control = any(col['control'] for col in day_columns)
+        filled_students = set()
+        for col in day_columns:
+            for sid, cell_list in cells.get((d, col['lesson_id']), {}).items():
+                if cell_list:
+                    filled_students.add(sid)
+                    if any(c['control'] for c in cell_list):
+                        has_control = True
+        if not filled_students:
+            status = 'empty'
+        elif len(filled_students) < total_students:
+            status = 'partial'
+        else:
+            status = 'complete'
+        header_groups.append({'date': d, 'span': len(day_columns), 'status': status})
+        day_rows.append({
+            'date': d,
+            'status': status,
+            'has_control': has_control,
+            'multi_lesson': len(day_lessons) > 1,
+            'lessons': day_lessons,
+            'has_legacy_data': bool(cells.get((d, None))),
+        })
+
+    table_rows = []
+    for s in students:
+        row_cells = [
+            cells.get((col['date'], col['lesson_id']), {}).get(s.id, [])
+            for col in columns
+        ]
+        table_rows.append({'student': s, 'cells': row_cells})
+
+    return render(request, 'portal/monthly_journal.html', {
+        'school': school,
+        'class_name': class_name,
+        'subject': subject,
+        'students': students,
+        'columns': columns,
+        'header_groups': header_groups,
+        'table_rows': table_rows,
+        'day_rows': day_rows,
+        'month_start': month_start,
+        'prev_month': prev_month,
+        'next_month': next_month,
+        'month_label': month_start.strftime('%m.%Y'),
+    })
+
+
+@login_required
+def export_journal_excel(request, school_id, class_name, subject):
+    """Lesson-aware flat export of the journal for one month.
+
+    Reads the same authoritative Grade/Assessment/Lesson rows the monthly
+    journal renders — one row per grade record, with the lesson number
+    preserved explicitly so same-day lessons are never merged. Legacy
+    lesson-less rows export with an empty lesson column.
+    """
+    school = get_object_or_404(School, id=school_id)
+    class_name = normalize_class_name(class_name)
+    subject = normalize_subject(subject)
+    user_school = get_user_school(request.user)
+    role = get_user_role(request.user)
+    is_zavuch = _is_zavuch(request.user, role)
+    if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER:
+        if school != user_school:
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+        if not can_view_grade_journal(request.user, school, class_name, subject):
+            return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
+    elif not has_school_access(request.user, school):
+        return redirect('dashboard')
+    elif not can_view_grade_journal(request.user, school, class_name, subject):
+        return HttpResponse('Дастрасӣ манъ аст.', status=403)
+
+    month_str = request.GET.get('month', '').strip()
+    month_start = None
+    if month_str:
+        try:
+            year, mon = (int(p) for p in month_str.split('-', 1))
+            month_start = datetime.date(year, mon, 1)
+        except (ValueError, TypeError):
+            month_start = None
+    if month_start is None:
+        month_start = timezone.localdate().replace(day=1)
+    month_end = month_start.replace(
+        day=calendar.monthrange(month_start.year, month_start.month)[1]
+    )
+
+    students = Student.objects.filter(school=school, class_name=class_name)
+    grades = Grade.objects.filter(
+        student__in=students,
+        subject=subject,
+        period='Холҳои ҷорӣ (Онлайн)',
+        date__range=(month_start, month_end),
+    ).select_related('student', 'assessment', 'lesson').order_by(
+        'student__full_name', 'date', 'lesson__lesson_number', 'id'
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f'{class_name} {month_start.strftime("%m.%Y")}'
+
+    headers = [
+        '№', 'Хонанда', 'Сана', 'Дарс', 'Навъ', 'Санҷиш',
+        'Хол', 'Давомат',
+    ]
+    header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    sem_cache = {}
+    for idx, g in enumerate(grades, start=2):
+        if g.assessment_id and g.assessment_id not in sem_cache:
+            sem_cache[g.assessment_id] = result_semantics_for(g.assessment)
+        ws.cell(row=idx, column=1, value=idx - 1)
+        ws.cell(row=idx, column=2, value=g.student.full_name)
+        ws.cell(row=idx, column=3, value=g.date.strftime('%d.%m.%Y'))
+        ws.cell(
+            row=idx, column=4,
+            value=g.lesson.lesson_number if g.lesson_id else ''
+        )
+        ws.cell(row=idx, column=5, value='Назорат' if g.assessment_id else 'Ҷорӣ')
+        label = ''
+        if g.assessment_id:
+            label = _assessment_label(g.assessment)
+            if g.assessment.work_type:
+                label += f' [{work_type_label(g.assessment.work_type)}]'
+        ws.cell(row=idx, column=6, value=label)
+        ws.cell(
+            row=idx, column=7,
+            value=result_display(g, sem_cache.get(g.assessment_id))
+        )
+        ws.cell(row=idx, column=8, value='н' if g.attendance == '-' else '')
+
+    for i, width in enumerate([5, 35, 12, 8, 10, 40, 10, 10], start=1):
+        ws.column_dimensions[chr(64 + i)].width = width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f'Журнал_{class_name}_{subject}_{month_start.strftime("%Y-%m")}.xlsx'
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = (
+        f"attachment; filename*=utf-8''{urllib.parse.quote(filename)}"
+    )
+    return response
 
 
 @login_required
@@ -1938,6 +2385,8 @@ def import_excel(request, class_name=None, school_id=None):
                         student=student,
                         subject=subj,
                         period='Холҳои ҷорӣ (Онлайн)',
+                        assessment=None,
+                        lesson=None,
                         defaults={'score': score}
                     )
                     imported += 1
@@ -2007,24 +2456,55 @@ def save_grade_ajax(request):
                 date = assessment.date
                 lock_quarter = assessment.quarter
             else:
-                if lesson_id:
-                    return JsonResponse({'success': False, 'message': 'Дарс бе санҷиш қабул карда намешавад.'}, status=200)
                 try:
                     date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
                 except ValueError:
                     return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
                 lock_quarter = get_date_quarter(date)
-                # Mode exclusivity: a date that already has a control
-                # assessment is Назорат-only — plain Ҷорӣ writes are refused.
-                if Assessment.objects.filter(
-                    class_subject__school=student.school,
-                    class_subject__class_name=class_name,
-                    class_subject__subject=subject,
-                    class_subject__is_active=True,
-                    category='control',
-                    date=date,
-                ).exists():
-                    return JsonResponse({'success': False, 'message': 'Ин сана барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.'}, status=200)
+                if lesson_id:
+                    # Lesson-aware Ҷорӣ write (Phase 4): resolve the Lesson
+                    # and verify it belongs to the same school/class/subject
+                    # and date — forged or mismatched IDs are rejected.
+                    try:
+                        lesson = Lesson.objects.select_related('class_subject__school').get(pk=lesson_id)
+                    except (Lesson.DoesNotExist, ValueError, TypeError):
+                        return JsonResponse({'success': False, 'message': 'Дарс ёфт нашуд.'}, status=200)
+                    lcs = lesson.class_subject
+                    if (
+                        lcs.school_id != student.school_id
+                        or normalize_class_name(lcs.class_name) != class_name
+                        or normalize_subject(lcs.subject) != subject
+                    ):
+                        return JsonResponse({'success': False, 'message': 'Дарс ба ин синф ё фан тааллуқ надорад.'}, status=200)
+                    if not lcs.is_active:
+                        return JsonResponse({'success': False, 'message': 'Дарс фаъол нест.'}, status=200)
+                    if lesson.date != date:
+                        return JsonResponse({'success': False, 'message': 'Дарс ба ин сана тааллуқ надорад.'}, status=200)
+                    # Mode exclusivity is lesson-scoped: only a control
+                    # assessment attached to THIS lesson blocks Ҷорӣ here.
+                    # Assessments on other lessons — or legacy lesson-less
+                    # assessments on this date — do not.
+                    if Assessment.objects.filter(
+                        class_subject=lcs,
+                        category='control',
+                        lesson=lesson,
+                    ).exists():
+                        return JsonResponse({'success': False, 'message': 'Ин дарс барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.'}, status=200)
+                else:
+                    # Mode exclusivity: a date that already has a control
+                    # assessment is Назорат-only — plain Ҷорӣ writes are
+                    # refused. Kept date-wide but scoped to legacy
+                    # (lesson-less) assessments only.
+                    if Assessment.objects.filter(
+                        class_subject__school=student.school,
+                        class_subject__class_name=class_name,
+                        class_subject__subject=subject,
+                        class_subject__is_active=True,
+                        category='control',
+                        date=date,
+                        lesson__isnull=True,
+                    ).exists():
+                        return JsonResponse({'success': False, 'message': 'Ин сана барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.'}, status=200)
 
             if is_quarter_locked(student.school, class_name, subject, lock_quarter):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
@@ -2032,13 +2512,39 @@ def save_grade_ajax(request):
             # Validate the score before creating the linked row so rejected
             # input cannot leave an empty assessment Grade behind.
             parsed_score = parsed_components = None
-            if assessment is not None and 'score' in request.POST:
-                try:
-                    parsed_score, parsed_components = parse_result_input(
-                        request.POST.get('score', '').strip()
-                    )
-                except ValueError as e:
-                    return JsonResponse({'success': False, 'message': str(e)}, status=200)
+            points_a = points_p = None
+            if assessment is not None:
+                wt = assessment.work_type or ''
+                wt_cfg = get_work_type(wt)
+                # Raw test points ride dedicated params — never the score
+                # field — so '12/20' cannot be mistaken for paired grades.
+                pa_raw = request.POST.get('points_achieved', '').strip()
+                pp_raw = request.POST.get('points_possible', '').strip()
+                if pa_raw or pp_raw:
+                    if wt_cfg is None or not wt_cfg.get('points_allowed'):
+                        return JsonResponse({'success': False, 'message': 'Ин навъи кор холҳои хом қабул намекунад.'}, status=200)
+                    try:
+                        points_a = float(pa_raw)
+                        points_p = float(pp_raw)
+                    except ValueError:
+                        return JsonResponse({'success': False, 'message': 'Холҳо бояд рақам бошанд.'}, status=200)
+                    if points_p <= 0 or not (0 <= points_a <= points_p):
+                        return JsonResponse({'success': False, 'message': 'Холҳои нодуруст.'}, status=200)
+                if 'score' in request.POST:
+                    try:
+                        parsed_score, parsed_components = parse_result_input(
+                            request.POST.get('score', '').strip(),
+                            work_type=wt or None,
+                        )
+                    except ValueError as e:
+                        return JsonResponse({'success': False, 'message': str(e)}, status=200)
+                if points_p is not None and wt_cfg['semantics'] == SEMANTIC_CONVERTED:
+                    # Points are the authoritative raw input for tests; the
+                    # 10-point result is derived via the (provisional,
+                    # configurable) conversion table — a manually typed
+                    # score must not override it.
+                    parsed_score = convert_test_points(points_a, points_p)
+                    parsed_components = None
 
             grade, _ = get_or_create_grade(
                 student=student,
@@ -2050,10 +2556,12 @@ def save_grade_ajax(request):
                 defaults={'score': None, 'attendance': None, 'behavior_score': None, 'sticker': None}
             )
 
-            if 'score' in request.POST:
+            if 'score' in request.POST or points_p is not None:
                 if assessment is not None:
                     grade.score = parsed_score
                     grade.components = parsed_components
+                    grade.points_achieved = points_a
+                    grade.points_possible = points_p
                 else:
                     raw = request.POST.get('score', '').strip().replace(',', '.')
                     if raw == '':
@@ -2090,22 +2598,36 @@ def save_grade_ajax(request):
                 grade.save()
 
             resp = {'success': True, 'saved': True}
+            if lesson is not None:
+                resp['lesson_id'] = lesson.id
+                resp['lesson_number'] = lesson.lesson_number
             if assessment is not None:
                 # Authoritative echo for immediate UI sync: the combined
                 # result, its display form, and the recalculated quarter
                 # projection (official QuarterGrade still wins over live).
-                if deleted or grade.score is None:
+                if deleted or (grade.score is None and not grade.components):
                     resp['score'] = None
                     resp['display'] = ''
                 else:
                     resp['score'] = grade.score
                     if grade.components:
+                        # Echo the typed fraction form ('8/9'). For
+                        # paired-grades works this IS the journal display;
+                        # for legacy mean rows it preserves the Phase 3
+                        # response contract (score carries the mean).
                         resp['display'] = '/'.join(
-                            str(int(c)) if isinstance(c, (int, float)) and float(c).is_integer() else str(c)
-                            for c in grade.components
+                            str(int(v)) if isinstance(v, (int, float)) and float(v).is_integer() else str(v)
+                            for v in (c.get('value') if isinstance(c, dict) else c
+                                      for c in grade.components)
                         )
                     else:
                         resp['display'] = str(int(grade.score)) if float(grade.score).is_integer() else str(grade.score)
+                    if grade.points_possible:
+                        resp['points_achieved'] = grade.points_achieved
+                        resp['points_possible'] = grade.points_possible
+                        resp['percentage'] = round(test_percentage(
+                            grade.points_achieved, grade.points_possible
+                        ), 1)
                 qmap, live_flags = _live_quarter_payload(student, subject, class_name)
                 resp.update(calc_quarterly(qmap, live_flags))
                 resp['quarter'] = assessment.quarter
@@ -2221,6 +2743,15 @@ def assessment_save(request):
         number_str = request.POST.get('number', '').strip()
         is_ajm = request.POST.get('is_ajm') in ('1', 'true', 'on')
         lesson_id = request.POST.get('lesson_id', '').strip()
+        purpose_in = request.POST.get('purpose', '').strip()
+        work_type_in = request.POST.get('work_type', '').strip()
+        scope_in = request.POST.get('summative_scope', '').strip()
+        if purpose_in and purpose_in not in ASSESSMENT_PURPOSES:
+            return JsonResponse({'success': False, 'message': 'Мақсади нодуруст.'}, status=200)
+        if work_type_in and get_work_type(work_type_in) is None:
+            return JsonResponse({'success': False, 'message': 'Навъи кори нодуруст.'}, status=200)
+        if scope_in and scope_in not in SUMMATIVE_SCOPES:
+            return JsonResponse({'success': False, 'message': 'Доираи нодуруст.'}, status=200)
 
         assessment = None
         if assessment_id:
@@ -2274,6 +2805,11 @@ def assessment_save(request):
                 return JsonResponse({'success': False, 'message': 'Дарс ёфт нашуд.'}, status=200)
             if lesson.class_subject_id != cs.id:
                 return JsonResponse({'success': False, 'message': 'Дарс ба ин санҷиш тааллуқ надорад.'}, status=200)
+            # The lesson must live on the assessment's own date — a
+            # lesson from another day cannot host this assessment.
+            expected_date = assessment.date if assessment is not None else date
+            if lesson.date != expected_date:
+                return JsonResponse({'success': False, 'message': 'Дарс ба ин сана тааллуқ надорад.'}, status=200)
 
         with transaction.atomic():
             if assessment is None:
@@ -2288,7 +2824,17 @@ def assessment_save(request):
                     date=date,
                     category='control',
                     number=number,
-                    defaults={'quarter': quarter, 'title': title, 'is_ajm': is_ajm, 'lesson': lesson}
+                    defaults={
+                        'quarter': quarter,
+                        'title': title,
+                        'is_ajm': is_ajm,
+                        'lesson': lesson,
+                        # Control-category events are summative by default;
+                        # the posted purpose wins when explicitly supplied.
+                        'purpose': purpose_in or 'summative',
+                        'work_type': work_type_in,
+                        'summative_scope': scope_in or 'none',
+                    }
                 )
                 if not created:
                     # Same natural key already exists (double submit): make
@@ -2297,10 +2843,16 @@ def assessment_save(request):
                     assessment.is_ajm = is_ajm
                     if lesson is not None:
                         assessment.lesson = lesson
+                    if purpose_in:
+                        assessment.purpose = purpose_in
+                    if work_type_in:
+                        assessment.work_type = work_type_in
+                    if scope_in:
+                        assessment.summative_scope = scope_in
                     assessment.save()
             else:
-                # Editable fields only: title/number/is_ajm/lesson. The
-                # Assessment's date and quarter are preserved — the journal
+                # Editable fields only: title/number/is_ajm/lesson/methodology.
+                # The Assessment's date and quarter are preserved — the journal
                 # date the teacher happens to be viewing must not silently
                 # move an existing assessment (and its linked Grade rows)
                 # into another date or quarter.
@@ -2309,6 +2861,12 @@ def assessment_save(request):
                 assessment.is_ajm = is_ajm
                 if lesson is not None or lesson_id:
                     assessment.lesson = lesson
+                if purpose_in:
+                    assessment.purpose = purpose_in
+                if work_type_in:
+                    assessment.work_type = work_type_in
+                if scope_in:
+                    assessment.summative_scope = scope_in
                 assessment.save()
 
         return JsonResponse({'success': True, 'assessment': {
@@ -2318,6 +2876,11 @@ def assessment_save(request):
             'title': assessment.title,
             'is_ajm': assessment.is_ajm,
             'date': assessment.date.isoformat(),
+            'purpose': assessment.purpose,
+            'work_type': assessment.work_type,
+            'work_type_label': work_type_label(assessment.work_type),
+            'summative_scope': assessment.summative_scope,
+            'lesson_id': assessment.lesson_id,
         }}, status=200)
     except Exception as e:
         return JsonResponse({'success': False, 'message': str(e)}, status=200)
@@ -2370,6 +2933,105 @@ def assessment_delete(request):
             entry['quarter_live'] = deleted_quarter in live_flags
             students_payload[str(sid)] = entry
         return JsonResponse({'success': True, 'students': students_payload}, status=200)
+    except Exception as e:
+        return JsonResponse({'success': False, 'message': str(e)}, status=200)
+
+
+@login_required
+@require_POST
+def lesson_save(request):
+    """Create a Lesson for a ClassSubject+date (Phase 4 backend).
+
+    Idempotent on (class_subject, date, lesson_number): a repeated identical
+    request returns the existing row instead of duplicating it. When
+    lesson_number is omitted the next free number for that date is assigned.
+    """
+    try:
+        class_subject_id = request.POST.get('class_subject_id', '').strip()
+        date_str = request.POST.get('date', '').strip()
+        number_str = request.POST.get('lesson_number', '').strip()
+        topic = request.POST.get('topic', '').strip()[:255]
+
+        try:
+            cs = ClassSubject.objects.select_related('school').get(pk=class_subject_id)
+        except (ClassSubject.DoesNotExist, ValueError, TypeError):
+            return JsonResponse({'success': False, 'message': 'Фан ёфт нашуд.'}, status=200)
+        if not cs.is_active:
+            return JsonResponse({'success': False, 'message': 'Фан фаъол нест.'}, status=200)
+        if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
+            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+
+        try:
+            date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+        except ValueError:
+            return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
+
+        if is_quarter_locked(cs.school, cs.class_name, cs.subject, get_date_quarter(date)):
+            return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
+
+        number = None
+        if number_str:
+            try:
+                number = int(number_str)
+            except ValueError:
+                return JsonResponse({'success': False, 'message': 'Рақами нодуруст.'}, status=200)
+            if number < 1:
+                return JsonResponse({'success': False, 'message': 'Рақами нодуруст.'}, status=200)
+
+        with transaction.atomic():
+            if number is None:
+                number = (Lesson.objects.filter(
+                    class_subject=cs, date=date
+                ).aggregate(m=Max('lesson_number'))['m'] or 0) + 1
+            lesson, created = get_or_create_unique(
+                Lesson,
+                class_subject=cs,
+                date=date,
+                lesson_number=number,
+                defaults={'topic': topic},
+            )
+            if not created and topic:
+                lesson.topic = topic
+                lesson.save()
+
+        return JsonResponse({'success': True, 'lesson': {
+            'id': lesson.id,
+            'lesson_number': lesson.lesson_number,
+            'date': lesson.date.isoformat(),
+            'topic': lesson.topic,
+        }}, status=200)
+    except Exception as e:
+        return JsonResponse({'success': False, 'message': str(e)}, status=200)
+
+
+@login_required
+@require_POST
+def lesson_delete(request):
+    """Delete an empty Lesson. Block-when-data-exists by design.
+
+    Grade.lesson and Assessment.lesson are SET_NULL — deleting a lesson
+    with linked rows would silently orphan them into the day's lesson-less
+    pool, so deletion is refused until the teacher clears the data first.
+    """
+    try:
+        lesson_id = request.POST.get('lesson_id', '').strip()
+        try:
+            lesson = Lesson.objects.select_related('class_subject__school').get(pk=lesson_id)
+        except (Lesson.DoesNotExist, ValueError, TypeError):
+            return JsonResponse({'success': False, 'message': 'Дарс ёфт нашуд.'}, status=200)
+        cs = lesson.class_subject
+        if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
+            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+        if is_quarter_locked(cs.school, cs.class_name, cs.subject, get_date_quarter(lesson.date)):
+            return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
+        if Grade.objects.filter(lesson=lesson).exists() or Assessment.objects.filter(lesson=lesson).exists():
+            return JsonResponse({
+                'success': False,
+                'message': 'Ин дарс холҳо ё санҷишҳо дорад — аввал маълумоти дарсро тоза кунед.'
+            }, status=200)
+        with transaction.atomic():
+            lesson.delete()
+        return JsonResponse({'success': True}, status=200)
     except Exception as e:
         return JsonResponse({'success': False, 'message': str(e)}, status=200)
 

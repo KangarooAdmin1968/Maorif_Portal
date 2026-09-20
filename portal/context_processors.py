@@ -3,7 +3,7 @@ import re
 from django.conf import settings
 
 from .models import School, Student, ClassSubject
-from .utils import class_numeric_part
+from .utils import class_numeric_part, is_academic_school
 
 
 def user_role(request):
@@ -32,7 +32,10 @@ def parent_portal(request):
     Classes are derived the same way as the class_list view: the union of
     Student.class_name and ClassSubject.class_name per school.
     """
-    schools = list(School.objects.all())
+    # Only real general-education schools are offered to parents/students —
+    # preschools, kindergartens and education departments stay hidden.
+    schools = [s for s in School.objects.all() if is_academic_school(s)]
+    eligible_ids = {s.id for s in schools}
 
     def school_sort_key(school):
         nums = re.findall(r'\d+', school.name or '')
@@ -46,6 +49,8 @@ def parent_portal(request):
         ClassSubject.objects.values('school_id', 'class_name').distinct(),
     ):
         for row in qs:
+            if row['school_id'] not in eligible_ids:
+                continue
             classes_map.setdefault(row['school_id'], set()).add(row['class_name'])
 
     data = {

@@ -17,6 +17,7 @@ from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Si
 from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
@@ -26,7 +27,8 @@ from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, C
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
     default_subjects_for_class, ensure_class_subjects, is_non_graded,
-    get_school_number, is_academic_school, official_subjects,
+    get_school_number, is_academic_school, academic_schools,
+    academic_school_ids, official_subjects,
     official_subjects_for
 )
 from .curriculum_hours import MIN_GRADES_BANDS, UNGRADED_SUBJECTS, weekly_hours, quarter_min_norm
@@ -364,6 +366,100 @@ def _resolve_assessment_for_grade(student, subject, assessment_id, lesson_id=Non
     return assessment, lesson
 
 
+def _parse_score(raw):
+    """Shared 1-10 integer score validation for regular daily writes."""
+    if not raw:
+        return None
+    try:
+        score = float(raw)
+    except (ValueError, TypeError):
+        raise ValueError('Хол бояд рақам бошад.')
+    score = int(score)
+    if not (1 <= score <= 10):
+        raise ValueError('Хол бояд аз 1 то 10 бошад.')
+    return score
+
+
+def _resolve_daily_scope(student, subject, date, lesson_id):
+    """Validate the target slot of a regular (non-assessment) daily write.
+
+    Returns the resolved Lesson or None for the legacy lesson-less slot.
+    Raises ValueError with a teacher-safe message on forged/mismatched IDs
+    or when a control assessment already owns the slot.
+    """
+    class_name = normalize_class_name(student.class_name)
+    if lesson_id:
+        try:
+            lesson = Lesson.objects.select_related('class_subject__school').get(pk=lesson_id)
+        except (Lesson.DoesNotExist, ValueError, TypeError):
+            raise ValueError('Дарс ёфт нашуд.')
+        lcs = lesson.class_subject
+        if (
+            lcs.school_id != student.school_id
+            or normalize_class_name(lcs.class_name) != class_name
+            or normalize_subject(lcs.subject) != subject
+        ):
+            raise ValueError('Дарс ба ин синф ё фан тааллуқ надорад.')
+        if not lcs.is_active:
+            raise ValueError('Дарс фаъол нест.')
+        if lesson.date != date:
+            raise ValueError('Дарс ба ин сана тааллуқ надорад.')
+        # Mode exclusivity is lesson-scoped: only a control assessment
+        # attached to THIS lesson blocks Ҷорӣ here.
+        if Assessment.objects.filter(
+            class_subject=lcs,
+            category='control',
+            lesson=lesson,
+        ).exists():
+            raise ValueError('Ин дарс барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.')
+        return lesson
+    # Lesson-less slot: only legacy lesson-less control assessments lock it.
+    if Assessment.objects.filter(
+        class_subject__school=student.school,
+        class_subject__class_name=class_name,
+        class_subject__subject=subject,
+        class_subject__is_active=True,
+        category='control',
+        date=date,
+        lesson__isnull=True,
+    ).exists():
+        raise ValueError('Ин сана барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.')
+    return None
+
+
+def _apply_grade_fields(grade, values):
+    """Apply cell values to a Grade row; a key's presence means 'write it'.
+
+    Keys: score, attendance, behavior_score, sticker. Returns True when
+    the row was saved, False when it became empty and was deleted.
+    """
+    if 'score' in values:
+        raw = str(values['score']).strip().replace(',', '.')
+        grade.score = _parse_score(raw if raw else None)
+    if 'attendance' in values:
+        att = str(values['attendance']).strip()
+        grade.attendance = att if att in ('+', '-') else None
+    if 'behavior_score' in values:
+        beh_raw = str(values['behavior_score']).strip()
+        if beh_raw:
+            try:
+                b = int(beh_raw)
+                grade.behavior_score = b if 1 <= b <= 5 else None
+            except (ValueError, TypeError):
+                grade.behavior_score = None
+        else:
+            grade.behavior_score = None
+    if 'sticker' in values:
+        st = str(values['sticker']).strip()
+        grade.sticker = st if st in ('⭐', '☀️', '🌸', '📖') else None
+    if (grade.score is None and not grade.attendance
+            and grade.behavior_score is None and not grade.sticker):
+        grade.delete()
+        return False
+    grade.save()
+    return True
+
+
 def _assessment_label(assessment):
     """Teacher-facing Tajik label for a control assessment."""
     label = f"Назоратӣ №{assessment.number} — {assessment.date.strftime('%d.%m')}" if assessment.number \
@@ -571,6 +667,8 @@ def get_user_profile(user):
 
 def can_edit_grade_journal(user, school, class_name, subject):
     """Return True if the user may save grades for this school, class and subject."""
+    if school is None or not is_academic_school(school):
+        return False
     if user.is_superuser:
         return True
     if not has_school_access(user, school):
@@ -605,6 +703,8 @@ def can_edit_grade_journal(user, school, class_name, subject):
 
 def can_view_grade_journal(user, school, class_name, subject):
     """Return True if the user may view this grade journal."""
+    if school is None or not is_academic_school(school):
+        return False
     if user.is_superuser:
         return True
     if not has_school_access(user, school):
@@ -907,10 +1007,11 @@ def dashboard(request):
     all_school_ranking = calculate_school_rankings()
     all_subject_ranking = calculate_subject_rankings()
 
+    academic_ids = academic_school_ids()
     if not request.user.is_authenticated or request.user.is_superuser or role == settings.ROLE_DIRECTOR:
-        schools = School.objects.all()
+        schools = academic_schools()
     else:
-        schools = School.objects.filter(id=user_school.id) if user_school else School.objects.none()
+        schools = [user_school] if user_school and is_academic_school(user_school) else []
 
     # Full district-wide rankings are visible to all logged-in users
     school_ranking = all_school_ranking
@@ -941,6 +1042,8 @@ def dashboard(request):
     for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
         if class_numeric_part(row['class_name']) == 1:
             sid = row['school_id']
+            if sid not in academic_ids:
+                continue
             if sid not in grade1_map:
                 grade1_map[sid] = {'school_id': sid, 'school_name': row['school__name'], 'classes': set()}
             grade1_map[sid]['classes'].add(row['class_name'])
@@ -952,13 +1055,13 @@ def dashboard(request):
         key=lambda x: x['school_name']
     )
 
-    total_schools = School.objects.exclude(name__icontains='Кӯдакистон').exclude(name__icontains='Идораи маориф').count()
-    total_students = Student.objects.count()
-    male_students = Student.objects.filter(gender='M').count()
-    female_students = Student.objects.filter(gender='F').count()
+    total_schools = len(academic_ids)
+    total_students = Student.objects.filter(school_id__in=academic_ids).count()
+    male_students = Student.objects.filter(school_id__in=academic_ids, gender='M').count()
+    female_students = Student.objects.filter(school_id__in=academic_ids, gender='F').count()
     male_pct = round(male_students / total_students * 100, 1) if total_students else 0.0
     female_pct = round(female_students / total_students * 100, 1) if total_students else 0.0
-    total_teachers = Teacher.objects.count()
+    total_teachers = Teacher.objects.filter(school_id__in=academic_ids).count()
     try:
         ratio = round(total_students / total_teachers, 1) if total_teachers else 0.0
     except ZeroDivisionError:
@@ -1016,7 +1119,29 @@ def class_rankings_ajax(request):
     return JsonResponse(data, safe=False)
 
 
+def _safe_login_next(request, next_url):
+    """Normalize the login `next` target for the post-login redirect.
+
+    The value arrives query-decoded once, i.e. as an already URI-escaped
+    path like /school/24/class/10-%D0%90/... (some proxies add yet another
+    escape layer). Unquote until stable, then allow only local paths so
+    Cyrillic class/subject URLs survive intact without double-encoding.
+    """
+    if not next_url:
+        return None
+    candidate = str(next_url)
+    for _ in range(3):
+        decoded = urllib.parse.unquote(candidate)
+        if decoded == candidate:
+            break
+        candidate = decoded
+    if url_has_allowed_host_and_scheme(candidate, allowed_hosts={request.get_host()}):
+        return candidate
+    return None
+
+
 def login_view(request):
+    next_url = request.POST.get('next') or request.GET.get('next', '')
     if request.method == 'POST':
         form = LoginForm(request.POST)
         if form.is_valid():
@@ -1025,12 +1150,15 @@ def login_view(request):
             user = authenticate(request, username=username, password=password)
             if user:
                 login(request, user)
+                target = _safe_login_next(request, next_url)
+                if target:
+                    return redirect(target)
                 return redirect('dashboard')
             else:
                 form.add_error(None, 'Номи корбар ёки рамз нодуруст')
     else:
         form = LoginForm()
-    return render(request, 'portal/login.html', {'form': form})
+    return render(request, 'portal/login.html', {'form': form, 'next': next_url})
 
 
 def logout_view(request):
@@ -1041,10 +1169,10 @@ def logout_view(request):
 def school_list(request):
     role = get_user_role(request.user)
     if not request.user.is_authenticated or request.user.is_superuser or role == settings.ROLE_DIRECTOR:
-        schools = School.objects.all()
+        schools = [s for s in School.objects.all() if is_academic_school(s)]
     else:
         user_school = get_user_school(request.user)
-        schools = School.objects.filter(id=user_school.id) if user_school else School.objects.none()
+        schools = [user_school] if user_school and is_academic_school(user_school) else []
 
     def school_sort_key(school):
         name_lower = school.name.lower()
@@ -1094,6 +1222,8 @@ def class_list(request, school_id=None):
         school = get_object_or_404(School, id=school_id)
     else:
         school = user_school
+    if school is not None and not is_academic_school(school):
+        return redirect('school_list')
     if request.user.is_authenticated:
         is_zavuch = _is_zavuch(request.user, role)
         if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER and school != user_school:
@@ -1191,7 +1321,7 @@ def class_list(request, school_id=None):
 @require_POST
 def add_class(request, school_id):
     school = get_object_or_404(School, id=school_id)
-    if not _can_manage_school(request.user, school):
+    if not is_academic_school(school) or not _can_manage_school(request.user, school):
         return redirect('dashboard')
 
     grade = request.POST.get('grade', '').strip()
@@ -1220,7 +1350,7 @@ def add_class(request, school_id):
 @require_POST
 def delete_class(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not _can_manage_school(request.user, school):
+    if not is_academic_school(school) or not _can_manage_school(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
 
@@ -1256,6 +1386,8 @@ def class_detail(request, school_id, class_name):
                 return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
         if not has_school_access(request.user, school):
             return redirect('dashboard')
+    if not is_academic_school(school):
+        return redirect('school_list')
     ensure_class_subjects(school, class_name)
     students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
     total_count = students.count()
@@ -1388,7 +1520,7 @@ def sticker_entry(request, school_id, class_name):
 @require_POST
 def add_student(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not is_academic_school(school) or not has_school_access(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
     full_name = request.POST.get('full_name', '').strip()
@@ -1413,7 +1545,7 @@ def add_student(request, school_id, class_name):
 @require_POST
 def remove_student(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not is_academic_school(school) or not has_school_access(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
     student_id = request.POST.get('student_id', '').strip()
@@ -1431,7 +1563,7 @@ def remove_student(request, school_id, class_name):
 @require_POST
 def edit_student(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not _can_manage_school(request.user, school):
+    if not is_academic_school(school) or not _can_manage_school(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
     student_id = request.POST.get('student_id', '').strip()
@@ -1479,7 +1611,7 @@ def edit_student(request, school_id, class_name):
 @require_POST
 def transfer_class(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not _can_manage_school(request.user, school):
+    if not is_academic_school(school) or not _can_manage_school(request.user, school):
         return redirect('dashboard')
     source_class = normalize_class_name(class_name)
     target_option = request.POST.get('target_class', '').strip()
@@ -1991,6 +2123,13 @@ def monthly_journal(request, school_id, class_name, subject):
         school=school, class_name=class_name
     ).order_by('full_name'))
 
+    can_edit = can_edit_grade_journal(request.user, school, class_name, subject)
+    locked_quarters = set(
+        QuarterLock.objects.filter(
+            school=school, class_name=class_name, subject=subject, locked=True
+        ).values_list('quarter', flat=True)
+    )
+
     class_subject = ClassSubject.objects.filter(
         school=school, class_name=class_name, subject=subject, is_active=True
     ).order_by('pk').first()
@@ -2032,6 +2171,8 @@ def monthly_journal(request, school_id, class_name, subject):
                 'text': text,
                 'control': bool(g.assessment_id),
                 'absent': g.attendance == '-',
+                'att': g.attendance or '',
+                'beh': g.behavior_score if g.behavior_score is not None else '',
             }
             if not text and g.attendance == '-':
                 cell['text'] = 'н'
@@ -2065,6 +2206,16 @@ def monthly_journal(request, school_id, class_name, subject):
                 'date': d, 'lesson_id': None, 'lesson_number': None,
                 'control': (d, None) in control_slots,
             })
+        day_quarter = get_date_quarter(d)
+        for col in day_columns:
+            # A cell is writable only for a plain (non-control) slot in an
+            # unlocked quarter; assessment cells stay display-only here so
+            # work-type semantics are never bypassed from the month grid.
+            col['editable'] = (
+                can_edit
+                and not col['control']
+                and day_quarter not in locked_quarters
+            )
         columns.extend(day_columns)
 
         has_control = any(col['control'] for col in day_columns)
@@ -2082,6 +2233,24 @@ def monthly_journal(request, school_id, class_name, subject):
         else:
             status = 'complete'
         header_groups.append({'date': d, 'span': len(day_columns), 'status': status})
+        # Compact per-day grid for the mobile view: same cells, narrow
+        # column set — one column per lesson slot, never merged.
+        mini = [
+            {
+                'sid': s.id,
+                'name': s.full_name,
+                'cells': [
+                    {
+                        'lesson_id': col['lesson_id'],
+                        'lesson_number': col['lesson_number'],
+                        'editable': col['editable'],
+                        'items': cells.get((d, col['lesson_id']), {}).get(s.id, []),
+                    }
+                    for col in day_columns
+                ],
+            }
+            for s in students
+        ]
         day_rows.append({
             'date': d,
             'status': status,
@@ -2089,12 +2258,19 @@ def monthly_journal(request, school_id, class_name, subject):
             'multi_lesson': len(day_lessons) > 1,
             'lessons': day_lessons,
             'has_legacy_data': bool(cells.get((d, None))),
+            'columns': day_columns,
+            'mini': mini,
         })
 
     table_rows = []
     for s in students:
         row_cells = [
-            cells.get((col['date'], col['lesson_id']), {}).get(s.id, [])
+            {
+                'date': col['date'],
+                'lesson_id': col['lesson_id'],
+                'editable': col['editable'],
+                'items': cells.get((col['date'], col['lesson_id']), {}).get(s.id, []),
+            }
             for col in columns
         ]
         table_rows.append({'student': s, 'cells': row_cells})
@@ -2112,6 +2288,7 @@ def monthly_journal(request, school_id, class_name, subject):
         'prev_month': prev_month,
         'next_month': next_month,
         'month_label': month_start.strftime('%m.%Y'),
+        'can_edit': can_edit,
     })
 
 
@@ -2222,9 +2399,77 @@ def export_journal_excel(request, school_id, class_name, subject):
 
 
 @login_required
+@require_POST
+def monthly_save(request):
+    """Batch write endpoint for the editable monthly journal.
+
+    Accepts a JSON `payload` list of cell edits:
+        [{student_id, subject, date, lesson_id?, score?,
+          attendance?, behavior_score?}, ...]
+    Every item goes through the same permission, lesson-scope,
+    control-mode and quarter-lock checks as the daily AJAX path — this
+    endpoint adds no second write path. Assessment-linked cells are not
+    writable here; they keep their semantics via the daily journal.
+    """
+    try:
+        payload = json.loads(request.POST.get('payload', '[]'))
+    except (json.JSONDecodeError, TypeError):
+        return JsonResponse({'success': False, 'message': 'Формати нодуруст.'}, status=200)
+    if not isinstance(payload, list):
+        return JsonResponse({'success': False, 'message': 'Формати нодуруст.'}, status=200)
+
+    results = []
+    saved = 0
+    for item in payload:
+        key = item.get('key') if isinstance(item, dict) else None
+        try:
+            student = Student.objects.get(pk=item.get('student_id'))
+        except (Student.DoesNotExist, AttributeError, ValueError, TypeError):
+            results.append({'key': key, 'ok': False, 'message': 'Хонанда ёфт нашуд.'})
+            continue
+        subject = normalize_subject(str(item.get('subject', '')))
+        class_name = normalize_class_name(student.class_name)
+        if not can_edit_grade_journal(request.user, student.school, class_name, subject):
+            results.append({'key': key, 'ok': False, 'message': 'Дастрасӣ манъ аст.'})
+            continue
+        try:
+            date = datetime.date.fromisoformat(str(item.get('date', '')))
+            lesson = _resolve_daily_scope(
+                student, subject, date, item.get('lesson_id') or ''
+            )
+            if is_quarter_locked(
+                student.school, class_name, subject, get_date_quarter(date)
+            ):
+                raise ValueError('Ин чоряк баста шудааст.')
+            grade, _ = get_or_create_grade(
+                student=student,
+                subject=subject,
+                period='Холҳои ҷорӣ (Онлайн)',
+                date=date,
+                assessment=None,
+                lesson=lesson,
+                defaults={'score': None, 'attendance': None,
+                          'behavior_score': None, 'sticker': None},
+            )
+            values = {
+                k: item[k] for k in ('score', 'attendance', 'behavior_score')
+                if k in item
+            }
+            _apply_grade_fields(grade, values)
+        except (ValueError, TypeError) as e:
+            results.append({'key': key, 'ok': False, 'message': str(e)})
+            continue
+        saved += 1
+        results.append({'key': key, 'ok': True})
+    return JsonResponse(
+        {'success': True, 'saved': saved, 'results': results}, status=200
+    )
+
+
+@login_required
 def add_remove_subject(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not is_academic_school(school) or not has_school_access(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
 
@@ -2322,11 +2567,12 @@ def import_excel(request, class_name=None, school_id=None):
             if sample_student:
                 school = sample_student.school
             else:
-                school = School.objects.filter(id=24).first() or School.objects.first()
+                acad = academic_schools()
+                school = acad[0] if acad else None
         else:
             school = user_school
 
-    if not school:
+    if not school or not is_academic_school(school):
         return redirect('dashboard')
 
     if request.method != 'POST' or 'excel' not in request.FILES:
@@ -2427,18 +2673,6 @@ def save_grade_ajax(request):
         if not can_edit_grade_journal(request.user, student.school, class_name, subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
-        def parse_score(raw):
-            if not raw:
-                return None
-            try:
-                score = float(raw)
-            except ValueError:
-                raise ValueError('Хол бояд рақам бошад.')
-            score = int(score)
-            if not (1 <= score <= 10):
-                raise ValueError('Хол бояд аз 1 то 10 бошад.')
-            return score
-
         if grade_type == 'daily':
             assessment_id = request.POST.get('assessment_id', '').strip()
             lesson_id = request.POST.get('lesson_id', '').strip()
@@ -2461,50 +2695,14 @@ def save_grade_ajax(request):
                 except ValueError:
                     return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
                 lock_quarter = get_date_quarter(date)
-                if lesson_id:
-                    # Lesson-aware Ҷорӣ write (Phase 4): resolve the Lesson
-                    # and verify it belongs to the same school/class/subject
-                    # and date — forged or mismatched IDs are rejected.
-                    try:
-                        lesson = Lesson.objects.select_related('class_subject__school').get(pk=lesson_id)
-                    except (Lesson.DoesNotExist, ValueError, TypeError):
-                        return JsonResponse({'success': False, 'message': 'Дарс ёфт нашуд.'}, status=200)
-                    lcs = lesson.class_subject
-                    if (
-                        lcs.school_id != student.school_id
-                        or normalize_class_name(lcs.class_name) != class_name
-                        or normalize_subject(lcs.subject) != subject
-                    ):
-                        return JsonResponse({'success': False, 'message': 'Дарс ба ин синф ё фан тааллуқ надорад.'}, status=200)
-                    if not lcs.is_active:
-                        return JsonResponse({'success': False, 'message': 'Дарс фаъол нест.'}, status=200)
-                    if lesson.date != date:
-                        return JsonResponse({'success': False, 'message': 'Дарс ба ин сана тааллуқ надорад.'}, status=200)
-                    # Mode exclusivity is lesson-scoped: only a control
-                    # assessment attached to THIS lesson blocks Ҷорӣ here.
-                    # Assessments on other lessons — or legacy lesson-less
-                    # assessments on this date — do not.
-                    if Assessment.objects.filter(
-                        class_subject=lcs,
-                        category='control',
-                        lesson=lesson,
-                    ).exists():
-                        return JsonResponse({'success': False, 'message': 'Ин дарс барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.'}, status=200)
-                else:
-                    # Mode exclusivity: a date that already has a control
-                    # assessment is Назорат-only — plain Ҷорӣ writes are
-                    # refused. Kept date-wide but scoped to legacy
-                    # (lesson-less) assessments only.
-                    if Assessment.objects.filter(
-                        class_subject__school=student.school,
-                        class_subject__class_name=class_name,
-                        class_subject__subject=subject,
-                        class_subject__is_active=True,
-                        category='control',
-                        date=date,
-                        lesson__isnull=True,
-                    ).exists():
-                        return JsonResponse({'success': False, 'message': 'Ин сана барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.'}, status=200)
+                # Lesson-aware Ҷорӣ write (Phase 4): resolve the Lesson and
+                # verify school/class/subject/date scope; mode exclusivity
+                # is lesson-scoped for new records and date-wide for the
+                # legacy lesson-less slot. Forged IDs are rejected.
+                try:
+                    lesson = _resolve_daily_scope(student, subject, date, lesson_id)
+                except ValueError as e:
+                    return JsonResponse({'success': False, 'message': str(e)}, status=200)
 
             if is_quarter_locked(student.school, class_name, subject, lock_quarter):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
@@ -2556,46 +2754,22 @@ def save_grade_ajax(request):
                 defaults={'score': None, 'attendance': None, 'behavior_score': None, 'sticker': None}
             )
 
-            if 'score' in request.POST or points_p is not None:
-                if assessment is not None:
-                    grade.score = parsed_score
-                    grade.components = parsed_components
-                    grade.points_achieved = points_a
-                    grade.points_possible = points_p
-                else:
-                    raw = request.POST.get('score', '').strip().replace(',', '.')
-                    if raw == '':
-                        raw = None
-                    try:
-                        score = parse_score(raw)
-                    except ValueError as e:
-                        return JsonResponse({'success': False, 'message': str(e)}, status=200)
-                    grade.score = score
+            if assessment is not None and ('score' in request.POST or points_p is not None):
+                grade.score = parsed_score
+                grade.components = parsed_components
+                grade.points_achieved = points_a
+                grade.points_possible = points_p
 
-            if 'attendance' in request.POST:
-                att = request.POST.get('attendance', '').strip()
-                grade.attendance = att if att in ('+', '-') else None
-
-            if 'behavior_score' in request.POST:
-                beh_raw = request.POST.get('behavior_score', '').strip()
-                if beh_raw:
-                    try:
-                        b = int(beh_raw)
-                        grade.behavior_score = b if 1 <= b <= 5 else None
-                    except ValueError:
-                        grade.behavior_score = None
-                else:
-                    grade.behavior_score = None
-
-            if 'sticker' in request.POST:
-                st = request.POST.get('sticker', '').strip()
-                grade.sticker = st if st in ('⭐', '☀️', '🌸', '📖') else None
-
-            deleted = grade.score is None and not grade.attendance and grade.behavior_score is None and not grade.sticker
-            if deleted:
-                grade.delete()
-            else:
-                grade.save()
+            values = {}
+            if assessment is None and 'score' in request.POST:
+                values['score'] = request.POST.get('score', '')
+            for k in ('attendance', 'behavior_score', 'sticker'):
+                if k in request.POST:
+                    values[k] = request.POST.get(k, '')
+            try:
+                deleted = not _apply_grade_fields(grade, values)
+            except ValueError as e:
+                return JsonResponse({'success': False, 'message': str(e)}, status=200)
 
             resp = {'success': True, 'saved': True}
             if lesson is not None:
@@ -2645,7 +2819,7 @@ def save_grade_ajax(request):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
 
             try:
-                score = parse_score(score_raw)
+                score = _parse_score(score_raw)
             except ValueError as e:
                 return JsonResponse({'success': False, 'message': str(e)}, status=200)
 
@@ -3201,6 +3375,8 @@ def teacher_list(request, school_id=None):
         school = get_object_or_404(School, id=school_id)
     else:
         school = user_school
+    if school is not None and not is_academic_school(school):
+        return redirect('school_list')
     if not has_school_access(request.user, school):
         return redirect('dashboard')
     teachers = Teacher.objects.filter(school=school).order_by('name')
@@ -3224,7 +3400,7 @@ def teacher_list(request, school_id=None):
 @require_POST
 def add_teacher(request, school_id):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not is_academic_school(school) or not has_school_access(request.user, school):
         return redirect('dashboard')
 
     full_name = request.POST.get('full_name', '').strip()
@@ -3279,7 +3455,7 @@ def add_teacher(request, school_id):
 @require_POST
 def remove_teacher(request, school_id):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not is_academic_school(school) or not has_school_access(request.user, school):
         return redirect('dashboard')
 
     teacher_id = request.POST.get('teacher_id', '').strip()
@@ -3307,7 +3483,7 @@ def remove_teacher(request, school_id):
 @require_POST
 def edit_teacher(request, school_id):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not is_academic_school(school) or not has_school_access(request.user, school):
         return redirect('dashboard')
 
     teacher_id = request.POST.get('teacher_id', '').strip()
@@ -3411,7 +3587,7 @@ def download_teacher_template(request, school_id):
 @login_required
 def import_teachers(request, school_id):
     school = get_object_or_404(School, id=school_id)
-    if not has_school_access(request.user, school):
+    if not is_academic_school(school) or not has_school_access(request.user, school):
         messages.error(request, 'Дастрасӣ ба ин муассиса манъ аст.')
         return redirect('dashboard')
 
@@ -3518,20 +3694,25 @@ def lesson_allocation(request):
     all_schools = None
     if request.user.is_superuser:
         # Superadmin may inspect/allocate any district school via ?school_id=
-        all_schools = School.objects.all().order_by('id')
+        all_schools = [s for s in School.objects.all().order_by('id') if is_academic_school(s)]
         school = None
         school_id = request.GET.get('school_id') or request.GET.get('school')
         if school_id:
             try:
                 school = School.objects.get(pk=int(school_id))
+                if not is_academic_school(school):
+                    school = None
             except (ValueError, School.DoesNotExist):
                 school = None
         if school is None:
-            school = get_user_school(request.user) or School.objects.order_by('id').first()
+            school = get_user_school(request.user) or (all_schools[0] if all_schools else None)
     else:
         # Zavuchs are strictly locked to their own school
         school = get_user_school(request.user)
 
+    if school and not is_academic_school(school):
+        messages.warning(request, 'Ин муассиса мактаби таҳсилоти умумӣ нест.')
+        return redirect('school_list')
     if not school:
         messages.error(request, 'Муассисаи шумо муайян карда нашуд.')
         return redirect('dashboard')
@@ -3580,7 +3761,7 @@ def save_lesson_allocation(request):
                 school = School.objects.get(pk=int(school_id))
             except (ValueError, School.DoesNotExist):
                 school = None
-    if not school or not has_school_access(request.user, school):
+    if not school or not is_academic_school(school) or not has_school_access(request.user, school):
         return redirect('dashboard')
 
     cs_keys = [k for k in request.POST if k.startswith('alloc_')]
@@ -3647,6 +3828,9 @@ def deactivate_subject(request):
     except (ValueError, ClassSubject.DoesNotExist):
         messages.error(request, 'Фан ёфт нашуд.')
         return redirect('lesson_allocation')
+    if not is_academic_school(cs.school):
+        messages.error(request, 'Фан танҳо дар муассисаҳои таҳсилоти умумӣ идора мешавад.')
+        return redirect('lesson_allocation')
     cs.is_active = False
     cs.save()
     messages.success(request, f'Фани «{cs.subject}» барои {cs.class_name} хориҷ шуд.')
@@ -3668,7 +3852,7 @@ def request_deactivation(request):
         messages.error(request, 'Фан ёфт нашуд.')
         return redirect('lesson_allocation')
     school = get_user_school(request.user)
-    if not school or not has_school_access(request.user, school) or cs.school != school:
+    if not school or not is_academic_school(school) or not has_school_access(request.user, school) or cs.school != school:
         messages.error(request, 'Шумо метавонед танҳо барои муассисаи худ дархост диҳед.')
         return redirect('lesson_allocation')
     if SubjectDeactivationRequest.objects.filter(class_subject=cs, status__in=['pending', 'approved']).exists():
@@ -3760,9 +3944,7 @@ def _school_sort_key(school):
 def _get_monitoring_stats():
     """Return the same statistics list used by the dashboard and the Excel export."""
     schools = sorted(
-        School.objects.exclude(
-            Q(name__icontains='Кӯдакистон') | Q(type__icontains='Кӯдакистон')
-        ),
+        [s for s in School.objects.all() if is_academic_school(s)],
         key=_school_sort_key
     )
     stats = []

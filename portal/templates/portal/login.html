@@ -8,6 +8,7 @@
     <h1>Вуруд</h1>
     <form method="post">
         {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}">
         {{ form.as_p }}
         <button type="submit" class="btn btn-primary">Вуруд</button>
     </form>

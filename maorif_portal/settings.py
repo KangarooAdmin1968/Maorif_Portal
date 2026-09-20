@@ -100,6 +100,15 @@ LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
 
+# Dev-only: extra CSRF-trusted origins for local preview proxies (e.g. browser
+# preview on a random localhost port). Inactive in production (DEBUG=False).
+if DEBUG:
+    CSRF_TRUSTED_ORIGINS = [
+        o.strip()
+        for o in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',')
+        if o.strip()
+    ]
+
 # Role constants
 ROLE_DIRECTOR = 'director'
 ROLE_PRINCIPAL = 'principal'

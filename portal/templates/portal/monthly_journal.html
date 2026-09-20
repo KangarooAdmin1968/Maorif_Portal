@@ -30,8 +30,32 @@
 .month-table td.cell-empty { background: #fafafa; }
 .month-table th.stu-head, .month-table td.stu-cell { text-align: left; white-space: nowrap; position: sticky; left: 0; background: #fff; z-index: 1; }
 .month-table th.stu-head { background: #003366; color: #fff; }
+.mcell-editable { cursor: pointer; }
+.mcell-editable:hover { background: #eff6ff; }
+td.mcell-dirty, .mini-cell.mcell-dirty { background: #fef3c7 !important; outline: 1px dashed #f59e0b; }
+td.mcell-error, .mini-cell.mcell-error { background: #fee2e2 !important; outline: 1px solid #ef4444; }
+.save-bar { display: none; position: sticky; bottom: 0.5rem; margin: 0.75rem 0; padding: 0.6rem 1rem; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 0.5rem; align-items: center; gap: 0.75rem; z-index: 50; }
+.save-bar.show { display: flex; flex-wrap: wrap; }
+.save-bar .count { font-weight: 600; color: #92400e; }
+.month-toast { display: none; margin: 0.5rem 0; padding: 0.6rem 1rem; border-radius: 0.5rem; background: #f0fdf4; border: 1px solid #22c55e; color: #166534; }
+.month-toast.show { display: block; }
+.grade-picker { position: fixed; z-index: 1000; background: #fff; border: 1px solid #d1d5db; border-radius: 0.6rem; box-shadow: 0 8px 24px rgba(0,0,0,0.18); padding: 0.6rem; display: none; }
+.grade-picker.show { display: block; }
+.gp-grid { display: grid; grid-template-columns: repeat(5, 2.6rem); gap: 0.4rem; }
+.gp-grid button { min-height: 2.6rem; font-size: 1.05rem; font-weight: 600; border: 1px solid #d1d5db; border-radius: 0.4rem; background: #f9fafb; cursor: pointer; }
+.gp-grid button:hover { background: #003366; color: #fff; }
+.gp-grid .gp-clear { background: #fff; color: #b91c1c; }
+.gp-extra-toggle { margin-top: 0.5rem; width: 100%; padding: 0.4rem; border: 1px dashed #d1d5db; border-radius: 0.4rem; background: #fff; color: #374151; cursor: pointer; font-size: 0.85rem; }
+.gp-extra { margin-top: 0.5rem; border-top: 1px solid #e5e7eb; padding-top: 0.5rem; }
+.gp-extra .gp-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-bottom: 0.4rem; font-size: 0.85rem; }
+.gp-extra .gp-row button { padding: 0.35rem 0.6rem; border: 1px solid #d1d5db; border-radius: 0.4rem; background: #f9fafb; cursor: pointer; }
+.gp-extra .gp-row button.on { background: #003366; color: #fff; }
+.leave-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1100; display: none; align-items: center; justify-content: center; }
+.leave-modal.show { display: flex; }
+.leave-box { background: #fff; border-radius: 0.75rem; padding: 1.25rem; max-width: 22rem; width: 90%; display: flex; flex-direction: column; gap: 0.6rem; }
 .day-list { display: none; }
-.day-card { border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 0.6rem 0.75rem; margin-bottom: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.day-card { border: 1px solid #e5e7eb; border-radius: 0.5rem; padding: 0.6rem 0.75rem; margin-bottom: 0.5rem; }
+.day-card .d-head { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .day-card .d-date { font-weight: 600; min-width: 4rem; }
 .day-card .d-status { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; }
 .day-card .d-status.status-complete { background: #dcfce7; color: #166534; }
@@ -40,19 +64,39 @@
 .day-card .d-flag { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; background: #fee2e2; color: #991b1b; }
 .day-card .d-lessons { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .day-card .d-lesson { font-size: 0.8rem; padding: 0.2rem 0.6rem; border: 1px solid #d1d5db; border-radius: 999px; text-decoration: none; color: #003366; }
+.day-card .d-toggle { margin-left: auto; border: 1px solid #d1d5db; background: #fff; border-radius: 0.4rem; padding: 0.25rem 0.6rem; cursor: pointer; }
+.day-grid { margin-top: 0.5rem; overflow-x: auto; }
+.day-grid table { border-collapse: collapse; font-size: 0.8rem; }
+.day-grid th, .day-grid td { border: 1px solid #e5e7eb; padding: 0.2rem 0.4rem; text-align: center; white-space: nowrap; }
+.day-grid td.mini-name { text-align: left; }
 @media (max-width: 768px) {
   .month-wrap { display: none; }
   .day-list { display: block; }
+  .grade-picker { left: 0 !important; right: 0 !important; top: auto !important; bottom: 0; border-radius: 0.9rem 0.9rem 0 0; width: 100%; }
+  .gp-grid { grid-template-columns: repeat(5, 1fr); }
+  .gp-grid button { min-height: 3rem; font-size: 1.2rem; }
 }
 </style>
 
 <div class="month-toolbar">
   <label for="month-input">Моҳ:</label>
-  <a class="btn btn-secondary" href="?month={{ prev_month|date:'Y-m' }}" title="Моҳи қаблӣ">◀</a>
-  <input type="month" id="month-input" value="{{ month_start|date:'Y-m' }}" onchange="location.href='?month='+this.value">
-  <a class="btn btn-secondary" href="?month={{ next_month|date:'Y-m' }}" title="Моҳи оянда">▶</a>
+  <a class="btn btn-secondary month-nav" href="?month={{ prev_month|date:'Y-m' }}" title="Моҳи қаблӣ">◀</a>
+  <input type="month" id="month-input" value="{{ month_start|date:'Y-m' }}"{% if can_edit %} onchange="requestNav('?month='+this.value)"{% else %} onchange="location.href='?month='+this.value"{% endif %}>
+  <a class="btn btn-secondary month-nav" href="?month={{ next_month|date:'Y-m' }}" title="Моҳи оянда">▶</a>
   <a class="btn btn-secondary" href="{% url 'export_journal_excel' school.id class_name subject %}?month={{ month_start|date:'Y-m' }}">📊 Excel</a>
+  {% if can_edit %}
+  <button type="button" class="btn btn-primary" id="month-save-btn" onclick="saveMonthly()">💾 Сабт кардан</button>
+  {% endif %}
 </div>
+
+<div id="month-toast" class="month-toast"></div>
+{% if can_edit %}
+<div id="save-bar" class="save-bar">
+  <span class="count" id="save-count"></span>
+  <button type="button" class="btn btn-primary" onclick="saveMonthly()">💾 Сабт кардан</button>
+  <button type="button" class="btn btn-secondary" onclick="discardEdits()">Бекор кардан</button>
+</div>
+{% endif %}
 
 <div class="legend">
   <span class="lg-complete">Пурра</span>
@@ -80,8 +124,8 @@
     {% for row in table_rows %}
     <tr>
       <td class="stu-cell">{{ forloop.counter }}. {{ row.student.full_name }}</td>
-      {% for cell_list in row.cells %}
-      <td>{% for c in cell_list %}<span class="{% if c.control %}cell-control{% elif c.absent %}cell-absent{% endif %}"{% if c.control %} style="background:#fee2e2;border-radius:0.2rem;padding:0 0.2rem;"{% endif %}>{{ c.text }}</span>{% if not forloop.last %} {% endif %}{% empty %}<span class="cell-empty"></span>{% endfor %}</td>
+      {% for c in row.cells %}
+      <td {% if c.editable %}class="mcell-editable" data-cellkey="{{ row.student.id }}|{{ c.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ row.student.id }}" data-date="{{ c.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}<span class="{% if it.control %}cell-control{% elif it.absent %}cell-absent{% endif %}"{% if it.control %} style="background:#fee2e2;border-radius:0.2rem;padding:0 0.2rem;"{% endif %}>{{ it.text }}</span>{% if not forloop.last %} {% endif %}{% endfor %}</td>
       {% endfor %}
     </tr>
     {% endfor %}
@@ -92,22 +136,290 @@
 <div class="day-list">
   {% for d in day_rows %}
   <div class="day-card">
-    <span class="d-date">{{ d.date|date:'d.m' }}</span>
-    <span class="d-status status-{{ d.status }}">{% if d.status == 'complete' %}Пурра{% elif d.status == 'partial' %}Нимра{% else %}Холӣ{% endif %}</span>
-    {% if d.has_control %}<span class="d-flag">Назорат</span>{% endif %}
-    <span class="d-lessons">
-      {% if d.lessons %}
-        {% for l in d.lessons %}
-        <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}&lesson={{ l.id }}">Дарси {{ l.lesson_number }}</a>
-        {% endfor %}
-        {% if d.has_legacy_data %}
-        <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Умумӣ</a>
+    <div class="d-head">
+      <span class="d-date">{{ d.date|date:'d.m' }}</span>
+      <span class="d-status status-{{ d.status }}">{% if d.status == 'complete' %}Пурра{% elif d.status == 'partial' %}Нимра{% else %}Холӣ{% endif %}</span>
+      {% if d.has_control %}<span class="d-flag">Назорат</span>{% endif %}
+      <span class="d-lessons">
+        {% if d.lessons %}
+          {% for l in d.lessons %}
+          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}&lesson={{ l.id }}">Дарси {{ l.lesson_number }}</a>
+          {% endfor %}
+          {% if d.has_legacy_data %}
+          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Умумӣ</a>
+          {% endif %}
+        {% else %}
+          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Кушодан</a>
         {% endif %}
-      {% else %}
-        <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Кушодан</a>
-      {% endif %}
-    </span>
+      </span>
+      {% if can_edit %}<button type="button" class="d-toggle" onclick="toggleDay(this)">✎</button>{% endif %}
+    </div>
+    {% if can_edit %}
+    <div class="day-grid" style="display:none">
+      <table>
+        <tr>
+          <th></th>
+          {% for col in d.columns %}
+          <th>{% if col.lesson_number %}Д{{ col.lesson_number }}{% else %}—{% endif %}{% if col.control %} Н{% endif %}</th>
+          {% endfor %}
+        </tr>
+        {% for r in d.mini %}
+        <tr>
+          <td class="mini-name">{{ r.name }}</td>
+          {% for c in r.cells %}
+          <td class="mini-cell{% if c.editable %} mcell-editable{% endif %}"{% if c.editable %} data-cellkey="{{ r.sid }}|{{ d.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ r.sid }}" data-date="{{ d.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}{{ it.text }}{% if not forloop.last %} {% endif %}{% endfor %}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
+
+{% if can_edit %}
+<div id="grade-picker" class="grade-picker" role="dialog" aria-label="Интихоби баҳо">
+  <div class="gp-grid">
+    <button type="button" data-gp="1">1</button><button type="button" data-gp="2">2</button>
+    <button type="button" data-gp="3">3</button><button type="button" data-gp="4">4</button>
+    <button type="button" data-gp="5">5</button><button type="button" data-gp="6">6</button>
+    <button type="button" data-gp="7">7</button><button type="button" data-gp="8">8</button>
+    <button type="button" data-gp="9">9</button><button type="button" data-gp="10">10</button>
+    <button type="button" class="gp-clear" data-gp="" title="Тоза кардан">×</button>
+  </div>
+  <button type="button" class="gp-extra-toggle" id="gp-extra-toggle">Қӯшимча ▾</button>
+  <div class="gp-extra" id="gp-extra" style="display:none">
+    <div class="gp-row" id="gp-att-row">
+      <span>Давомат:</span>
+      <button type="button" data-att="">Келди</button>
+      <button type="button" data-att="+">Сабабли</button>
+      <button type="button" data-att="-">Сабабсиз</button>
+    </div>
+    <div class="gp-row" id="gp-beh-row">
+      <span>Хулқ:</span>
+      <button type="button" data-beh="">×</button>
+      <button type="button" data-beh="1">1</button><button type="button" data-beh="2">2</button>
+      <button type="button" data-beh="3">3</button><button type="button" data-beh="4">4</button>
+      <button type="button" data-beh="5">5</button>
+    </div>
+  </div>
+</div>
+
+<div id="leave-modal" class="leave-modal">
+  <div class="leave-box">
+    <p><strong>Тағйиротҳои сабтнашуда ҳастанд.</strong></p>
+    <button type="button" class="btn btn-primary" id="lv-save">💾 Сабт ва гузаштан</button>
+    <button type="button" class="btn btn-secondary" id="lv-stay">Идомаи таҳрир</button>
+    <button type="button" class="btn btn-secondary" id="lv-leave">Бе сабт гузаштан</button>
+  </div>
+</div>
+
+<script>
+const monthlySaveUrl = "{% url 'monthly_save' %}";
+const csrfToken = "{{ csrf_token }}";
+const subjectName = "{{ subject|escapejs }}";
+const pendingEdits = {};   // key -> {score?, attendance?, behavior_score?}
+let pickerCell = null;
+
+const picker = document.getElementById('grade-picker');
+const gpExtra = document.getElementById('gp-extra');
+
+function cellKey(sid, date, lesson) { return sid + '|' + date + '|' + lesson; }
+
+function cellElements(key) {
+  return Array.from(document.querySelectorAll('[data-cellkey="' + key + '"]'));
+}
+
+function cellScoreText(el) {
+  // First token of the cell is the regular grade text ('' when empty).
+  const t = el.textContent.trim();
+  return /^\d+$/.test(t) ? t : '';
+}
+
+function markDirty(key) {
+  cellElements(key).forEach(el => { el.classList.add('mcell-dirty'); el.classList.remove('mcell-error'); });
+  updateSaveBar();
+}
+
+function setCellText(key, text, att, beh) {
+  cellElements(key).forEach(el => {
+    el.textContent = text;
+    if (att !== undefined) el.dataset.att = att;
+    if (beh !== undefined) el.dataset.beh = beh;
+  });
+}
+
+function updateSaveBar() {
+  const n = Object.keys(pendingEdits).length;
+  const bar = document.getElementById('save-bar');
+  if (bar) {
+    bar.classList.toggle('show', n > 0);
+    document.getElementById('save-count').textContent = n + ' тағйироти сабтнашуда';
+  }
+}
+
+function openPicker(td) {
+  pickerCell = td;
+  // Reflect current extra state on the Қӯшимча buttons.
+  gpExtra.querySelectorAll('#gp-att-row button').forEach(b =>
+    b.classList.toggle('on', b.dataset.att === (td.dataset.att || '')));
+  gpExtra.querySelectorAll('#gp-beh-row button').forEach(b =>
+    b.classList.toggle('on', b.dataset.beh === String(td.dataset.beh || '')));
+  picker.classList.add('show');
+  const wide = window.innerWidth > 768;
+  if (wide) {
+    const r = td.getBoundingClientRect();
+    const pw = picker.offsetWidth, ph = picker.offsetHeight;
+    let left = r.left + window.scrollX;
+    let top = r.bottom + window.scrollY + 4;
+    if (left + pw > window.scrollX + window.innerWidth - 8) left = window.scrollX + window.innerWidth - pw - 8;
+    if (top + ph > window.scrollY + window.innerHeight - 8) top = r.top + window.scrollY - ph - 4;
+    picker.style.left = Math.max(8, left) + 'px';
+    picker.style.top = Math.max(8, top) + 'px';
+  } else {
+    picker.style.left = ''; picker.style.top = '';
+  }
+}
+
+function closePicker() { picker.classList.remove('show'); pickerCell = null; }
+
+function stageEdit(field, value) {
+  if (!pickerCell) return;
+  const key = pickerCell.dataset.cellkey;
+  const cur = pendingEdits[key] || {};
+  cur[field] = value;
+  pendingEdits[key] = cur;
+  if (field === 'score') setCellText(key, value);
+  markDirty(key);
+}
+
+picker.querySelectorAll('[data-gp]').forEach(btn => {
+  btn.addEventListener('click', () => { stageEdit('score', btn.dataset.gp); closePicker(); });
+});
+gpExtra.querySelectorAll('[data-att]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    stageEdit('attendance', btn.dataset.att);
+    gpExtra.querySelectorAll('#gp-att-row button').forEach(b => b.classList.toggle('on', b === btn));
+    const k = pickerCell.dataset.cellkey;
+    const sc = pendingEdits[k] && pendingEdits[k].score !== undefined
+      ? pendingEdits[k].score : cellScoreText(pickerCell);
+    setCellText(k, sc || (btn.dataset.att === '-' ? 'н' : ''), btn.dataset.att, undefined);
+    closePicker();
+  });
+});
+gpExtra.querySelectorAll('[data-beh]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    stageEdit('behavior_score', btn.dataset.beh);
+    gpExtra.querySelectorAll('#gp-beh-row button').forEach(b => b.classList.toggle('on', b === btn));
+    closePicker();
+  });
+});
+document.getElementById('gp-extra-toggle').addEventListener('click', () => {
+  gpExtra.style.display = gpExtra.style.display === 'none' ? 'block' : 'none';
+});
+
+document.querySelectorAll('.mcell-editable').forEach(td => {
+  td.addEventListener('click', () => openPicker(td));
+});
+document.addEventListener('click', e => {
+  if (!picker.contains(e.target) && !(e.target.classList && e.target.classList.contains('mcell-editable'))) closePicker();
+});
+
+function showToast(msg) {
+  const t = document.getElementById('month-toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+function saveMonthly(onDone) {
+  const keys = Object.keys(pendingEdits);
+  if (!keys.length) { if (onDone) onDone(true); return; }
+  const items = keys.map(k => {
+    const p = pendingEdits[k];
+    const parts = k.split('|');
+    return {
+      key: k, student_id: parts[0], date: parts[1],
+      lesson_id: parts[2] || '', subject: subjectName,
+      score: p.score !== undefined ? p.score : undefined,
+      attendance: p.attendance !== undefined ? p.attendance : undefined,
+      behavior_score: p.behavior_score !== undefined ? p.behavior_score : undefined,
+    };
+  });
+  const body = new URLSearchParams({payload: JSON.stringify(items)});
+  fetch(monthlySaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body})
+    .then(r => r.json())
+    .then(resp => {
+      if (!resp.success) { showToast(resp.message || 'Хатo'); if (onDone) onDone(false); return; }
+      const failed = [];
+      (resp.results || []).forEach(res => {
+        if (!res.key) return;
+        if (res.ok) {
+          cellElements(res.key).forEach(el => el.classList.remove('mcell-dirty'));
+          delete pendingEdits[res.key];
+        } else {
+          failed.push(res);
+          cellElements(res.key).forEach(el => el.classList.add('mcell-error'));
+        }
+      });
+      updateSaveBar();
+      if (failed.length) {
+        showToast('Хатогӣ: ' + (failed[0].message || ''));
+        if (onDone) onDone(false);
+      } else {
+        showToast('✔ ' + resp.saved + ' тағйирот сабт шуд!');
+        if (onDone) onDone(true);
+      }
+    })
+    .catch(() => { showToast('Алоқа канда шуд — тағйиротҳо ҳифз шудаанд, такрор кунед.'); if (onDone) onDone(false); });
+}
+
+function discardEdits() {
+  Object.keys(pendingEdits).forEach(k => delete pendingEdits[k]);
+  location.reload();
+}
+
+// --- Unsaved-changes protection -------------------------------------------
+function hasPending() { return Object.keys(pendingEdits).length > 0; }
+
+window.addEventListener('beforeunload', e => {
+  if (hasPending()) { e.preventDefault(); e.returnValue = ''; }
+});
+
+let pendingNav = null;
+function requestNav(url) {
+  if (!hasPending()) { window.location.href = url; return; }
+  pendingNav = url;
+  document.getElementById('leave-modal').classList.add('show');
+}
+document.getElementById('lv-stay').addEventListener('click', () => {
+  pendingNav = null;
+  document.getElementById('leave-modal').classList.remove('show');
+});
+document.getElementById('lv-leave').addEventListener('click', () => {
+  const url = pendingNav;
+  Object.keys(pendingEdits).forEach(k => delete pendingEdits[k]);
+  window.location.href = url;
+});
+document.getElementById('lv-save').addEventListener('click', () => {
+  const url = pendingNav;
+  saveMonthly(ok => { if (ok && url) window.location.href = url; });
+});
+document.querySelectorAll('a[href]').forEach(a => {
+  a.addEventListener('click', e => {
+    if (!hasPending()) return;
+    const href = a.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
+    e.preventDefault();
+    requestNav(href);
+  });
+});
+
+function toggleDay(btn) {
+  const grid = btn.closest('.day-card').querySelector('.day-grid');
+  grid.style.display = grid.style.display === 'none' ? 'block' : 'none';
+}
+</script>
+{% endif %}
 {% endblock %}

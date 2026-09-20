@@ -33,6 +33,16 @@
 .lesson-chip.lesson-add { border-style: dashed; color: #003366; }
 .lesson-chip.lesson-del { color: #b91c1c; }
 .lesson-topic { font-size: 0.85rem; color: #6b7280; font-style: italic; }
+.quick-pick { position: fixed; z-index: 1000; background: #fff; border: 1px solid #d1d5db; border-radius: 0.6rem; box-shadow: 0 8px 24px rgba(0,0,0,0.18); padding: 0.5rem; display: none; }
+.quick-pick.show { display: block; }
+.quick-pick .qp-grid { display: grid; grid-template-columns: repeat(5, 2.4rem); gap: 0.35rem; }
+.quick-pick .qp-grid button { min-height: 2.4rem; font-size: 1rem; font-weight: 600; border: 1px solid #d1d5db; border-radius: 0.4rem; background: #f9fafb; cursor: pointer; }
+.quick-pick .qp-grid button:hover { background: #003366; color: #fff; }
+@media (max-width: 768px) {
+  .quick-pick { left: 0 !important; right: 0 !important; top: auto !important; bottom: 0; border-radius: 0.9rem 0.9rem 0 0; width: 100%; }
+  .quick-pick .qp-grid { grid-template-columns: repeat(5, 1fr); }
+  .quick-pick .qp-grid button { min-height: 3rem; font-size: 1.2rem; }
+}
 </style>
 
 <form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
@@ -862,5 +872,55 @@ if (dateIsControl) {
   if (rc) rc.checked = true;
 }
 updateModeHint();
+
+// --- Quick pick 1-10 -----------------------------------------------------
+// Convenience overlay on numeric score cells only; the existing inputs,
+// selects, save-on-blur and offline queue are untouched.
+const quickPick = document.createElement('div');
+quickPick.id = 'quick-pick';
+quickPick.className = 'quick-pick';
+quickPick.innerHTML = '<div class="qp-grid">' +
+  [1,2,3,4,5,6,7,8,9,10].map(n => '<button type="button" data-qp="' + n + '">' + n + '</button>').join('') +
+  '</div>';
+document.body.appendChild(quickPick);
+let qpInput = null;
+function showQuickPick(el) {
+  if (el.disabled) return;
+  qpInput = el;
+  quickPick.classList.add('show');
+  if (window.innerWidth > 768) {
+    const r = el.getBoundingClientRect();
+    const pw = quickPick.offsetWidth, ph = quickPick.offsetHeight;
+    let left = r.left + window.scrollX;
+    let top = r.bottom + window.scrollY + 4;
+    if (left + pw > window.scrollX + window.innerWidth - 8) left = window.scrollX + window.innerWidth - pw - 8;
+    if (top + ph > window.scrollY + window.innerHeight - 8) top = r.top + window.scrollY - ph - 4;
+    quickPick.style.left = Math.max(8, left) + 'px';
+    quickPick.style.top = Math.max(8, top) + 'px';
+  } else {
+    quickPick.style.left = '';
+    quickPick.style.top = '';
+  }
+}
+function hideQuickPick() { quickPick.classList.remove('show'); qpInput = null; }
+quickPick.addEventListener('mousedown', e => e.preventDefault());
+quickPick.querySelectorAll('[data-qp]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const el = qpInput;
+    hideQuickPick();
+    if (!el) return;
+    el.value = btn.dataset.qp;
+    saveDaily(el);
+  });
+});
+document.addEventListener('click', e => {
+  if (!quickPick.contains(e.target) && e.target !== qpInput) hideQuickPick();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') hideQuickPick(); });
+document.querySelectorAll('.daily-input').forEach(el => {
+  if (el.tagName === 'INPUT' && el.dataset.field === 'score') {
+    el.addEventListener('focus', () => showQuickPick(el));
+  }
+});
 </script>
 {% endblock %}

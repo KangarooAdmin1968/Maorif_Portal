@@ -29,6 +29,21 @@ def is_academic_school(school):
     return False
 
 
+def academic_schools():
+    """Return the list of eligible general-education schools.
+
+    Single source of truth for "which institutions are schools" in
+    school-facing areas; preschool/kindergarten and education-department
+    records are excluded by type/name via is_academic_school().
+    """
+    return [s for s in School.objects.all() if is_academic_school(s)]
+
+
+def academic_school_ids():
+    """Return the id set of eligible general-education schools."""
+    return {s.id for s in School.objects.all() if is_academic_school(s)}
+
+
 def official_subjects():
     """Return a set of all normalized official subjects across all grades."""
     subjects = set()
@@ -245,7 +260,7 @@ def subject_gpa(subject):
 
 def schools_leaderboard():
     data = []
-    for school in School.objects.all():
+    for school in academic_schools():
         data.append({
             'school': school,
             'gpa': school_gpa(school),

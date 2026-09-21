@@ -7,6 +7,7 @@ field (ClassSubject.hours_per_week — consumed by curriculum_hours).
 """
 import re
 
+from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
 
@@ -17,6 +18,7 @@ from portal.curriculum_hours import (
 from portal.models import ClassSubject
 from portal.tests.helpers import (
     MATH, GoldenBase, make_class_subject, make_student,
+    make_teacher_profile, make_user,
 )
 
 
@@ -301,6 +303,139 @@ class WeeklyHoursSaveTests(GoldenBase):
         self.client.get(reverse('lesson_allocation'))
         self.cs_a.refresh_from_db()
         self.assertEqual(self.cs_a.hours_per_week, 4)
+
+
+class WorkloadDocumentsHoursTests(GoldenBase):
+    """Ҳуҷҷатнигорӣ (school_documents workload) must resolve weekly hours as:
+    1. ClassSubject.hours_per_week when set;
+    2. the existing settings.TJC_SUBJECT_HOURS/default recommendation when NULL.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.doc_url = reverse('school_documents')
+        self.save_url = reverse('save_lesson_allocation')
+        self.profile_a = make_teacher_profile(self.teacher_a, self.school_a)
+
+    def _total_hours(self, user, profile):
+        self.client.force_login(user)
+        r = self.client.get(self.doc_url)
+        self.assertEqual(r.status_code, 200)
+        for w in r.context['workload']:
+            if w['teacher'] == profile:
+                return w['total_hours']
+        self.fail('teacher profile not present in workload')
+
+    def _total_a(self):
+        return self._total_hours(self.zavuch_a, self.profile_a)
+
+    # 1. NULL -> existing recommendation (settings map: МАТЕМАТИКА = 5)
+    def test_null_falls_back_to_existing_recommendation(self):
+        self.assertIsNone(self.cs_a.hours_per_week)
+        self.assertEqual(
+            self._total_a(), settings.TJC_SUBJECT_HOURS[MATH] * 1)
+
+    # 2-5. explicit saved values win
+    def test_saved_value_1_used(self):
+        self.cs_a.hours_per_week = 1
+        self.cs_a.save()
+        self.assertEqual(self._total_a(), 1)
+
+    def test_saved_value_2_used(self):
+        self.cs_a.hours_per_week = 2
+        self.cs_a.save()
+        self.assertEqual(self._total_a(), 2)
+
+    def test_saved_value_3_used(self):
+        self.cs_a.hours_per_week = 3
+        self.cs_a.save()
+        self.assertEqual(self._total_a(), 3)
+
+    def test_saved_value_4_used(self):
+        self.cs_a.hours_per_week = 4
+        self.cs_a.save()
+        self.assertEqual(self._total_a(), 4)
+
+    # 6. accepting an unchanged recommendation via "Сабт кардан" persists it
+    #    and Ҳуҷҷатнигорӣ uses that value afterwards.
+    def test_accepted_recommendation_flows_to_documents(self):
+        recommended = weekly_hours('7-А', MATH, self.cs_a)  # annex fallback = 2
+        self.client.force_login(self.zavuch_a)
+        r = self.client.post(self.save_url, {f'hours_{self.cs_a.id}': str(recommended)})
+        self.assertEqual(r.status_code, 302)
+        self.cs_a.refresh_from_db()
+        self.assertEqual(self.cs_a.hours_per_week, recommended)
+        self.assertEqual(self._total_a(), recommended)
+
+    # 7. change 2 -> 5 via the allocation save flow -> documents show 5
+    def test_changed_value_flows_to_documents(self):
+        self.cs_a.hours_per_week = 2
+        self.cs_a.save()
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {f'hours_{self.cs_a.id}': '5'})
+        self.cs_a.refresh_from_db()
+        self.assertEqual(self.cs_a.hours_per_week, 5)
+        self.assertEqual(self._total_a(), 5)
+
+    # 8. clearing the override returns documents to the recommendation
+    def test_cleared_value_restores_recommendation(self):
+        self.cs_a.hours_per_week = 4
+        self.cs_a.save()
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {f'hours_{self.cs_a.id}': ''})
+        self.cs_a.refresh_from_db()
+        self.assertIsNone(self.cs_a.hours_per_week)
+        self.assertEqual(self._total_a(), settings.TJC_SUBJECT_HOURS[MATH])
+
+    # 9 + 11. different schools keep independent values for the same subject
+    def test_schools_have_independent_hours(self):
+        zavuch_b = make_user('zavuch_2', role='teacher', school=self.school_b)
+        profile_b = make_teacher_profile(self.teacher_b, self.school_b)
+        self.cs_a.hours_per_week = 3
+        self.cs_a.save()
+        self.cs_b.hours_per_week = 4
+        self.cs_b.save()
+        self.assertEqual(self._total_a(), 3)
+        self.assertEqual(self._total_hours(zavuch_b, profile_b), 4)
+
+    def test_school_isolation_on_exact_allocation(self):
+        # Only school A has an override; school B still gets its own fallback.
+        zavuch_b = make_user('zavuch_2', role='teacher', school=self.school_b)
+        profile_b = make_teacher_profile(self.teacher_b, self.school_b)
+        self.cs_a.hours_per_week = 3
+        self.cs_a.save()
+        self.assertEqual(self._total_a(), 3)
+        self.assertEqual(
+            self._total_hours(zavuch_b, profile_b),
+            settings.TJC_SUBJECT_HOURS[MATH])
+
+    # 10. different classes can have different hours for the same subject
+    def test_classes_have_independent_hours(self):
+        make_student(self.school_a, '5-В', 'Ҷасур Юлдошев')
+        cs5 = make_class_subject(self.school_a, '5-В', MATH,
+                                 teacher=self.teacher_a)
+        self.cs_a.hours_per_week = 1   # 7-А
+        self.cs_a.save()
+        cs5.hours_per_week = 4         # 5-В
+        cs5.save()
+        # Same subject for this teacher across two classes: 1 + 4.
+        self.assertEqual(self._total_a(), 5)
+
+    # 12. the hours update never touches teacher assignment fields
+    def test_hours_flow_does_not_modify_teacher_fields(self):
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {f'hours_{self.cs_a.id}': '3'})
+        self.cs_a.refresh_from_db()
+        self.assertEqual(self.cs_a.teacher_id, self.teacher_a.id)
+        self.assertIsNone(self.cs_a.allocated_teacher_id)
+
+    # 13. no duplicate storage
+    def test_documents_use_the_single_existing_field(self):
+        fields = [
+            f.name for f in ClassSubject._meta.get_fields()
+            if 'hour' in f.name.lower()
+        ]
+        self.assertEqual(fields, ['hours_per_week'])
 
 
 class WeeklyHoursStorageTests(TestCase):

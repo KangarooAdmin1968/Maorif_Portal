@@ -4215,8 +4215,10 @@ def school_documents(request):
     """Ҳуҷҷатнигорӣ — documents hub for superusers, staff and school Zavuchs.
 
     First document: weekly lesson-hours distribution per teacher, built from
-    active ClassSubject rows (allocated_teacher preferred, teacher as fallback)
-    and settings.TJC_SUBJECT_HOURS.
+    active ClassSubject rows (allocated_teacher preferred, teacher as fallback).
+    Per-allocation ClassSubject.hours_per_week values saved in "Тақсимоти
+    дарсҳо" win; rows without an explicit value fall back to
+    settings.TJC_SUBJECT_HOURS / TJC_SUBJECT_HOURS_DEFAULT.
     """
     role = get_user_role(request.user)
     is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
@@ -4235,6 +4237,13 @@ def school_documents(request):
 
         hours_map = getattr(settings, 'TJC_SUBJECT_HOURS', {})
         default_hours = getattr(settings, 'TJC_SUBJECT_HOURS_DEFAULT', 2)
+        # Explicit weekly hours confirmed in "Тақсимоти дарсҳо" are the
+        # authoritative per school + class + subject value.
+        explicit_hours = {
+            (cs.subject, cs.class_name): cs.hours_per_week
+            for cs in class_subjects
+            if cs.hours_per_week is not None
+        }
 
         # teacher -> {subject: [class_names]}
         grouped = {}
@@ -4255,8 +4264,18 @@ def school_documents(request):
             for subject, classes in sorted(subj_map.items(), key=lambda kv: kv[0]):
                 classes_sorted = sorted(set(classes), key=class_sort)
                 items.append({'subject': subject, 'classes': classes_sorted})
-                hours = default_hours if normalize_subject(subject) not in hours_map else hours_map[normalize_subject(subject)] * len(classes_sorted)
-                if normalize_subject(subject) in UNGRADED_SUBJECTS:
+                norm = normalize_subject(subject)
+                overrides = [explicit_hours.get((subject, cn)) for cn in classes_sorted]
+                if any(h is not None for h in overrides):
+                    # Per-allocation resolution: saved hours where set, the
+                    # existing map/default recommendation otherwise.
+                    rate = hours_map.get(norm, default_hours)
+                    hours = sum(h if h is not None else rate for h in overrides)
+                elif norm in hours_map:
+                    hours = hours_map[norm] * len(classes_sorted)
+                else:
+                    hours = default_hours
+                if norm in UNGRADED_SUBJECTS:
                     homeroom_hours += hours
                 else:
                     academic_hours += hours

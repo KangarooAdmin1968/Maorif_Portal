@@ -168,6 +168,47 @@ class WeeklyHoursSaveTests(GoldenBase):
         self.assertEqual(self.cs_a.hours_per_week, 2)
         self.assertEqual(self.cs_a.allocated_teacher_id, profile.id)
 
+    # --- accepting an unchanged recommendation -----------------------------
+
+    def test_accepting_unchanged_recommendation_persists_it(self):
+        # cs_a starts with no explicit value; its muted recommendation (2) is
+        # submitted unchanged on Save and must become an explicit saved value.
+        self.assertIsNone(self.cs_a.hours_per_week)
+        recommended = weekly_hours('7-А', MATH, self.cs_a)
+        self._post_hours(self.cs_a, recommended)
+        self.cs_a.refresh_from_db()
+        self.assertEqual(self.cs_a.hours_per_week, recommended)
+        # After save the value renders confirmed (dark), not muted.
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(reverse('lesson_allocation'))
+        classes = _hours_input_classes(r.content.decode(), self.cs_a.id)
+        self.assertNotIn('hours-suggested', classes)
+
+    def test_save_persists_every_displayed_value(self):
+        # Simulates the real page submit: every rendered hours input is posted,
+        # so each accepted recommendation becomes an explicit saved value.
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(reverse('lesson_allocation'))
+        pairs = re.findall(
+            r'name="hours_(\d+)"\s+class="[^"]*"\s+value="(\d+)"',
+            r.content.decode())
+        self.assertGreater(len(pairs), 1)
+        r = self.client.post(
+            self.save_url, {f'hours_{k}': v for k, v in pairs})
+        self.assertEqual(r.status_code, 302)
+        for cs_id, value in pairs:
+            self.assertEqual(
+                ClassSubject.objects.get(id=cs_id).hours_per_week, int(value))
+
+    def test_hours_save_does_not_touch_teacher_fields(self):
+        # Posting only hours must not alter the teacher assignment fields.
+        self.assertEqual(self.cs_a.teacher_id, self.teacher_a.id)
+        self._post_hours(self.cs_a, 3)
+        self.cs_a.refresh_from_db()
+        self.assertEqual(self.cs_a.hours_per_week, 3)
+        self.assertEqual(self.cs_a.teacher_id, self.teacher_a.id)
+        self.assertIsNone(self.cs_a.allocated_teacher_id)
+
     # --- server-side validation ------------------------------------------
 
     def _assert_rejected(self, raw):

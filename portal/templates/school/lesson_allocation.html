@@ -386,13 +386,11 @@
         sel.addEventListener('change', () => { dirty = true; });
     });
 
-    // Batch save: untouched rows are not submitted; only explicitly changed
-    // hours inputs POST their value to the server for validation.
+    // Batch save: every displayed hours value is submitted in one POST —
+    // a recommended value accepted unchanged becomes an explicit saved
+    // value; a cleared input stores NULL and falls back to recommendation.
     allocForm.addEventListener('submit', function () {
         dirty = false;
-        hoursInputs.forEach(inp => {
-            if (!inp.classList.contains('hours-dirty')) inp.disabled = true;
-        });
     });
 
     // Unsaved-changes guard: modal offers save / keep editing / leave.

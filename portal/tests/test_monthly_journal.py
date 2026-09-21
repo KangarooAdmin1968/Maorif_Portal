@@ -133,6 +133,11 @@ class MonthlyJournalTests(GoldenBase):
         html = resp.content.decode()
         self.assertIn('Иловагӣ', html)
         self.assertNotIn('Қӯшимча', html)
+        self.assertIn('Ҳозир', html)
+        self.assertIn('Бо сабаб', html)
+        self.assertIn('Бе сабаб', html)
+        self.assertNotIn('Сабабли', html)
+        self.assertNotIn('Сабабсиз', html)
 
     def test_one_column_per_lesson_same_day(self):
         l1 = make_lesson(self.cs_a, D_OCT_A, 1)

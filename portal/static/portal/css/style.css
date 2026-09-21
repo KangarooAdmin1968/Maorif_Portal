@@ -198,6 +198,7 @@ body {
 
 .alert-success { background: #d1fae5; color: #065f46; }
 .alert-error { background: #fee2e2; color: #991b1b; }
+.alert-warning { background: #fef3c7; color: #92400e; }
 
 .footer {
     background: #e5e7eb;

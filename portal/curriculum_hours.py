@@ -108,6 +108,11 @@ CURRICULUM_HOURS = {
 # Fallback weekly hours when a subject/level is not listed in the annexes.
 DEFAULT_WEEKLY_HOURS = 2
 
+# Sanity cap for an explicitly assigned weekly-hours value on a ClassSubject.
+# The national annexes top out at 9 h/week; 12 leaves headroom for
+# school-specific arrangements while still catching typos.
+MAX_WEEKLY_HOURS = 12
+
 # Un-graded subjects: they still carry weekly hours (workload), but no
 # grades are required, so their quarter minimum norm is 0.
 UNGRADED_SUBJECTS = frozenset({

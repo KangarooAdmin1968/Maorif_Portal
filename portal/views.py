@@ -31,7 +31,10 @@ from .utils import (
     academic_school_ids, official_subjects,
     official_subjects_for
 )
-from .curriculum_hours import MIN_GRADES_BANDS, UNGRADED_SUBJECTS, weekly_hours, quarter_min_norm
+from .curriculum_hours import (
+    MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
+    weekly_hours, quarter_min_norm,
+)
 from .assessment_catalog import (
     ASSESSMENT_PURPOSES, SUMMATIVE_SCOPES,
     SEMANTIC_SINGLE, SEMANTIC_PAIRED, SEMANTIC_CONVERTED,
@@ -3730,6 +3733,9 @@ def lesson_allocation(request):
     user_to_profile = {tp.user_id: tp.id for tp in teachers}
     for cs in class_subjects:
         cs.selected_profile_id = cs.allocated_teacher_id or user_to_profile.get(cs.teacher_id)
+        # Explicitly saved weekly hours win; otherwise show the national
+        # curriculum recommendation as a suggested (muted) value.
+        cs.hours_display = weekly_hours(cs.class_name, cs.subject, cs)
 
     my_requests = list(SubjectDeactivationRequest.objects.filter(
         requested_by=request.user
@@ -3747,6 +3753,7 @@ def lesson_allocation(request):
         'is_zavuch': _is_zavuch(request.user, get_user_role(request.user)),
         'my_requests': my_requests,
         'pending_request_ids': pending_request_ids,
+        'max_weekly_hours': MAX_WEEKLY_HOURS,
     })
 
 
@@ -3768,8 +3775,9 @@ def save_lesson_allocation(request):
         return redirect('dashboard')
 
     cs_keys = [k for k in request.POST if k.startswith('alloc_')]
+    hours_keys = [k for k in request.POST if k.startswith('hours_')]
     cs_ids = []
-    for k in cs_keys:
+    for k in cs_keys + hours_keys:
         try:
             cs_ids.append(int(k.split('_', 1)[1]))
         except (ValueError, IndexError):
@@ -3811,6 +3819,46 @@ def save_lesson_allocation(request):
     if updated:
         ClassSubject.objects.bulk_update(updated, ['allocated_teacher', 'teacher'], batch_size=100)
 
+    # Weekly lesson hours ("Ҳафтада соат"). Empty input clears the explicit
+    # override (the curriculum recommendation applies again); non-numeric or
+    # out-of-range values are rejected without touching the row.
+    hours_updated = []
+    invalid_hours = []
+    for key in hours_keys:
+        try:
+            cs_id = int(key.split('_', 1)[1])
+        except (ValueError, IndexError):
+            continue
+        cs = class_subject_map.get(cs_id)
+        if not cs:
+            continue
+        raw = request.POST.get(key, '').strip()
+        if raw == '':
+            new_hours = None
+        else:
+            try:
+                new_hours = int(raw)
+            except ValueError:
+                invalid_hours.append(cs)
+                continue
+            if not 1 <= new_hours <= MAX_WEEKLY_HOURS:
+                invalid_hours.append(cs)
+                continue
+        if cs.hours_per_week != new_hours:
+            cs.hours_per_week = new_hours
+            hours_updated.append(cs)
+
+    if hours_updated:
+        ClassSubject.objects.bulk_update(hours_updated, ['hours_per_week'], batch_size=100)
+
+    if invalid_hours:
+        messages.warning(
+            request,
+            'Соати нодуруст рад шуд (аз 1 то %d): %s' % (
+                MAX_WEEKLY_HOURS,
+                ', '.join(f'{cs.class_name} {cs.subject}' for cs in invalid_hours),
+            )
+        )
     messages.success(request, 'Тақсимоти дарсҳо ба омӯзгорон бо муваффақият сабт шуд.')
     if request.user.is_superuser and school:
         return redirect(f'{reverse("lesson_allocation")}?school_id={school.id}')

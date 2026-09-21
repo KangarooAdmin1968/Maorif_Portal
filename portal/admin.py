@@ -59,7 +59,7 @@ class ClassSubjectAdmin(admin.ModelAdmin):
     form = ClassSubjectAdminForm
     change_form_template = 'admin/portal/classsubject/change_form.html'
     change_list_template = 'admin/portal/classsubject/change_list.html'
-    list_display = ['school', 'class_name', 'subject', 'teacher', 'is_default', 'is_active']
+    list_display = ['school', 'class_name', 'subject', 'teacher', 'hours_per_week', 'is_default', 'is_active']
     list_filter = ['school', 'is_default', 'is_active']
     search_fields = ['subject', 'class_name', 'teacher__username']
     list_editable = ['teacher', 'is_active']

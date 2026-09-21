@@ -2185,8 +2185,11 @@ def monthly_journal(request, school_id, class_name, subject):
     header_groups = []
     day_rows = []
     total_students = len(students)
+    dates_with_data = {k[0] for k in cells} | {k[0] for k in control_slots}
     for i in range(last_day):
         d = month_start + datetime.timedelta(days=i)
+        if d.weekday() == 6 and d not in dates_with_data and not lessons_by_date.get(d):
+            continue
         day_lessons = lessons_by_date.get(d, [])
         day_columns = []
         if day_lessons:

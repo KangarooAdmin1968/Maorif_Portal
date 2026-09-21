@@ -63,8 +63,76 @@ class MonthlyJournalTests(GoldenBase):
 
     def test_all_days_present(self):
         resp = self._get()
-        self.assertEqual(len(resp.context['header_groups']), 31)
-        self.assertEqual(len(resp.context['day_rows']), 31)
+        # October 2025 has 31 days, 4 of them Sundays (5, 12, 19, 26).
+        self.assertEqual(len(resp.context['header_groups']), 27)
+        self.assertEqual(len(resp.context['day_rows']), 27)
+
+    def test_sundays_hidden(self):
+        resp = self._get()
+        for d in resp.context['header_groups']:
+            self.assertNotEqual(d['date'].weekday(), 6)
+        for d in resp.context['day_rows']:
+            self.assertNotEqual(d['date'].weekday(), 6)
+        for c in resp.context['columns']:
+            self.assertNotEqual(c['date'].weekday(), 6)
+        sunday = datetime.date(2025, 10, 5)
+        self.assertNotIn(
+            sunday, [d['date'] for d in resp.context['day_rows']])
+
+    def test_sunday_with_grade_is_shown(self):
+        sunday = datetime.date(2025, 10, 5)
+        post_grade(self.client, self.s1, score='7', date=sunday)
+        resp = self._get()
+        self.assertIn(
+            sunday, [c['date'] for c in resp.context['columns']])
+        self.assertIn(
+            sunday, [d['date'] for d in resp.context['day_rows']])
+        self.assertIn(
+            sunday, [g['date'] for g in resp.context['header_groups']])
+        cells = self._cells_for(resp.context, self.s1, sunday, None)
+        self.assertEqual([c['text'] for c in cells], ['7'])
+        self.assertTrue(Grade.objects.filter(
+            student=self.s1, date=sunday).exists())
+
+    def test_sunday_with_lesson_only_is_shown(self):
+        sunday = datetime.date(2025, 10, 12)
+        make_lesson(self.cs_a, sunday, 1)
+        resp = self._get()
+        self.assertIn(
+            sunday, [c['date'] for c in resp.context['columns']])
+        self.assertIn(
+            sunday, [d['date'] for d in resp.context['day_rows']])
+
+    def test_sunday_with_control_assessment_is_shown(self):
+        sunday = datetime.date(2025, 10, 19)
+        make_control(self.cs_a, date=sunday)
+        resp = self._get()
+        self.assertIn(
+            sunday, [c['date'] for c in resp.context['columns']])
+        day = next(
+            d for d in resp.context['day_rows'] if d['date'] == sunday)
+        self.assertTrue(day['has_control'])
+
+    def test_active_cell_markup_present(self):
+        resp = self._get()
+        html = resp.content.decode()
+        self.assertIn('mcell-active', html)
+        self.assertIn('tabindex="-1"', html)
+
+    def test_keyboard_entry_markup_present(self):
+        resp = self._get()
+        html = resp.content.decode()
+        for marker in (
+            'keydown', "'Enter'", "'ArrowDown'", "'ArrowUp'",
+            "'Backspace'", "'Escape'", 'commitTypeBuf', 'moveFocus',
+        ):
+            self.assertIn(marker, html)
+
+    def test_extra_panel_button_is_tajik(self):
+        resp = self._get()
+        html = resp.content.decode()
+        self.assertIn('Иловагӣ', html)
+        self.assertNotIn('Қӯшимча', html)
 
     def test_one_column_per_lesson_same_day(self):
         l1 = make_lesson(self.cs_a, D_OCT_A, 1)
@@ -158,14 +226,15 @@ class MonthlyJournalTests(GoldenBase):
         post_grade(self.client, self.s1, score='7', date=D_Q1_B)  # November
         resp = self._get(month=OCT)
         # Nov 20 is not in the October grid at all.
-        self.assertEqual(len(resp.context['day_rows']), 31)
+        self.assertEqual(len(resp.context['day_rows']), 27)
         self.assertNotIn(
             D_Q1_B, [d['date'] for d in resp.context['day_rows']]
         )
         resp = self._get(month=NOV)
         status = {d['date']: d['status'] for d in resp.context['day_rows']}
         self.assertEqual(status[D_Q1_B], 'partial')
-        self.assertEqual(len(resp.context['day_rows']), 30)
+        # November 2025 has 30 days, 5 of them Sundays.
+        self.assertEqual(len(resp.context['day_rows']), 25)
 
     def test_prev_next_month_links(self):
         resp = self._get(month=OCT)
@@ -275,6 +344,25 @@ class JournalExcelExportTests(GoldenBase):
         resp = self.client.get(self.url, {'month': OCT})
         rows = self._rows(resp)
         self.assertEqual(len(rows), 2)  # header + one grade row
+
+    def test_sunday_with_data_exports(self):
+        post_grade(
+            self.client, self.s1, score='7',
+            date=datetime.date(2025, 10, 5))   # Sunday with real data
+        post_grade(self.client, self.s1, score='8', date=D_OCT_A)
+        resp = self.client.get(self.url, {'month': OCT})
+        rows = self._rows(resp)
+        self.assertEqual(len(rows), 3)  # header + Sunday grade + weekday grade
+        dates = sorted(r[2] for r in rows[1:])
+        self.assertEqual(dates, ['05.10.2025', '15.10.2025'])
+
+    def test_empty_sunday_exports_nothing(self):
+        # No grade is posted for the Sunday — the export must not fabricate
+        # a row for it (row-per-grade format).
+        post_grade(self.client, self.s1, score='8', date=D_OCT_A)
+        resp = self.client.get(self.url, {'month': OCT})
+        rows = self._rows(resp)
+        self.assertEqual(len(rows), 2)
 
     def test_cross_school_teacher_denied(self):
         self.client.force_login(self.teacher_b)
@@ -475,7 +563,7 @@ class MonthlySaveTests(GoldenBase):
         html = resp.content.decode()
         for n in range(1, 11):
             self.assertIn(f'data-gp="{n}"', html)
-        self.assertIn('Қӯшимча', html)
+        self.assertIn('Иловагӣ', html)
         self.assertIn('leave-modal', html)
         self.assertIn('beforeunload', html)
         self.assertIn('mcell-editable', html)

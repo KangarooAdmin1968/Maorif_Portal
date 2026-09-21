@@ -27,13 +27,17 @@
 .month-table th.sub-head.ctl { background: #fee2e2; color: #991b1b; }
 .month-table td.cell-control { background: #fef2f2; color: #991b1b; font-weight: 600; }
 .month-table td.cell-absent { color: #b91c1c; }
-.month-table td.cell-empty { background: #fafafa; }
+.month-table td.cell-empty { background: #fff; }
 .month-table th.stu-head, .month-table td.stu-cell { text-align: left; white-space: nowrap; position: sticky; left: 0; background: #fff; z-index: 1; }
 .month-table th.stu-head { background: #003366; color: #fff; }
 .mcell-editable { cursor: pointer; }
 .mcell-editable:hover { background: #eff6ff; }
 td.mcell-dirty, .mini-cell.mcell-dirty { background: #fef3c7 !important; outline: 1px dashed #f59e0b; }
 td.mcell-error, .mini-cell.mcell-error { background: #fee2e2 !important; outline: 1px solid #ef4444; }
+td.mcell-active, .mini-cell.mcell-active { outline: 2px solid #2563eb !important; outline-offset: -2px; background: #fff; position: relative; z-index: 2; }
+td.mcell-active.mcell-dirty, .mini-cell.mcell-active.mcell-dirty { background: #fef3c7 !important; }
+td.mcell-editable:focus { outline: none; }
+td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offset: -2px; }
 .save-bar { display: none; position: sticky; bottom: 0.5rem; margin: 0.75rem 0; padding: 0.6rem 1rem; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 0.5rem; align-items: center; gap: 0.75rem; z-index: 50; }
 .save-bar.show { display: flex; flex-wrap: wrap; }
 .save-bar .count { font-weight: 600; color: #92400e; }
@@ -125,7 +129,7 @@ td.mcell-error, .mini-cell.mcell-error { background: #fee2e2 !important; outline
     <tr>
       <td class="stu-cell">{{ forloop.counter }}. {{ row.student.full_name }}</td>
       {% for c in row.cells %}
-      <td {% if c.editable %}class="mcell-editable" data-cellkey="{{ row.student.id }}|{{ c.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ row.student.id }}" data-date="{{ c.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}<span class="{% if it.control %}cell-control{% elif it.absent %}cell-absent{% endif %}"{% if it.control %} style="background:#fee2e2;border-radius:0.2rem;padding:0 0.2rem;"{% endif %}>{{ it.text }}</span>{% if not forloop.last %} {% endif %}{% endfor %}</td>
+      <td {% if c.editable %}class="mcell-editable" tabindex="-1" data-cellkey="{{ row.student.id }}|{{ c.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ row.student.id }}" data-date="{{ c.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}<span class="{% if it.control %}cell-control{% elif it.absent %}cell-absent{% endif %}"{% if it.control %} style="background:#fee2e2;border-radius:0.2rem;padding:0 0.2rem;"{% endif %}>{{ it.text }}</span>{% if not forloop.last %} {% endif %}{% endfor %}</td>
       {% endfor %}
     </tr>
     {% endfor %}
@@ -167,7 +171,7 @@ td.mcell-error, .mini-cell.mcell-error { background: #fee2e2 !important; outline
         <tr>
           <td class="mini-name">{{ r.name }}</td>
           {% for c in r.cells %}
-          <td class="mini-cell{% if c.editable %} mcell-editable{% endif %}"{% if c.editable %} data-cellkey="{{ r.sid }}|{{ d.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ r.sid }}" data-date="{{ d.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}{{ it.text }}{% if not forloop.last %} {% endif %}{% endfor %}</td>
+          <td class="mini-cell{% if c.editable %} mcell-editable{% endif %}"{% if c.editable %} tabindex="-1" data-cellkey="{{ r.sid }}|{{ d.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ r.sid }}" data-date="{{ d.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}{{ it.text }}{% if not forloop.last %} {% endif %}{% endfor %}</td>
           {% endfor %}
         </tr>
         {% endfor %}
@@ -188,7 +192,7 @@ td.mcell-error, .mini-cell.mcell-error { background: #fee2e2 !important; outline
     <button type="button" data-gp="9">9</button><button type="button" data-gp="10">10</button>
     <button type="button" class="gp-clear" data-gp="" title="Тоза кардан">×</button>
   </div>
-  <button type="button" class="gp-extra-toggle" id="gp-extra-toggle">Қӯшимча ▾</button>
+  <button type="button" class="gp-extra-toggle" id="gp-extra-toggle">Иловагӣ ▾</button>
   <div class="gp-extra" id="gp-extra" style="display:none">
     <div class="gp-row" id="gp-att-row">
       <span>Давомат:</span>
@@ -261,7 +265,7 @@ function updateSaveBar() {
 
 function openPicker(td) {
   pickerCell = td;
-  // Reflect current extra state on the Қӯшимча buttons.
+  // Reflect current extra state on the Иловагӣ buttons.
   gpExtra.querySelectorAll('#gp-att-row button').forEach(b =>
     b.classList.toggle('on', b.dataset.att === (td.dataset.att || '')));
   gpExtra.querySelectorAll('#gp-beh-row button').forEach(b =>
@@ -319,11 +323,106 @@ document.getElementById('gp-extra-toggle').addEventListener('click', () => {
   gpExtra.style.display = gpExtra.style.display === 'none' ? 'block' : 'none';
 });
 
+// --- Active cell + keyboard grade entry (desktop) --------------------------
+// The active cell is the keyboard target: digits stage a grade locally,
+// Enter/arrows commit it to the unsaved state and move vertically within
+// the SAME date/lesson column. Nothing hits the server until saveMonthly().
+let activeCell = null;
+let typeBuf = '';
+let typePrev = null;
+
+function setActiveCell(td) {
+  commitTypeBuf();
+  if (activeCell) activeCell.classList.remove('mcell-active');
+  activeCell = td || null;
+  typeBuf = '';
+  typePrev = null;
+  if (activeCell) {
+    activeCell.classList.add('mcell-active');
+    activeCell.focus();
+  }
+}
+
+function commitTypeBuf() {
+  if (!activeCell || !typeBuf) { typeBuf = ''; typePrev = null; return; }
+  const key = activeCell.dataset.cellkey;
+  const v = parseInt(typeBuf, 10);
+  if (v >= 1 && v <= 10) {
+    pickerCell = activeCell;
+    stageEdit('score', String(v));
+    pickerCell = null;
+  } else {
+    setCellText(key, typePrev || '');
+  }
+  typeBuf = '';
+  typePrev = null;
+}
+
+function revertTypeBuf() {
+  if (activeCell && typeBuf) setCellText(activeCell.dataset.cellkey, typePrev || '');
+  typeBuf = '';
+  typePrev = null;
+}
+
+function moveFocus(delta) {
+  if (!activeCell) return;
+  const idx = activeCell.cellIndex;
+  let row = activeCell.parentElement;
+  while (true) {
+    row = delta > 0 ? row.nextElementSibling : row.previousElementSibling;
+    if (!row) return;
+    const td = row.cells[idx];
+    if (td && td.classList && td.classList.contains('mcell-editable')) {
+      closePicker();
+      setActiveCell(td);
+      td.scrollIntoView({block: 'nearest'});
+      return;
+    }
+  }
+}
+
+document.addEventListener('keydown', e => {
+  const td = e.target;
+  if (!td.classList || !td.classList.contains('mcell-editable')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (td !== activeCell) setActiveCell(td);
+
+  if (e.key >= '0' && e.key <= '9' && e.key.length === 1) {
+    e.preventDefault();
+    if (!typeBuf) {
+      const p = pendingEdits[td.dataset.cellkey];
+      typePrev = p && p.score !== undefined ? p.score : cellScoreText(td);
+    }
+    typeBuf = (typeBuf === '1' && e.key === '0') ? '10' : e.key;
+    setCellText(td.dataset.cellkey, typeBuf);
+  } else if (e.key === 'Enter' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    commitTypeBuf();
+    moveFocus(1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    commitTypeBuf();
+    moveFocus(-1);
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    revertTypeBuf();
+    pickerCell = td;
+    stageEdit('score', '');
+    pickerCell = null;
+  } else if (e.key === 'Escape') {
+    revertTypeBuf();
+    closePicker();
+  }
+});
+
 document.querySelectorAll('.mcell-editable').forEach(td => {
-  td.addEventListener('click', () => openPicker(td));
+  td.addEventListener('click', () => { setActiveCell(td); openPicker(td); });
 });
 document.addEventListener('click', e => {
-  if (!picker.contains(e.target) && !(e.target.classList && e.target.classList.contains('mcell-editable'))) closePicker();
+  if (!picker.contains(e.target) && !(e.target.classList && e.target.classList.contains('mcell-editable'))) {
+    closePicker();
+    setActiveCell(null);
+  }
 });
 
 function showToast(msg) {

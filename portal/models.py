@@ -2,6 +2,7 @@ import re
 import datetime
 from django.db import models
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.conf import settings
 
 
@@ -243,8 +244,87 @@ class ClassSubject(models.Model):
         super().save(*args, **kwargs)
 
 
+class TeachingGroup(models.Model):
+    """A teaching subgroup inside one canonical ClassSubject.
+
+    One subject stays one ClassSubject row (no 'English 2' duplicates);
+    groups let different teachers teach the same subject to different
+    student subsets. Group-scoped permission/UI wiring lands in later
+    phases — this model is storage only.
+    """
+    class_subject = models.ForeignKey(
+        ClassSubject, on_delete=models.CASCADE, related_name='groups',
+        verbose_name='Фани синф')
+    label = models.CharField('Гурӯҳ', max_length=50)
+    teacher = models.ForeignKey(
+        'TeacherProfile', on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='teaching_groups', verbose_name='Омӯзгор')
+    is_active = models.BooleanField('Фаъол?', default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['class_subject', 'label'],
+                name='unique_teaching_group_label',
+            ),
+        ]
+        verbose_name = 'Гурӯҳи таълимӣ'
+        verbose_name_plural = 'Гурӯҳҳои таълимӣ'
+
+    def __str__(self):
+        return f"{self.class_subject} — {self.label}"
+
+    def clean(self):
+        if self.teacher_id and self.teacher.school_id != self.class_subject.school_id:
+            raise ValidationError('Омӯзгори гурӯҳ бояд аз ҳамон муассиса бошад.')
+
+
+class SubjectGroupMembership(models.Model):
+    """One student's membership in a TeachingGroup.
+
+    The denormalized class_subject FK makes the DB-level rule "a student
+    belongs to at most one group per ClassSubject" enforceable via a plain
+    unique constraint. Cross-FK consistency (membership.group belongs to
+    membership.class_subject) is validated at application level in clean().
+    """
+    class_subject = models.ForeignKey(
+        ClassSubject, on_delete=models.CASCADE,
+        related_name='group_memberships', verbose_name='Фани синф')
+    group = models.ForeignKey(
+        TeachingGroup, on_delete=models.CASCADE,
+        related_name='memberships', verbose_name='Гурӯҳ')
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE,
+        related_name='subject_group_memberships', verbose_name='Хонанда')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['class_subject', 'student'],
+                name='unique_group_membership_per_subject',
+            ),
+        ]
+        verbose_name = 'Узвияти гурӯҳӣ'
+        verbose_name_plural = 'Узвиятҳои гурӯҳӣ'
+
+    def __str__(self):
+        return f"{self.student} — {self.group}"
+
+    def clean(self):
+        if self.group_id and self.group.class_subject_id != self.class_subject_id:
+            raise ValidationError('Гурӯҳ ба ҳамин фан тааллуқ надорад.')
+        if self.student_id and (
+            self.student.class_name != self.class_subject.class_name
+            or self.student.school_id != self.class_subject.school_id
+        ):
+            raise ValidationError('Хонанда ба ҳамин синф тааллуқ надорад.')
+
+
 class Lesson(models.Model):
     class_subject = models.ForeignKey(ClassSubject, on_delete=models.CASCADE)
+    group = models.ForeignKey(
+        TeachingGroup, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='lessons', verbose_name='Гурӯҳ')
     date = models.DateField('Сана')
     lesson_number = models.PositiveSmallIntegerField('Рақами дарс', default=1)
     topic = models.CharField('Мавзӯъ', max_length=255, blank=True)
@@ -256,6 +336,10 @@ class Lesson(models.Model):
 
     def __str__(self):
         return f"{self.class_subject} — {self.date} — дарси {self.lesson_number}"
+
+    def clean(self):
+        if self.group_id and self.group.class_subject_id != self.class_subject_id:
+            raise ValidationError('Гурӯҳ ба ҳамин дарс тааллуқ надорад.')
 
 
 class Assessment(models.Model):

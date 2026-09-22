@@ -22,7 +22,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest, Lesson, Assessment, CLASS_LETTERS
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, CLASS_LETTERS
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -41,6 +41,9 @@ from .assessment_catalog import (
     get_work_type, work_type_choices, work_type_label,
     result_semantics_for, assessment_purpose, assessment_scope,
     test_percentage, convert_test_points,
+)
+from .grouping import (
+    GROUP_LABELS, gender_split, balanced_split, validate_assignment,
 )
 
 
@@ -3736,7 +3739,7 @@ def lesson_allocation(request):
 
     class_subjects = ClassSubject.objects.filter(
         school=school, is_active=True
-    ).select_related('allocated_teacher', 'teacher').order_by('class_name', 'subject')
+    ).select_related('allocated_teacher', 'teacher').prefetch_related('groups').order_by('class_name', 'subject')
     teachers = TeacherProfile.objects.filter(school=school).select_related('user').order_by('full_name')
 
     user_to_profile = {tp.user_id: tp.id for tp in teachers}
@@ -3745,6 +3748,7 @@ def lesson_allocation(request):
         # Explicitly saved weekly hours win; otherwise show the national
         # curriculum recommendation as a suggested (muted) value.
         cs.hours_display = weekly_hours(cs.class_name, cs.subject, cs)
+        cs.group_count = sum(1 for g in cs.groups.all() if g.is_active)
 
     my_requests = list(SubjectDeactivationRequest.objects.filter(
         requested_by=request.user
@@ -3872,6 +3876,210 @@ def save_lesson_allocation(request):
     if request.user.is_superuser and school:
         return redirect(f'{reverse("lesson_allocation")}?school_id={school.id}')
     return redirect('lesson_allocation')
+
+
+# ---------------------------------------------------------------------------
+# TeachingGroup management (Phase 2)
+#
+# One ClassSubject stays one curriculum row — groups only split its students
+# between teachers. Admin (superuser) manages any school; a zavuch manages
+# only their own school via the existing _can_manage_school helper.
+# ---------------------------------------------------------------------------
+
+_GROUP_SAVE_ERRORS = {
+    'duplicate_within': 'Як хонанда ду бор дар ҳамон гурӯҳ интихоб шудааст.',
+    'duplicate_membership': 'Хонанда ҳамзамон дар ҳарду гурӯҳ буда наметавонад.',
+    'unknown_students': 'Хонандаи номаълум ё аз синфи дигар интихоб шудааст.',
+    'unassigned': 'Ҳама хонандагон бояд дақиқан ба яке аз ду гурӯҳ ворид шаванд.',
+}
+
+
+def _get_manageable_class_subject(request, cs_id):
+    """Return the active ClassSubject if the user may manage its groups."""
+    cs = get_object_or_404(
+        ClassSubject.objects.select_related('school'), pk=cs_id)
+    if not cs.is_active or not is_academic_school(cs.school):
+        return None
+    if not _can_manage_school(request.user, cs.school):
+        return None
+    return cs
+
+
+def _allocation_redirect(request, cs):
+    base = reverse('lesson_allocation')
+    class_param = urllib.parse.quote(cs.class_name)
+    if request.user.is_superuser:
+        return redirect(f'{base}?school_id={cs.school_id}&class={class_param}')
+    return redirect(f'{base}?class={class_param}')
+
+
+@login_required
+def class_groups(request, cs_id):
+    """Group-management page for one ClassSubject (Admin/Zavuch only)."""
+    cs = _get_manageable_class_subject(request, cs_id)
+    if cs is None:
+        messages.error(request, 'Дастрасӣ маҳдуд аст. Гурӯҳҳоро танҳо маъмурият ё завучи ҳамон муассиса идора мекунад.')
+        return redirect('dashboard')
+
+    school = cs.school
+    students = list(
+        Student.objects.filter(school=school, class_name=cs.class_name)
+        .order_by('full_name')
+    )
+    students_json = [
+        {'id': s.id, 'name': s.full_name, 'gender': s.gender or ''}
+        for s in students
+    ]
+    teachers = TeacherProfile.objects.filter(school=school).order_by('full_name')
+
+    groups = sorted(
+        (g for g in cs.groups.filter(is_active=True).prefetch_related('memberships')),
+        key=lambda g: GROUP_LABELS.index(g.label) if g.label in GROUP_LABELS else len(GROUP_LABELS),
+    )
+    existing_json = {
+        g.label: {
+            'teacher_id': g.teacher_id,
+            'members': [m.student_id for m in g.memberships.all()],
+        }
+        for g in groups if g.label in GROUP_LABELS
+    }
+
+    g1_gender, g2_gender = gender_split(students_json)
+    g1_balanced, g2_balanced = balanced_split(students_json)
+
+    return render(request, 'school/class_groups.html', {
+        'cs': cs,
+        'school': school,
+        'teachers': teachers,
+        'students_json': students_json,
+        'existing_json': existing_json,
+        'proposals_json': {
+            'gender': {'g1': g1_gender, 'g2': g2_gender},
+            'balanced': {'g1': g1_balanced, 'g2': g2_balanced},
+        },
+        'has_groups': bool(groups),
+        'group_labels': GROUP_LABELS,
+    })
+
+
+@login_required
+@require_POST
+def save_class_groups(request, cs_id):
+    """Persist the two TeachingGroups + memberships for a ClassSubject.
+
+    Everything is validated before the transaction and the write itself is
+    atomic, so a failure can never leave a partially saved grouping.
+    """
+    cs = _get_manageable_class_subject(request, cs_id)
+    if cs is None:
+        messages.error(request, 'Дастрасӣ маҳдуд аст.')
+        return redirect('dashboard')
+    school = cs.school
+
+    if request.POST.get('confirm') != '1':
+        messages.error(request, 'Сабт бидуни тасдиқи корбар иҷро намешавад.')
+        return redirect('class_groups', cs_id=cs.id)
+
+    teacher_ids = [
+        request.POST.get('teacher_g1', '').strip(),
+        request.POST.get('teacher_g2', '').strip(),
+    ]
+    member_lists = [
+        request.POST.getlist('members_g1'),
+        request.POST.getlist('members_g2'),
+    ]
+
+    teacher_map = {
+        str(tp.id): tp
+        for tp in TeacherProfile.objects.filter(school=school)
+    }
+    teachers = []
+    for i, tid in enumerate(teacher_ids):
+        tp = teacher_map.get(tid)
+        if tp is None:
+            messages.error(
+                request,
+                f'Омӯзгори {GROUP_LABELS[i]} интихоб нашудааст ё ба ин муассиса тааллуқ надорад.'
+            )
+            return redirect('class_groups', cs_id=cs.id)
+        teachers.append(tp)
+
+    student_ids = set(Student.objects.filter(
+        school=school, class_name=cs.class_name
+    ).values_list('id', flat=True))
+    errors = validate_assignment(student_ids, member_lists[0], member_lists[1])
+    if errors:
+        messages.error(
+            request,
+            'Тақсимоти хонандагон нодуруст аст: ' +
+            ' '.join(_GROUP_SAVE_ERRORS[e] for e in errors)
+        )
+        return redirect('class_groups', cs_id=cs.id)
+
+    # This UI manages exactly the two canonical labels. If unexpected groups
+    # exist (created outside this flow), refuse rather than orphaning their
+    # memberships silently.
+    if cs.groups.exclude(label__in=GROUP_LABELS).exists():
+        messages.error(
+            request,
+            'Ин фан гурӯҳҳои дигар дорад, ки аз ин саҳифа идора намешаванд. Сабт қатъ шуд.'
+        )
+        return redirect('class_groups', cs_id=cs.id)
+
+    with transaction.atomic():
+        group_objs = []
+        for i, label in enumerate(GROUP_LABELS):
+            group, _ = TeachingGroup.objects.update_or_create(
+                class_subject=cs,
+                label=label,
+                defaults={'teacher': teachers[i], 'is_active': True},
+            )
+            group_objs.append(group)
+        SubjectGroupMembership.objects.filter(class_subject=cs).delete()
+        SubjectGroupMembership.objects.bulk_create([
+            SubjectGroupMembership(
+                class_subject=cs, group=group_objs[i], student_id=sid)
+            for i in (0, 1) for sid in member_lists[i]
+        ])
+
+    messages.success(
+        request,
+        f'Гурӯҳҳои «{cs.subject}» ({cs.class_name}) бо муваффақият сабт шуданд.'
+    )
+    return _allocation_redirect(request, cs)
+
+
+@login_required
+@require_POST
+def delete_class_groups(request, cs_id):
+    """Delete a ClassSubject's groups — only when no recorded activity
+    (lessons, and through them grades/assessments) references them."""
+    cs = _get_manageable_class_subject(request, cs_id)
+    if cs is None:
+        messages.error(request, 'Дастрасӣ маҳдуд аст.')
+        return redirect('dashboard')
+
+    groups = list(cs.groups.all())
+    if not groups:
+        messages.info(request, 'Барои ин фан гурӯҳе вуҷуд надорад.')
+        return _allocation_redirect(request, cs)
+
+    if Lesson.objects.filter(group__in=groups).exists():
+        messages.error(
+            request,
+            'Нест кардан мумкин нест: ба ин гурӯҳҳо дарсҳо/фаъолияти сабтшуда вобастаанд. '
+            'Несткунӣ таърихи журналро вайрон мекунад.'
+        )
+        return redirect('class_groups', cs_id=cs.id)
+
+    with transaction.atomic():
+        TeachingGroup.objects.filter(pk__in=[g.pk for g in groups]).delete()
+
+    messages.success(
+        request,
+        f'Гурӯҳҳои «{cs.subject}» ({cs.class_name}) нест карда шуданд.'
+    )
+    return _allocation_redirect(request, cs)
 
 
 @login_required

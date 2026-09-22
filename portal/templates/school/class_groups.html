@@ -1,0 +1,382 @@
+{% extends 'portal/base.html' %}
+{% block title %}Гурӯҳҳои таълимӣ — {{ cs.subject }} — {{ cs.class_name }}{% endblock %}
+{% block extra_head %}
+<style>
+  .grp-note { color: #4b5563; font-size: .92rem; margin: .25rem 0 1rem; }
+  .mode-bar { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; }
+  .mode-btn {
+    padding: .55rem .9rem; border: 1px solid #d1d5db; border-radius: .5rem;
+    background: #fff; cursor: pointer; font-size: .9rem; font-weight: 600;
+    color: #374151;
+  }
+  .mode-btn.active { background: #003366; color: #fff; border-color: #003366; }
+
+  .grp-warnings {
+    border: 1px solid #f59e0b; background: #fffbeb; color: #92400e;
+    border-radius: .5rem; padding: .6rem .9rem; margin-bottom: 1rem;
+    font-size: .9rem;
+  }
+  .grp-warnings ul { margin: .25rem 0 0; padding-left: 1.2rem; }
+
+  .grp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .grp-card {
+    border: 1px solid #e5e7eb; border-radius: .6rem; background: #fff;
+    display: flex; flex-direction: column; min-width: 0;
+  }
+  .grp-card > header {
+    padding: .7rem .9rem; font-weight: 700; color: #003366; font-size: 1rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .grp-card .grp-teacher { padding: .6rem .9rem 0; }
+  .grp-card .grp-teacher label {
+    display: block; font-size: .8rem; font-weight: 600; color: #6b7280;
+    margin-bottom: .25rem;
+  }
+  .grp-students {
+    padding: .6rem .9rem; max-height: 46vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: .3rem;
+  }
+  .student-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .5rem; width: 100%; text-align: left;
+    padding: .45rem .6rem; border: 1px solid #e5e7eb; border-radius: .4rem;
+    background: #fff; cursor: pointer; font: inherit; font-size: .9rem;
+    color: #111827;
+  }
+  .student-row .g-tag {
+    flex: 0 0 auto; font-size: .75rem; font-weight: 700;
+    border-radius: 999px; padding: .05rem .45rem;
+    background: #f3f4f6; color: #6b7280;
+  }
+  .student-row .g-tag.m { background: #dbeafe; color: #1d4ed8; }
+  .student-row .g-tag.f { background: #fce7f3; color: #be185d; }
+  .student-row.selected {
+    background: #003366; border-color: #003366; color: #fff;
+  }
+  .student-row.selected .g-tag { background: rgba(255,255,255,.2); color: #fff; }
+  .student-row.elsewhere { opacity: .45; }
+  .grp-counts {
+    margin-top: auto; padding: .55rem .9rem; border-top: 1px solid #e5e7eb;
+    font-size: .82rem; color: #374151; background: #f9fafb;
+    border-radius: 0 0 .6rem .6rem;
+  }
+
+  .grp-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+
+  #grp-confirm-modal[hidden] { display: none; }
+  .grp-backdrop {
+    position: fixed; inset: 0; z-index: 1200;
+    background: rgba(15, 23, 42, .45);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .grp-dialog {
+    background: #fff; border-radius: .6rem; padding: 1.25rem 1.5rem;
+    max-width: 30rem; width: calc(100% - 2rem);
+    box-shadow: 0 20px 45px rgba(15, 23, 42, .35);
+  }
+  .grp-dialog h2 { margin: 0 0 .5rem; font-size: 1.05rem; color: #003366; }
+  .grp-dialog .grp-summary { margin: .4rem 0; font-size: .92rem; line-height: 1.5; }
+  .grp-dialog .grp-summary strong { color: #003366; }
+  .grp-dialog .grp-modal-actions {
+    display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem;
+  }
+
+  @media (max-width: 768px) {
+    .grp-grid { grid-template-columns: 1fr; }
+    .grp-students { max-height: 38vh; }
+    .mode-btn { flex: 1 1 100%; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>{{ school.name }}</h1>
+<h2>{{ cs.class_name }} — {{ cs.subject }} — Гурӯҳҳои таълимӣ</h2>
+<p class="grp-note">
+    Як фан — як сатри таълимӣ. Хонандагон байни ду гурӯҳ тақсим мешаванд;
+    ҳар гурӯҳ омӯзгори худро дорад. Тақсимоти пешниҳодшуда танҳо пешнамоиш аст —
+    то тасдиқи шумо ҳеҷ чиз сабт намешавад.
+</p>
+
+<div class="mode-bar" role="group" aria-label="Равиши тақсимот">
+    <button type="button" class="mode-btn" id="mode-gender">👦👧 Писарон / духтарон</button>
+    <button type="button" class="mode-btn active" id="mode-journal">📋 Мувофиқи журнали мавҷуда</button>
+    <button type="button" class="mode-btn" id="mode-balanced">⚖️ Мутаносиб тақсимлаш</button>
+</div>
+
+<div class="grp-warnings" id="grp-warnings" hidden>
+    <strong>⚠️ Пеш аз сабт ислоҳ кунед:</strong>
+    <ul id="grp-warning-list"></ul>
+</div>
+
+<form id="groups-form" method="post" action="{% url 'save_class_groups' cs.id %}">
+    {% csrf_token %}
+    <div class="grp-grid">
+        <section class="grp-card" aria-label="Гурӯҳи 1">
+            <header>Гурӯҳи 1</header>
+            <div class="grp-teacher">
+                <label for="teacher-g1">Омӯзгор</label>
+                <select id="teacher-g1" name="teacher_g1" class="form-select">
+                    <option value="">Интихоб кунед...</option>
+                    {% for t in teachers %}
+                    <option value="{{ t.id }}">{{ t.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="grp-students" id="students-g1"></div>
+            <footer class="grp-counts" id="counts-g1"></footer>
+        </section>
+        <section class="grp-card" aria-label="Гурӯҳи 2">
+            <header>Гурӯҳи 2</header>
+            <div class="grp-teacher">
+                <label for="teacher-g2">Омӯзгор</label>
+                <select id="teacher-g2" name="teacher_g2" class="form-select">
+                    <option value="">Интихоб кунед...</option>
+                    {% for t in teachers %}
+                    <option value="{{ t.id }}">{{ t.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="grp-students" id="students-g2"></div>
+            <footer class="grp-counts" id="counts-g2"></footer>
+        </section>
+    </div>
+
+    <div class="grp-actions">
+        <button type="button" id="save-btn" class="btn btn-success" disabled>💾 Сабт кардан</button>
+        {% if is_superuser %}
+        <a href="{% url 'lesson_allocation' %}?school_id={{ school.id }}&class={{ cs.class_name|urlencode }}" class="btn">Бозгашт</a>
+        {% else %}
+        <a href="{% url 'lesson_allocation' %}?class={{ cs.class_name|urlencode }}" class="btn">Бозгашт</a>
+        {% endif %}
+    </div>
+</form>
+
+{% if has_groups %}
+<form id="delete-form" method="post" action="{% url 'delete_class_groups' cs.id %}" style="margin-top:.75rem;">
+    {% csrf_token %}
+    <button type="button" id="delete-btn" class="btn btn-danger">🗑 Нест кардани гурӯҳҳо</button>
+</form>
+{% endif %}
+
+<div id="grp-confirm-modal" hidden>
+    <div class="grp-backdrop">
+        <div class="grp-dialog" role="alertdialog" aria-modal="true" aria-labelledby="grp-confirm-title">
+            <h2 id="grp-confirm-title">Тасдиқи сабт</h2>
+            <p>Оё мехоҳед ин ду гурӯҳро бо чунин таркиб сабт кунед?</p>
+            <div class="grp-summary" id="grp-summary-1"></div>
+            <div class="grp-summary" id="grp-summary-2"></div>
+            <div class="grp-modal-actions">
+                <button type="button" id="confirm-save" class="btn btn-success">Ҳа, сабт кардан</button>
+                <button type="button" id="confirm-cancel" class="btn">Бекор кардан</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{ students_json|json_script:"grp-students-data" }}
+{{ existing_json|json_script:"grp-existing-data" }}
+{{ proposals_json|json_script:"grp-proposals-data" }}
+
+<script>
+(function () {
+    function jd(id) {
+        return JSON.parse(document.getElementById(id).textContent);
+    }
+    var STUDENTS = jd('grp-students-data');
+    var EXISTING = jd('grp-existing-data');
+    var PROPOSALS = jd('grp-proposals-data');
+    var LABEL_G1 = "{{ group_labels.0|escapejs }}";
+    var LABEL_G2 = "{{ group_labels.1|escapejs }}";
+
+    var byId = {};
+    STUDENTS.forEach(function (s) { byId[s.id] = s; });
+
+    function toSet(arr) { return new Set(arr || []); }
+    function snapshot(s) { return { g1: new Set(s.g1), g2: new Set(s.g2) }; }
+    function load(obj) { return { g1: toSet(obj.g1), g2: toSet(obj.g2) }; }
+
+    var state = {
+        g1: toSet(EXISTING[LABEL_G1] && EXISTING[LABEL_G1].members),
+        g2: toSet(EXISTING[LABEL_G2] && EXISTING[LABEL_G2].members)
+    };
+    // "Мувофиқи журнали мавҷуда" keeps the last manually arranged state.
+    var journalState = snapshot(state);
+    var mode = 'journal';
+
+    var sel1 = document.getElementById('teacher-g1');
+    var sel2 = document.getElementById('teacher-g2');
+    if (EXISTING[LABEL_G1] && EXISTING[LABEL_G1].teacher_id) sel1.value = EXISTING[LABEL_G1].teacher_id;
+    if (EXISTING[LABEL_G2] && EXISTING[LABEL_G2].teacher_id) sel2.value = EXISTING[LABEL_G2].teacher_id;
+
+    var list1 = document.getElementById('students-g1');
+    var list2 = document.getElementById('students-g2');
+    var counts1 = document.getElementById('counts-g1');
+    var counts2 = document.getElementById('counts-g2');
+    var warningsBox = document.getElementById('grp-warnings');
+    var warningsList = document.getElementById('grp-warning-list');
+    var saveBtn = document.getElementById('save-btn');
+    var form = document.getElementById('groups-form');
+    var modal = document.getElementById('grp-confirm-modal');
+
+    function teacherName(sel) {
+        var opt = sel.options[sel.selectedIndex];
+        return (sel.value && opt) ? opt.textContent : '—';
+    }
+
+    function genderTag(g) {
+        if (g === 'M') return '<span class="g-tag m">П</span>';
+        if (g === 'F') return '<span class="g-tag f">Д</span>';
+        return '<span class="g-tag">—</span>';
+    }
+
+    function onStudentClick(groupKey, sid) {
+        var me = state[groupKey];
+        var other = state[groupKey === 'g1' ? 'g2' : 'g1'];
+        if (me.has(sid)) {
+            me.delete(sid);                    // temporarily unassigned — allowed
+        } else {
+            other.delete(sid);                 // a student can never be in both
+            me.add(sid);
+        }
+        journalState = snapshot(state);
+        render();
+    }
+
+    function renderColumn(container, key) {
+        container.innerHTML = '';
+        STUDENTS.forEach(function (s) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            var selected = state[key].has(s.id);
+            var elsewhere = !selected && state[key === 'g1' ? 'g2' : 'g1'].has(s.id);
+            btn.className = 'student-row' + (selected ? ' selected' : '') + (elsewhere ? ' elsewhere' : '');
+            btn.innerHTML = '<span>' + s.name + '</span>' + genderTag(s.gender);
+            btn.addEventListener('click', function () { onStudentClick(key, s.id); });
+            container.appendChild(btn);
+        });
+        if (!STUDENTS.length) {
+            container.innerHTML = '<p style="color:#6b7280;font-size:.9rem;">Хонандае дар ин синф нест.</p>';
+        }
+    }
+
+    function stats(memberSet) {
+        var b = 0, g = 0, u = 0;
+        memberSet.forEach(function (sid) {
+            var s = byId[sid];
+            if (!s) return;
+            if (s.gender === 'M') b++;
+            else if (s.gender === 'F') g++;
+            else u++;
+        });
+        return { boys: b, girls: g, unknown: u, total: b + g + u };
+    }
+
+    function footerText(sel, st) {
+        var parts = [
+            'Омӯзгор: ' + teacherName(sel),
+            'Писарон: ' + st.boys,
+            'Духтарон: ' + st.girls
+        ];
+        if (st.unknown) parts.push('Ҷинс номаълум: ' + st.unknown);
+        parts.push('Ҷамъ: ' + st.total);
+        return parts.join(' · ');
+    }
+
+    function validate() {
+        var warnings = [];
+        if (!sel1.value) warnings.push('Омӯзгори ' + LABEL_G1 + ' интихоб нашудааст.');
+        if (!sel2.value) warnings.push('Омӯзгори ' + LABEL_G2 + ' интихоб нашудааст.');
+        var unassigned = 0;
+        STUDENTS.forEach(function (s) {
+            if (!state.g1.has(s.id) && !state.g2.has(s.id)) unassigned++;
+        });
+        if (unassigned) warnings.push(unassigned + ' хонанда ба ҳеҷ гурӯҳе ворид нашудааст.');
+        state.g1.forEach(function (sid) {
+            if (state.g2.has(sid)) warnings.push('Хонанда дар ҳарду гурӯҳ аст — ин мумкин нест.');
+        });
+        return warnings;
+    }
+
+    function render() {
+        renderColumn(list1, 'g1');
+        renderColumn(list2, 'g2');
+        var st1 = stats(state.g1), st2 = stats(state.g2);
+        counts1.textContent = footerText(sel1, st1);
+        counts2.textContent = footerText(sel2, st2);
+        var warnings = validate();
+        warningsList.innerHTML = '';
+        warnings.forEach(function (w) {
+            var li = document.createElement('li');
+            li.textContent = w;
+            warningsList.appendChild(li);
+        });
+        warningsBox.hidden = warnings.length === 0;
+        saveBtn.disabled = warnings.length > 0;
+    }
+
+    function setMode(next, data) {
+        mode = next;
+        state = load(data);
+        ['gender', 'journal', 'balanced'].forEach(function (m) {
+            document.getElementById('mode-' + m).classList.toggle('active', m === mode);
+        });
+        render();
+    }
+
+    document.getElementById('mode-gender').addEventListener('click', function () {
+        setMode('gender', PROPOSALS.gender);
+    });
+    document.getElementById('mode-journal').addEventListener('click', function () {
+        setMode('journal', { g1: Array.from(journalState.g1), g2: Array.from(journalState.g2) });
+    });
+    document.getElementById('mode-balanced').addEventListener('click', function () {
+        setMode('balanced', PROPOSALS.balanced);
+    });
+
+    sel1.addEventListener('change', render);
+    sel2.addEventListener('change', render);
+
+    saveBtn.addEventListener('click', function () {
+        var st1 = stats(state.g1), st2 = stats(state.g2);
+        document.getElementById('grp-summary-1').innerHTML =
+            '<strong>' + LABEL_G1 + ':</strong> ' + footerText(sel1, st1);
+        document.getElementById('grp-summary-2').innerHTML =
+            '<strong>' + LABEL_G2 + ':</strong> ' + footerText(sel2, st2);
+        modal.hidden = false;
+    });
+    document.getElementById('confirm-cancel').addEventListener('click', function () {
+        modal.hidden = true;
+    });
+    modal.addEventListener('click', function (e) {
+        if (e.target.classList.contains('grp-backdrop')) modal.hidden = true;
+    });
+
+    document.getElementById('confirm-save').addEventListener('click', function () {
+        // The server requires the explicit confirmation flag plus the two
+        // membership lists; selects already travel with the form.
+        function addHidden(name, value) {
+            var inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = name;
+            inp.value = value;
+            form.appendChild(inp);
+        }
+        addHidden('confirm', '1');
+        state.g1.forEach(function (sid) { addHidden('members_g1', sid); });
+        state.g2.forEach(function (sid) { addHidden('members_g2', sid); });
+        form.submit();
+    });
+
+    var deleteBtn = document.getElementById('delete-btn');
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', function () {
+            if (confirm('Оё мехоҳед гурӯҳҳои ин фанро нест кунед? Ин амал бозгашт надорад.')) {
+                document.getElementById('delete-form').submit();
+            }
+        });
+    }
+
+    render();
+})();
+</script>
+{% endblock %}

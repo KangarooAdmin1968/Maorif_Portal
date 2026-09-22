@@ -180,6 +180,7 @@
                                 </select>
                             </td>
                             <td>
+                                <a class="btn btn-sm group-manage-btn" style="background:#eef2ff; color:#003366; border:1px solid #c7d2fe;" href="{% url 'class_groups' cs.id %}">{% if cs.group_count %}✏️ Гурӯҳҳо ({{ cs.group_count }}){% else %}+ Гурӯҳ{% endif %}</a>
                                 {% if is_superuser %}
                                 <button type="button" class="btn btn-danger btn-sm deactivate-btn" data-cs-id="{{ cs.id }}">Хориҷ кардан</button>
                                 {% elif is_zavuch %}

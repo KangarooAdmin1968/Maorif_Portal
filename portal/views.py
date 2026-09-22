@@ -4374,3 +4374,22 @@ def google_verification(request):
         'google-site-verification: google3c6e6431fb434e83.html',
         content_type='text/html'
     )
+
+
+def service_worker(request):
+    """Serve the PWA service worker at root scope.
+
+    The asset lives in portal/static/portal/sw.js, but a service worker can
+    only control pages under its own URL path — serving it at /sw.js with
+    the Service-Worker-Allowed header gives it the '/' scope the manifest's
+    start_url needs, in both DEBUG and production.
+    """
+    from django.contrib.staticfiles.finders import find
+    path = find('portal/sw.js')
+    if not path:
+        return HttpResponseNotFound('service worker not found')
+    with open(path, 'rb') as f:
+        response = HttpResponse(f.read(), content_type='application/javascript')
+    response['Service-Worker-Allowed'] = '/'
+    response['Cache-Control'] = 'no-cache'
+    return response

@@ -46,6 +46,7 @@ urlpatterns = [
     path('schools/deactivation-requests/review/', views.review_deactivation_request, name='review_deactivation_request'),
     path('student/<str:student_id>/', views.student_detail, name='student_detail'),
     path('google3c6e6431fb434e83.html', views.google_verification, name='google_verification'),
+    path('sw.js', views.service_worker, name='service_worker'),
     path('password_change/', auth_views.PasswordChangeView.as_view(
         template_name='registration/password_change_form.html',
         success_url='/password_change/done/'

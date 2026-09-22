@@ -777,3 +777,44 @@ class OfflineLessonKeyTests(GoldenBase):
         self.assertEqual(
             Grade.objects.get(student=self.s1, date=D_Q1).lesson_id, l1.id
         )
+
+
+# ---------------------------------------------------------------------------
+# "+ Дарси нав" cancel — prompt() null must abort before the POST
+# ---------------------------------------------------------------------------
+
+
+class LessonCreateCancelTests(GoldenBase):
+    """createLesson() POSTs lesson_save immediately, so Cancel/Escape on the
+    topic prompt must return early — regression guard on the template JS."""
+
+    def test_createlesson_aborts_on_prompt_cancel(self):
+        from pathlib import Path
+        from django.conf import settings
+        src = (Path(settings.BASE_DIR) / 'portal' / 'templates' / 'portal'
+               / 'grade_entry.html').read_text(encoding='utf-8')
+        fn = src[src.index('function createLesson()'):src.index('function deleteLesson()')]
+        self.assertIn('prompt(', fn)
+        # The null check sits between the prompt call and the POST.
+        self.assertIn('if (topic === null) return;', fn)
+        self.assertLess(fn.index('prompt('), fn.index('topic === null'))
+        self.assertLess(fn.index('topic === null'), fn.index('fetch('))
+
+    def test_delete_middle_lesson_keeps_siblings(self):
+        # Cancelling an empty D2 must never touch D1 or D3.
+        self.client.force_login(self.teacher_a)
+        l1 = make_lesson(self.cs_a, D_Q1, 1)
+        l2 = make_lesson(self.cs_a, D_Q1, 2)
+        l3 = make_lesson(self.cs_a, D_Q1, 3)
+        post_grade(self.client, self.s1, score='9', lesson=l1)
+        post_grade(self.client, self.s1, score='7', lesson=l3)
+        resp = self.client.post(LESSON_DELETE_URL, {'lesson_id': l2.id})
+        self.assertTrue(resp.json()['success'])
+        remaining = list(
+            Lesson.objects.filter(class_subject=self.cs_a, date=D_Q1)
+            .order_by('lesson_number')
+            .values_list('lesson_number', flat=True)
+        )
+        self.assertEqual(remaining, [1, 3])
+        self.assertTrue(Grade.objects.filter(lesson=l1).exists())
+        self.assertTrue(Grade.objects.filter(lesson=l3).exists())

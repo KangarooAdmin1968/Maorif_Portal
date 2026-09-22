@@ -310,7 +310,9 @@ function selectLesson(id) {
 }
 function createLesson() {
     if (!navigator.onLine) { showOfflineBanner(); return; }
-    const topic = prompt('Мавзӯъи дарс (ихтиёрӣ):', '') || '';
+    const topic = prompt('Мавзӯъи дарс (ихтиёрӣ):', '');
+    // Cancel/Escape aborts: no Lesson is created. An empty topic on OK is valid.
+    if (topic === null) return;
     const params = new URLSearchParams({
         class_subject_id: classSubjectId,
         date: document.getElementById('daily-date').value,

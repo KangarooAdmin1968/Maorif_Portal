@@ -1442,13 +1442,22 @@ def sticker_entry(request, school_id, class_name):
 
     subject = normalize_subject('Стикерҳо')
     # Ensure a ClassSubject record exists for permission control
-    get_or_create_unique(
+    cs_sticker, _ = get_or_create_unique(
         ClassSubject,
         school=school,
         class_name=class_name,
         subject=subject,
         defaults={'is_default': False, 'is_active': True}
     )
+    # The pseudo-subject is not part of the official curriculum, so the
+    # ensure_class_subjects sweep (run on every class_detail visit) may have
+    # deactivated it. Reactivate — unless an approved deactivation request
+    # exists, matching the semantics ensure_class_subjects itself honors.
+    if not cs_sticker.is_active and not SubjectDeactivationRequest.objects.filter(
+        class_subject=cs_sticker, status='approved'
+    ).exists():
+        cs_sticker.is_active = True
+        cs_sticker.save(update_fields=['is_active'])
 
     if not can_view_grade_journal(request.user, school, class_name, subject):
         if not (request.user.is_superuser or is_zavuch) and role == settings.ROLE_TEACHER:

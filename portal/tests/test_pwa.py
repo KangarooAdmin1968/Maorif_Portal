@@ -5,6 +5,7 @@ offline data). These tests also pin the manifest contract needed for the
 browser's native Install / Add-to-Home-Screen flow.
 """
 import json
+import re
 
 from django.contrib.staticfiles.finders import find
 from django.test import TestCase
@@ -105,3 +106,59 @@ class BaseTemplatePwaTests(TestCase):
         self.assertIn("serviceWorker.register('/sw.js')", self.html)
         # Registered only after page load — never blocks rendering/forms.
         self.assertIn("addEventListener('load'", self.html)
+
+
+class InstallUiTests(TestCase):
+    """Phase 2: the shared install button + manual fallback in base.html."""
+
+    def setUp(self):
+        r = self.client.get(reverse('dashboard'))
+        self.assertEqual(r.status_code, 200)
+        self.html = r.content.decode()
+
+    def test_install_button_present_and_starts_hidden(self):
+        m = re.search(r'<button[^>]*id="pwa-install-btn"[^>]*>', self.html)
+        self.assertIsNotNone(m)
+        self.assertIn('hidden', m.group(0))
+        self.assertIn('Илова ба экрани асосӣ', self.html)
+
+    def test_chromium_install_flow_wired(self):
+        self.assertIn('beforeinstallprompt', self.html)
+        self.assertIn('preventDefault', self.html)
+        self.assertIn('appinstalled', self.html)
+        # The stored event is only prompted from a user click.
+        self.assertIn("btn.addEventListener('click'", self.html)
+        self.assertIn('deferredPrompt', self.html)
+
+    def test_standalone_state_hides_button(self):
+        self.assertIn('(display-mode: standalone)', self.html)
+        self.assertIn('navigator.standalone', self.html)
+
+    def test_manual_fallback_dialog_present(self):
+        self.assertIn('id="install-modal"', self.html)
+        self.assertIn('Насб кардани Маориф', self.html)
+        self.assertIn('Пӯшидан', self.html)
+
+    def test_browser_specific_instructions_present(self):
+        # iOS Safari, Firefox Android, and the generic fallback text.
+        self.assertIn('Share', self.html)
+        self.assertIn('Add to Home Screen', self.html)
+        self.assertIn('Firefox', self.html)
+        self.assertIn('Install app', self.html)
+        self.assertIn('Add to Home screen', self.html)
+
+    def test_dialog_is_not_auto_opened(self):
+        # The dialog ships hidden; JS only opens it from the button handler.
+        m = re.search(r'<div id="install-modal"[^>]*>', self.html)
+        self.assertIsNotNone(m)
+        self.assertIn('hidden', m.group(0))
+        self.assertNotIn('openModal()', self.html.split('click')[0])
+
+    def test_no_external_scripts_or_tracking(self):
+        self.assertNotIn('google-analytics', self.html)
+        self.assertNotIn('gtag', self.html)
+        # All script/style assets stay first-party.
+        for src in re.findall(r'<script[^>]+src="([^"]+)"', self.html):
+            self.assertTrue(
+                src.startswith('/static/') or src.startswith('/'),
+                f'external script: {src}')

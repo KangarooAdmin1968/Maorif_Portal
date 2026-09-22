@@ -132,6 +132,24 @@
             transform: translateY(-1px); box-shadow: 0 3px 8px rgba(2,132,199,.3);
         }
         .parent-empty { color: #64748b; font-size: .95rem; margin: .5rem 0 0; }
+
+        /* PWA install — button + manual-instruction dialog */
+        #pwa-install-btn { white-space: nowrap; }
+        #install-modal[hidden] { display: none; }
+        .install-backdrop {
+            position: fixed; inset: 0; z-index: 2100;
+            background: rgba(15, 23, 42, .55);
+            display: flex; align-items: center; justify-content: center;
+            padding: 1rem;
+        }
+        .install-card {
+            background: #fff; border-radius: .75rem; padding: 1.25rem 1.5rem;
+            width: 100%; max-width: 24rem;
+            box-shadow: 0 20px 50px rgba(15, 23, 42, .35);
+        }
+        .install-card h2 { margin: 0 0 .5rem; font-size: 1.05rem; color: #003366; }
+        .install-card p { margin: .4rem 0; font-size: .95rem; line-height: 1.55; color: #1f2937; }
+        .install-actions { display: flex; justify-content: flex-end; margin-top: .75rem; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -179,6 +197,7 @@
                     </button>
                     <a href="{% url 'login' %}" class="btn">Вуруд</a>
                 {% endif %}
+                <button type="button" id="pwa-install-btn" class="btn btn-outline" hidden>📱 Илова ба экрани асосӣ</button>
             </div>
         </div>
     </nav>
@@ -213,6 +232,18 @@
         </div>
     </footer>
 
+    <div id="install-modal" hidden>
+        <div class="install-backdrop">
+            <div class="install-card" role="dialog" aria-modal="true" aria-labelledby="install-title">
+                <h2 id="install-title">📱 Насб кардани Маориф</h2>
+                <p>Барои илова кардан ба экрани асосӣ:</p>
+                <p id="install-steps"></p>
+                <div class="install-actions">
+                    <button type="button" id="install-close" class="btn">Пӯшидан</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <script>
     // PWA service worker registration — inert, fail-silent, post-load.
     if ('serviceWorker' in navigator) {
@@ -220,6 +251,84 @@
             navigator.serviceWorker.register('{% url "service_worker" %}').catch(function () {});
         });
     }
+    </script>
+    <script>
+    // PWA install UX. The button stays hidden when the app is already
+    // installed or the browser can never install (e.g. desktop Firefox).
+    // Chromium: beforeinstallprompt -> native prompt on user click.
+    // Other browsers: a small Tajik manual-instruction dialog.
+    (function () {
+        var btn = document.getElementById('pwa-install-btn');
+        var modal = document.getElementById('install-modal');
+        var steps = document.getElementById('install-steps');
+        var closeBtn = document.getElementById('install-close');
+        if (!btn || !modal || !steps || !closeBtn) return;
+
+        var deferredPrompt = null;
+        var ua = navigator.userAgent || '';
+        var standalone =
+            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+            navigator.standalone === true;
+        if (standalone) return;
+
+        var isIOS = /iPhone|iPad|iPod/.test(ua) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        var isAndroid = /Android/.test(ua);
+        var isFirefox = /Firefox|FxiOS/.test(ua);
+        // Desktop Firefox has no PWA install path — keep the button hidden.
+        if (isFirefox && !isAndroid && !isIOS) return;
+
+        btn.hidden = false;
+
+        window.addEventListener('beforeinstallprompt', function (e) {
+            e.preventDefault();
+            deferredPrompt = e;
+            btn.hidden = false;
+        });
+        window.addEventListener('appinstalled', function () {
+            deferredPrompt = null;
+            btn.hidden = true;
+        });
+
+        function instruction() {
+            if (isIOS) {
+                return 'Дар Safari тугмаи «Share» (□↑)-ро пахш кунед, сипас «Add to Home Screen» / «Илова ба экрани асосӣ» → «Add»-ро интихоб кунед.';
+            }
+            if (isFirefox && isAndroid) {
+                return 'Дар Firefox менюи ⋮-ро кушоед → «Насб кардан» (Install) → «Илова ба экрани асосӣ»-ро интихоб кунед.';
+            }
+            return 'Менюи браузерро кушоед ва «Install app» ё «Add to Home screen»-ро интихоб кунед.';
+        }
+
+        function openModal() {
+            steps.textContent = instruction();
+            modal.hidden = false;
+            closeBtn.focus();
+        }
+        function closeModal() { modal.hidden = true; btn.focus(); }
+
+        btn.addEventListener('click', function () {
+            if (deferredPrompt) {
+                var ev = deferredPrompt;
+                deferredPrompt = null;
+                ev.prompt();
+                ev.userChoice.then(function (choice) {
+                    if (choice && choice.outcome === 'accepted') {
+                        btn.hidden = true;
+                    }
+                }).catch(function () {});
+            } else {
+                openModal();
+            }
+        });
+        closeBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', function (e) {
+            if (e.target.classList.contains('install-backdrop')) closeModal();
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !modal.hidden) closeModal();
+        });
+    })();
     </script>
     {{ parent_portal_data|json_script:"parent-portal-data" }}
     <div id="parent-modal" class="parent-modal" hidden>

@@ -1,0 +1,16 @@
+[Unit]
+Description=gunicorn daemon for maorif_portal
+After=network.target
+
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/var/www/maorif_zafarobod
+Environment="PATH=/var/www/maorif_zafarobod/venv/bin"
+Environment="DJANGO_DEBUG=0"
+ExecStart=/var/www/maorif_zafarobod/venv/bin/gunicorn --workers 4 --threads 2 --timeout 60 --access-logfile /var/log/gunicorn/access.log --error-logfile /var/log/gunicorn/error.log --capture-output --log-level info --bind 127.0.0.1:8000 maorif_portal.wsgi:application
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

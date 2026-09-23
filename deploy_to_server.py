@@ -100,24 +100,49 @@ def main():
     print('\n--- Applying Django migrations ---', flush=True)
     run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py migrate')
 
+    # SQLite WAL: lets readers proceed while a grade write holds the single
+    # writer lock — safe here (single host, local disk, short atomic
+    # transactions). Idempotent; persists in the DB file header once set.
+    print('\n--- Enabling SQLite WAL mode (idempotent) ---', flush=True)
+    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} -c "import sqlite3; '
+                f'c = sqlite3.connect(\'db.sqlite3\'); '
+                f'print(\'journal_mode:\', c.execute(\'PRAGMA journal_mode=WAL\').fetchone()[0]); '
+                f'c.close()"')
+
+    # Static assets (needed by nginx: /sw.js is served from staticfiles now)
+    print('\n--- Collecting static ---', flush=True)
+    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py collectstatic --noinput')
+
+    # Gunicorn logs + logrotate + nginx site config (timed log format,
+    # /sw.js served statically). Installed before the service restart below.
+    print('\n--- Installing ops config (logs, logrotate, nginx) ---', flush=True)
+    run(client, 'mkdir -p /var/log/gunicorn')
+    sftp = client.open_sftp()
+    sftp.put(f'{os.path.dirname(os.path.abspath(__file__))}/deploy/gunicorn.service',
+             '/etc/systemd/system/gunicorn.service')
+    sftp.put(f'{os.path.dirname(os.path.abspath(__file__))}/deploy/gunicorn-logrotate',
+             '/etc/logrotate.d/gunicorn')
+    sftp.put(f'{os.path.dirname(os.path.abspath(__file__))}/deploy/nginx-maorif_zafarobod.conf',
+             '/etc/nginx/sites-available/maorif_zafarobod')
+    sftp.close()
+    run(client, 'nginx -t')
+
     # Align director/zavuch usernames if explicitly requested
     if os.environ.get('UPDATE_USERNAMES'):
         print('\n--- Aligning usernames ---', flush=True)
         run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} update_usernames.py')
 
-    # Kill gunicorn
-    print('\n--- Restarting Gunicorn ---', flush=True)
-    run(client, 'pkill -f gunicorn || true')
+    # Restart Gunicorn under systemd (auto-restart, journald logs, no stray
+    # daemon). fuser -k clears any manually started process holding :8000.
+    print('\n--- Restarting Gunicorn (systemd) ---', flush=True)
+    run(client, 'fuser -k 8000/tcp || true')
     time.sleep(1)
-
-    # Start gunicorn
-    start_cmd = (
-        f'cd {PROJECT_DIR} && {VENV_GUNICORN} '
-        f'--workers 3 --bind 127.0.0.1:8000 maorif_portal.wsgi:application --daemon'
-    )
-    exit_code, _, _ = run(client, start_cmd)
+    run(client, 'systemctl daemon-reload')
+    run(client, 'systemctl enable gunicorn')
+    exit_code, _, _ = run(client, 'systemctl restart gunicorn')
     if exit_code != 0:
-        print('Gunicorn start failed.', file=sys.stderr)
+        print('Gunicorn restart failed.', file=sys.stderr)
+        run(client, 'journalctl -u gunicorn --no-pager -n 20')
         client.close()
         return 1
 

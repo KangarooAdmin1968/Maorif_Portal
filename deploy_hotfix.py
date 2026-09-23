@@ -103,9 +103,15 @@ def main():
     run(c, f'cd {PROJECT_DIR} && {PY} manage.py collectstatic --noinput')
 
     print('\n--- Restarting gunicorn ---', flush=True)
+    run(c, 'mkdir -p /var/log/gunicorn')
     run(c, 'pkill -f gunicorn || true')
     time.sleep(1)
-    code = run(c, f'cd {PROJECT_DIR} && {PROJECT_DIR}/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 maorif_portal.wsgi:application --daemon')
+    code = run(c, f'cd {PROJECT_DIR} && DJANGO_DEBUG=0 {PROJECT_DIR}/venv/bin/gunicorn '
+                  '--workers 4 --threads 2 --timeout 60 '
+                  '--access-logfile /var/log/gunicorn/access.log '
+                  '--error-logfile /var/log/gunicorn/error.log '
+                  '--capture-output --log-level info '
+                  '--bind 127.0.0.1:8000 maorif_portal.wsgi:application --daemon')
     if code != 0:
         print('Gunicorn restart failed!', file=sys.stderr)
         c.close()

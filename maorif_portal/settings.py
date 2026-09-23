@@ -8,7 +8,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-change-me-before-production'
 
-DEBUG = True
+# Local development keeps DEBUG=True. Production sets DJANGO_DEBUG=0 in the
+# Gunicorn launch environment (deploy/gunicorn.service, deploy_to_server.py,
+# deploy_hotfix.py, .github/workflows/deploy.yml).
+DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
 ALLOWED_HOSTS = ['*']
 

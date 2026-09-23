@@ -43,6 +43,32 @@
   .quick-pick .qp-grid { grid-template-columns: repeat(5, 1fr); }
   .quick-pick .qp-grid button { min-height: 3rem; font-size: 1.2rem; }
 }
+/* --- Journal UX: sticky headers/columns + row highlight -----------------
+   z-index ladder: cells 0 | sticky col 2 | sticky header 5 | corner 6 |
+   quick-pick 1000 */
+.daily-wrap { overflow-x: auto; }
+.quarter-wrapper { max-height: 75vh; overflow: auto; }
+#daily .data-table thead th, .quarter-wrapper .data-table thead th { position: sticky; top: 0; z-index: 5; }
+#daily .data-table th:nth-child(1), #daily .data-table td:nth-child(1),
+.quarter-wrapper .data-table th:nth-child(1), .quarter-wrapper .data-table td:nth-child(1) {
+  position: sticky; left: 0; min-width: 3rem; z-index: 2;
+}
+#daily .data-table th:nth-child(2), #daily .data-table td:nth-child(2),
+.quarter-wrapper .data-table th:nth-child(2), .quarter-wrapper .data-table td:nth-child(2) {
+  position: sticky; left: 3rem; z-index: 2;
+}
+#daily .data-table td:nth-child(1), #daily .data-table td:nth-child(2),
+.quarter-wrapper .data-table td:nth-child(1), .quarter-wrapper .data-table td:nth-child(2) { background: #fff; }
+#daily .data-table tr:nth-child(even) td:nth-child(1), #daily .data-table tr:nth-child(even) td:nth-child(2),
+.quarter-wrapper .data-table tr:nth-child(even) td:nth-child(1), .quarter-wrapper .data-table tr:nth-child(even) td:nth-child(2) { background: #f9fafb; }
+#daily .data-table thead th:nth-child(1), #daily .data-table thead th:nth-child(2),
+.quarter-wrapper .data-table thead th:nth-child(1), .quarter-wrapper .data-table thead th:nth-child(2) { z-index: 6; background: #003366; }
+tr.drow-active > td { background: #eff6ff; }
+tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background: #dbeafe; box-shadow: inset 3px 0 0 #2563eb; }
+@media (min-width: 769px) {
+  /* Desktop: no floating 1-10 panel — type directly in the input. */
+  .quick-pick { display: none !important; }
+}
 </style>
 
 <form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
@@ -116,6 +142,7 @@
   {% if daily_quarter_locked %}
   <div class="alert alert-error">Ин чоряк баста шудааст. Холҳои ҳаррӯзагӣ тағйир дода намешаванд.</div>
   {% endif %}
+  <div class="daily-wrap">
   <table class="data-table editable">
     <thead>
       <tr><th>№</th><th>Ному насаб</th><th>Хол</th><th>Давомат</th><th>Тарбия (Хулқ)</th><th></th></tr>
@@ -161,6 +188,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
 
 <div id="quarterly" class="tab-content">
@@ -845,6 +873,12 @@ document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, 
     }
     el.dataset.origValue = el.value;
     if (el.tagName === 'INPUT') el.select();
+    const tr = el.closest('tr');
+    if (tr) tr.classList.add('drow-active');
+  });
+  el.addEventListener('blur', () => {
+    const tr = el.closest('tr');
+    if (tr) tr.classList.remove('drow-active');
   });
 });
 document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {

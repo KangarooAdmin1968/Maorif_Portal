@@ -16,7 +16,7 @@
 .legend .lg-partial::before { background: #fef9c3; border: 1px solid #eab308; }
 .legend .lg-empty::before { background: #f3f4f6; border: 1px solid #d1d5db; }
 .legend .lg-control::before { background: #fee2e2; border: 1px solid #ef4444; }
-.month-wrap { overflow-x: auto; }
+.month-wrap { overflow: auto; max-height: 74vh; }
 .month-table { border-collapse: collapse; font-size: 0.85rem; }
 .month-table th, .month-table td { border: 1px solid #e5e7eb; padding: 0.25rem 0.4rem; text-align: center; min-width: 2.2rem; }
 .month-table th.date-head { background: #003366; color: #fff; font-weight: 600; white-space: nowrap; }
@@ -28,8 +28,32 @@
 .month-table td.cell-control { background: #fef2f2; color: #991b1b; font-weight: 600; }
 .month-table td.cell-absent { color: #b91c1c; }
 .month-table td.cell-empty { background: #fff; }
-.month-table th.stu-head, .month-table td.stu-cell { text-align: left; white-space: nowrap; position: sticky; left: 0; background: #fff; z-index: 1; }
+.month-table th.stu-head, .month-table td.stu-cell { text-align: left; white-space: nowrap; position: sticky; left: 0; background: #fff; z-index: 2; }
 .month-table th.stu-head { background: #003366; color: #fff; }
+/* --- Sticky date/lesson header + active row/column (desktop table) ---
+   z-index ladder: cells 0 | sticky col 2 | sticky rows 3 | corner 5 |
+   active cell 2 | save-bar 50 | picker 1000 | leave-modal 1100 */
+.month-table thead tr:first-child th.date-head { height: 1.7rem; position: sticky; top: 0; z-index: 3; }
+.month-table thead .sub-head { position: sticky; top: calc(1.7rem + 1px); z-index: 3; }
+.month-table th.stu-head { top: 0; z-index: 5; }
+.month-table tr.mrow-active > td { background: #eff6ff; }
+.month-table tr.mrow-active > .stu-cell { background: #dbeafe; box-shadow: inset 3px 0 0 #2563eb; }
+.month-table td.mcol-active { background: #f0f9ff; }
+.month-table th.sub-head.mcol-active { box-shadow: inset 0 -3px 0 #2563eb; }
+.month-table td.mcell-editable { scroll-margin-top: 3.5rem; scroll-margin-left: 15rem; }
+/* Desktop: no floating 1-10 panel — keyboard workflow on the active cell. */
+@media (min-width: 769px) {
+  .grade-picker { display: none !important; }
+  .ab-tabs { display: flex; }
+}
+/* Давомот/Тартиб tabs — desktop-only surface for the same stageEdit() path. */
+.ab-tabs { display: none; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.ab-tab { padding: 0.3rem 0.7rem; border: 1px solid #d1d5db; border-radius: 0.4rem; background: #f9fafb; cursor: pointer; font-size: 0.85rem; }
+.ab-tab.on { background: #003366; color: #fff; }
+.ab-panel { display: none; gap: 0.35rem; align-items: center; font-size: 0.85rem; }
+.ab-panel.on { display: inline-flex; }
+.ab-panel button { padding: 0.3rem 0.6rem; border: 1px solid #d1d5db; border-radius: 0.4rem; background: #fff; cursor: pointer; }
+.ab-panel button:hover { background: #eff6ff; }
 .mcell-editable { cursor: pointer; }
 .mcell-editable:hover { background: #eff6ff; }
 td.mcell-dirty, .mini-cell.mcell-dirty { background: #fef3c7 !important; outline: 1px dashed #f59e0b; }
@@ -90,6 +114,25 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
   <a class="btn btn-secondary" href="{% url 'export_journal_excel' school.id class_name subject %}?month={{ month_start|date:'Y-m' }}">📊 Excel</a>
   {% if can_edit %}
   <button type="button" class="btn btn-primary" id="month-save-btn" onclick="saveMonthly()">💾 Сабт кардан</button>
+  <button type="button" class="btn btn-secondary" onclick="moveFocus(-1)" title="Хонандаи қаблӣ (↑)">▲</button>
+  <button type="button" class="btn btn-secondary" onclick="moveFocus(1)" title="Хонандаи навбатӣ (↓)">▼</button>
+  <span class="ab-tabs" id="ab-tabs" role="group" aria-label="Давомот ва тартиб">
+    <button type="button" class="ab-tab on" data-abt="att">Давомот</button>
+    <button type="button" class="ab-tab" data-abt="beh">Тартиб</button>
+    <span class="ab-panel on" id="ab-att">
+      <button type="button" data-ab-att="">Ҳозир</button>
+      <button type="button" data-ab-att="+">Бо сабаб</button>
+      <button type="button" data-ab-att="-">Бе сабаб</button>
+    </span>
+    <span class="ab-panel" id="ab-beh">
+      <button type="button" data-ab-beh="">×</button>
+      <button type="button" data-ab-beh="1">1</button>
+      <button type="button" data-ab-beh="2">2</button>
+      <button type="button" data-ab-beh="3">3</button>
+      <button type="button" data-ab-beh="4">4</button>
+      <button type="button" data-ab-beh="5">5</button>
+    </span>
+  </span>
   {% endif %}
 </div>
 
@@ -331,6 +374,30 @@ let activeCell = null;
 let typeBuf = '';
 let typePrev = null;
 
+// Row/column highlight rides along with the existing active-cell logic —
+// one source of truth: setActiveCell() is the only place they change.
+function clearHighlights() {
+  document.querySelectorAll('.mrow-active').forEach(el => el.classList.remove('mrow-active'));
+  document.querySelectorAll('.mcol-active').forEach(el => el.classList.remove('mcol-active'));
+}
+function applyHighlights(td) {
+  clearHighlights();
+  if (!td) return;
+  const row = td.parentElement;
+  row.classList.add('mrow-active');
+  const idx = td.cellIndex;
+  Array.from(row.parentElement.rows).forEach(r => {
+    const c = r.cells[idx];
+    if (c && c.classList.contains('mcell-editable')) c.classList.add('mcol-active');
+  });
+  // Column header highlight — only for the main month table (body col 0 is
+  // the student column, so the sub-head index is cellIndex - 1).
+  if (td.closest('.month-table')) {
+    const subRow = document.querySelector('.month-table thead tr:nth-child(2)');
+    if (subRow && subRow.cells[idx - 1]) subRow.cells[idx - 1].classList.add('mcol-active');
+  }
+}
+
 function setActiveCell(td) {
   commitTypeBuf();
   if (activeCell) activeCell.classList.remove('mcell-active');
@@ -341,6 +408,7 @@ function setActiveCell(td) {
     activeCell.classList.add('mcell-active');
     activeCell.focus();
   }
+  applyHighlights(activeCell);
 }
 
 function commitTypeBuf() {
@@ -419,11 +487,45 @@ document.querySelectorAll('.mcell-editable').forEach(td => {
   td.addEventListener('click', () => { setActiveCell(td); openPicker(td); });
 });
 document.addEventListener('click', e => {
-  if (!picker.contains(e.target) && !(e.target.classList && e.target.classList.contains('mcell-editable'))) {
+  const inTabs = e.target.closest && e.target.closest('#ab-tabs');
+  if (!picker.contains(e.target) && !inTabs && !(e.target.classList && e.target.classList.contains('mcell-editable'))) {
     closePicker();
     setActiveCell(null);
   }
 });
+
+// --- Давомот/Тартиб tabs (desktop) --------------------------------------
+// Same stageEdit() write path as the picker — the active cell is the target.
+const abTabs = document.getElementById('ab-tabs');
+if (abTabs) {
+  abTabs.querySelectorAll('.ab-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      abTabs.querySelectorAll('.ab-tab').forEach(t => t.classList.toggle('on', t === tab));
+      document.getElementById('ab-att').classList.toggle('on', tab.dataset.abt === 'att');
+      document.getElementById('ab-beh').classList.toggle('on', tab.dataset.abt === 'beh');
+    });
+  });
+  abTabs.querySelectorAll('[data-ab-att]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!activeCell) return;
+      pickerCell = activeCell;
+      stageEdit('attendance', btn.dataset.abAtt);
+      const k = pickerCell.dataset.cellkey;
+      const sc = pendingEdits[k] && pendingEdits[k].score !== undefined
+        ? pendingEdits[k].score : cellScoreText(pickerCell);
+      setCellText(k, sc || (btn.dataset.abAtt === '-' ? 'н' : ''), btn.dataset.abAtt, undefined);
+      pickerCell = null;
+    });
+  });
+  abTabs.querySelectorAll('[data-ab-beh]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!activeCell) return;
+      pickerCell = activeCell;
+      stageEdit('behavior_score', btn.dataset.abBeh);
+      pickerCell = null;
+    });
+  });
+}
 
 function showToast(msg) {
   const t = document.getElementById('month-toast');

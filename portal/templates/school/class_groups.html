@@ -18,7 +18,21 @@
   }
   .grp-warnings ul { margin: .25rem 0 0; padding-left: 1.2rem; }
 
-  .grp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .grp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+  .grp-status { border-radius: .5rem; padding: .6rem .9rem; margin-bottom: 1rem; font-size: .9rem; }
+  .grp-status.saved { border: 1px solid #22c55e; background: #f0fdf4; color: #166534; }
+  .grp-status.preview { border: 1px solid #f59e0b; background: #fffbeb; color: #92400e; }
+  .grp-status.fresh { border: 1px solid #d1d5db; background: #f9fafb; color: #374151; }
+  .student-row.member { background: #eff6ff; border-color: #93c5fd; }
+  .student-row.pool { background: #fff; }
+  .student-row .row-actions { display: flex; gap: .25rem; flex: 0 0 auto; }
+  .student-row .mini-act {
+    padding: .1rem .5rem; font-size: .75rem; border: 1px solid #d1d5db;
+    border-radius: .3rem; background: #fff; cursor: pointer; color: #374151;
+  }
+  .student-row .mini-act:hover { background: #eff6ff; }
+  .student-row .mini-act.un { color: #b91c1c; }
+  .grp-card.pool-card > header { color: #92400e; }
   .grp-card {
     border: 1px solid #e5e7eb; border-radius: .6rem; background: #fff;
     display: flex; flex-direction: column; min-width: 0;
@@ -81,7 +95,7 @@
     display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1rem;
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 900px) {
     .grp-grid { grid-template-columns: 1fr; }
     .grp-students { max-height: 38vh; }
     .mode-btn { flex: 1 1 100%; }
@@ -116,6 +130,8 @@
     <ul id="grp-warning-list"></ul>
 </div>
 
+<div class="grp-status" id="grp-status"></div>
+
 <form id="groups-form" method="post" action="{% url 'save_class_groups' cs.id %}">
     {% csrf_token %}
     <div class="grp-grid">
@@ -132,6 +148,14 @@
             </div>
             <div class="grp-students" id="students-g1"></div>
             <footer class="grp-counts" id="counts-g1"></footer>
+        </section>
+        <section class="grp-card pool-card" aria-label="Хонандагони тақсимнашуда">
+            <header>Бе гурӯҳ</header>
+            <div class="grp-teacher">
+                <label>Ба гурӯҳ илова кунед:</label>
+            </div>
+            <div class="grp-students" id="students-pool"></div>
+            <footer class="grp-counts" id="counts-pool"></footer>
         </section>
         <section class="grp-card" aria-label="Гурӯҳи 2">
             <header>Гурӯҳи 2</header>
@@ -218,13 +242,17 @@
 
     var list1 = document.getElementById('students-g1');
     var list2 = document.getElementById('students-g2');
+    var listPool = document.getElementById('students-pool');
     var counts1 = document.getElementById('counts-g1');
     var counts2 = document.getElementById('counts-g2');
+    var countsPool = document.getElementById('counts-pool');
+    var statusBox = document.getElementById('grp-status');
     var warningsBox = document.getElementById('grp-warnings');
     var warningsList = document.getElementById('grp-warning-list');
     var saveBtn = document.getElementById('save-btn');
     var form = document.getElementById('groups-form');
     var modal = document.getElementById('grp-confirm-modal');
+    var HAS_SAVED = !!(EXISTING[LABEL_G1] || EXISTING[LABEL_G2]);
 
     function teacherName(sel) {
         var opt = sel.options[sel.selectedIndex];
@@ -237,34 +265,95 @@
         return '<span class="g-tag">—</span>';
     }
 
-    function onStudentClick(groupKey, sid) {
-        var me = state[groupKey];
-        var other = state[groupKey === 'g1' ? 'g2' : 'g1'];
-        if (me.has(sid)) {
-            me.delete(sid);                    // temporarily unassigned — allowed
-        } else {
-            other.delete(sid);                 // a student can never be in both
-            me.add(sid);
-        }
-        journalState = snapshot(state);
+    // Each student lives in exactly one list: Гурӯҳи 1, Бе гурӯҳ, or
+    // Гурӯҳи 2. moveToGroup is the only mutator — it always removes the
+    // student from the other set first, so a student can never appear in
+    // two places.
+    function moveToGroup(sid, key) {
+        state.g1.delete(sid);
+        state.g2.delete(sid);
+        if (key) state[key].add(sid);
+        if (mode === 'journal') journalState = snapshot(state);
         render();
     }
 
-    function renderColumn(container, key) {
+    function makeRow(s, cls, title) {
+        var row = document.createElement('div');
+        row.className = 'student-row ' + cls;
+        if (title) row.title = title;
+        var name = document.createElement('span');
+        name.textContent = s.name;
+        row.appendChild(name);
+        row.insertAdjacentHTML('beforeend', genderTag(s.gender));
+        return row;
+    }
+
+    function miniAct(text, title, fn) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'mini-act';
+        b.textContent = text;
+        b.title = title;
+        b.addEventListener('click', function (e) { e.stopPropagation(); fn(); });
+        return b;
+    }
+
+    function renderMembers(container, key) {
         container.innerHTML = '';
-        STUDENTS.forEach(function (s) {
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            var selected = state[key].has(s.id);
-            var elsewhere = !selected && state[key === 'g1' ? 'g2' : 'g1'].has(s.id);
-            btn.className = 'student-row' + (selected ? ' selected' : '') + (elsewhere ? ' elsewhere' : '');
-            btn.innerHTML = '<span>' + s.name + '</span>' + genderTag(s.gender);
-            btn.addEventListener('click', function () { onStudentClick(key, s.id); });
-            container.appendChild(btn);
+        var otherKey = key === 'g1' ? 'g2' : 'g1';
+        var otherLabel = key === 'g1' ? LABEL_G2 : LABEL_G1;
+        var members = STUDENTS.filter(function (s) { return state[key].has(s.id); });
+        members.forEach(function (s) {
+            var row = makeRow(s, 'member', 'Пахш: гузаронидан ба ' + otherLabel);
+            row.addEventListener('click', function () { moveToGroup(s.id, otherKey); });
+            var acts = document.createElement('span');
+            acts.className = 'row-actions';
+            acts.appendChild(miniAct('⇄', 'Гузаронидан ба ' + otherLabel,
+                function () { moveToGroup(s.id, otherKey); }));
+            acts.appendChild(miniAct('×', 'Ба «Бе гурӯҳ» баргардонидан',
+                function () { moveToGroup(s.id, null); }));
+            acts.lastChild.classList.add('un');
+            row.appendChild(acts);
+            container.appendChild(row);
         });
-        if (!STUDENTS.length) {
-            container.innerHTML = '<p style="color:#6b7280;font-size:.9rem;">Хонандае дар ин синф нест.</p>';
+        if (!members.length) {
+            container.innerHTML = '<p style="color:#6b7280;font-size:.9rem;">Холӣ</p>';
         }
+    }
+
+    function renderPool() {
+        listPool.innerHTML = '';
+        var free = STUDENTS.filter(function (s) {
+            return !state.g1.has(s.id) && !state.g2.has(s.id);
+        });
+        free.forEach(function (s) {
+            var row = makeRow(s, 'pool');
+            var acts = document.createElement('span');
+            acts.className = 'row-actions';
+            acts.appendChild(miniAct('→ 1', 'Ба ' + LABEL_G1,
+                function () { moveToGroup(s.id, 'g1'); }));
+            acts.appendChild(miniAct('→ 2', 'Ба ' + LABEL_G2,
+                function () { moveToGroup(s.id, 'g2'); }));
+            row.appendChild(acts);
+            listPool.appendChild(row);
+        });
+        countsPool.textContent = 'Тақсимнашуда: ' + free.length;
+        if (!STUDENTS.length) {
+            listPool.innerHTML = '<p style="color:#6b7280;font-size:.9rem;">Хонандае дар ин синф нест.</p>';
+        }
+    }
+
+    function statusText() {
+        if (mode === 'gender' || mode === 'balanced') {
+            return ['preview',
+                '⚠️ Пешнамоиш — ин тақсимот то «Сабт кардан» ва тасдиқ сабт намешавад.'];
+        }
+        if (HAS_SAVED) {
+            return ['saved',
+                '✏️ Гурӯҳҳоро таҳрир кардан — таркиби тасдиқшуда нишон дода шудааст; тағйирот то сабти нав эътибор надоранд.'];
+        }
+        return ['fresh',
+            'Гурӯҳҳо ҳанӯз ташкил нашудаанд — таркибро ҷойгузин кунед ва сабт намоед.'];
     }
 
     function stats(memberSet) {
@@ -306,11 +395,15 @@
     }
 
     function render() {
-        renderColumn(list1, 'g1');
-        renderColumn(list2, 'g2');
+        renderMembers(list1, 'g1');
+        renderMembers(list2, 'g2');
+        renderPool();
         var st1 = stats(state.g1), st2 = stats(state.g2);
         counts1.textContent = footerText(sel1, st1);
         counts2.textContent = footerText(sel2, st2);
+        var st = statusText();
+        statusBox.className = 'grp-status ' + st[0];
+        statusBox.textContent = st[1];
         var warnings = validate();
         warningsList.innerHTML = '';
         warnings.forEach(function (w) {

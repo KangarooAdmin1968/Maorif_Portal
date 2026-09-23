@@ -74,7 +74,7 @@ class MonthlyJournalUxTests(GoldenBase):
         html = self._get()
         self.assertIn('id="ab-tabs"', html)
         self.assertIn('Давомот', html)
-        self.assertIn('Тартиб', html)
+        self.assertIn('Рафтор', html)
         self.assertIn('data-ab-att=""', html)
         self.assertIn('data-ab-att="+"', html)
         self.assertIn('data-ab-att="-"', html)
@@ -83,11 +83,29 @@ class MonthlyJournalUxTests(GoldenBase):
         # Tabs write through the same stageEdit path — no second backend.
         self.assertIn("stageEdit('attendance', btn.dataset.abAtt)", html)
         self.assertIn("stageEdit('behavior_score', btn.dataset.abBeh)", html)
+        # The desktop reveal rule must come AFTER the display:none base rule.
+        base = html.index('.ab-tabs { display: none')
+        reveal = html.index('@media (min-width: 769px)')
+        self.assertGreater(reveal, base)
 
-    def test_prev_next_student_controls(self):
+    def test_arrow_keys_only_no_visible_up_down_buttons(self):
         html = self._get()
-        self.assertIn('onclick="moveFocus(-1)"', html)
-        self.assertIn('onclick="moveFocus(1)"', html)
+        # Visible ▲/▼ controls removed — keyboard is the only source.
+        self.assertNotIn('onclick="moveFocus(-1)"', html)
+        self.assertNotIn('onclick="moveFocus(1)"', html)
+        self.assertNotIn('>▲<', html)
+        self.assertNotIn('>▼<', html)
+
+    def test_horizontal_arrow_navigation(self):
+        import re
+        html = self._get()
+        for marker in ("'ArrowLeft'", "'ArrowRight'", 'moveFocusCol'):
+            self.assertIn(marker, html)
+        # Horizontal arrows move the cell — they never navigate away.
+        m = re.search(r'function moveFocusCol.*?\n\}', html, re.S)
+        self.assertIsNotNone(m)
+        self.assertNotIn('location', m.group(0))
+        self.assertNotIn('month', m.group(0))
 
     def test_save_keeps_context(self):
         html = self._get()

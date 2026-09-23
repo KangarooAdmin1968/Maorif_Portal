@@ -234,6 +234,92 @@ class GroupPageContentTests(GoldenBase):
         self.assertIn('Нест кардани гурӯҳҳо', content)
 
 
+class GroupReopenUxTests(GoldenBase):
+    """Saved-state persistence + editing UX on the group-management page."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.page_url = reverse('class_groups', args=[cls.cs_a.id])
+        cls.save_url = reverse('save_class_groups', args=[cls.cs_a.id])
+        cls.t2 = make_user('teacher_9', role='teacher', school=cls.school_a)
+        cls.pa = make_teacher_profile(cls.teacher_a, cls.school_a)
+        cls.pb = make_teacher_profile(cls.t2, cls.school_a,
+                                      full_name='Омӯзгор Дуввум')
+
+    def _save(self, g1, g2):
+        self.client.force_login(self.zavuch_a)
+        return self.client.post(self.save_url, {
+            'confirm': '1',
+            'teacher_g1': str(self.pa.id),
+            'teacher_g2': str(self.pb.id),
+            'members_g1': list(g1),
+            'members_g2': list(g2),
+        })
+
+    def test_pool_card_and_status_markup(self):
+        self.client.force_login(self.zavuch_a)
+        content = self.client.get(self.page_url).content.decode()
+        for marker in ('students-pool', 'counts-pool', 'grp-status',
+                       'moveToGroup', 'Бе гурӯҳ'):
+            self.assertIn(marker, content)
+        # Each column renders only its own members — no all-students lists.
+        self.assertIn('renderMembers', content)
+        self.assertNotIn('renderColumn', content)
+
+    def test_save_succeeds_and_state_persists(self):
+        r = self._save([self.s1.id], [self.s2.id])
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(
+            SubjectGroupMembership.objects.filter(
+                class_subject=self.cs_a).count(), 2)
+
+    def test_reopen_shows_saved_memberships_and_teachers(self):
+        self._save([self.s1.id], [self.s2.id])
+        self.client.force_login(self.zavuch_a)
+        content = self.client.get(self.page_url).content.decode()
+        existing = _json_block(content, 'grp-existing-data')
+        self.assertEqual(existing['Гурӯҳи 1']['members'], [self.s1.id])
+        self.assertEqual(existing['Гурӯҳи 2']['members'], [self.s2.id])
+        self.assertEqual(existing['Гурӯҳи 1']['teacher_id'], self.pa.id)
+        self.assertEqual(existing['Гурӯҳи 2']['teacher_id'], self.pb.id)
+
+    def test_reopen_does_not_destroy_saved_state(self):
+        self._save([self.s1.id], [self.s2.id])
+        self.client.force_login(self.zavuch_a)
+        self.client.get(self.page_url)
+        self.client.get(self.page_url)
+        self.assertEqual(
+            SubjectGroupMembership.objects.filter(
+                class_subject=self.cs_a).count(), 2)
+        self.assertEqual(
+            TeachingGroup.objects.filter(class_subject=self.cs_a).count(), 2)
+
+    def test_balanced_proposal_is_disjoint_and_complete(self):
+        content_owner = self.zavuch_a
+        self.client.force_login(content_owner)
+        content = self.client.get(self.page_url).content.decode()
+        proposals = _json_block(content, 'grp-proposals-data')
+        g1 = set(proposals['balanced']['g1'])
+        g2 = set(proposals['balanced']['g2'])
+        self.assertFalse(g1 & g2)
+        gendered = {s.id for s in (self.s1, self.s2) if s.gender}
+        self.assertEqual(g1 | g2, gendered)
+
+    def test_edit_moves_student_g2_to_g1(self):
+        self._save([self.s1.id], [self.s2.id])
+        r = self._save([self.s1.id, self.s2.id], [])
+        self.assertEqual(r.status_code, 302)
+        g1 = TeachingGroup.objects.get(
+            class_subject=self.cs_a, label='Гурӯҳи 1')
+        self.assertEqual(
+            set(g1.memberships.values_list('student_id', flat=True)),
+            {self.s1.id, self.s2.id})
+        self.assertEqual(
+            SubjectGroupMembership.objects.filter(
+                class_subject=self.cs_a, student=self.s2).count(), 1)
+
+
 class GroupSaveTests(GoldenBase):
     @classmethod
     def setUpTestData(cls):

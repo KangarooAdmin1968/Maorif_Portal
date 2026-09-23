@@ -4549,20 +4549,44 @@ def school_readiness_rating(request):
     schools = [s for s in School.objects.all() if is_academic_school(s)]
     school_ids = [s.id for s in schools]
 
+    # Active TeachingGroups per CS — drives both the tab-1 staffing check
+    # and the tab-2 per-group teacher attribution.
+    all_groups = list(
+        TeachingGroup.objects.filter(
+            class_subject__school_id__in=school_ids,
+            class_subject__is_active=True,
+            is_active=True,
+        ).select_related('teacher', 'class_subject')
+    )
+    groups_by_cs = defaultdict(list)
+    for g in all_groups:
+        groups_by_cs[g.class_subject_id].append(g)
+    unstaffed_grouped_ids = {
+        g.class_subject_id for g in all_groups if g.teacher_id is None
+    }
+
     totals = dict(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
         .values_list('school_id').annotate(n=Count('id'))
     )
+    # Ungrouped CS: legacy rule (teacher/allocated_teacher set). Grouped CS:
+    # assigned only when EVERY active group has a teacher — the CS-level
+    # fields alone do not staff a grouped subject.
     assigned = dict(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
+        .exclude(pk__in=set(groups_by_cs))
         .filter(Q(teacher__isnull=False) | Q(allocated_teacher__isnull=False))
         .values_list('school_id').annotate(n=Count('id'))
     )
+    assigned_grouped = defaultdict(int)
+    grouped_cs_school = {g.class_subject_id: g.class_subject.school_id for g in all_groups}
+    for cs_id in set(groups_by_cs) - unstaffed_grouped_ids:
+        assigned_grouped[grouped_cs_school[cs_id]] += 1
 
     data = []
     for school in schools:
         total = totals.get(school.id, 0)
-        done = assigned.get(school.id, 0)
+        done = assigned.get(school.id, 0) + assigned_grouped.get(school.id, 0)
         pct = round(done / total * 100, 1) if total else 0.0
         zavuch_user = User.objects.filter(username=f'zavuch_{get_school_number(school)}').first()
         data.append({
@@ -4609,6 +4633,43 @@ def school_readiness_rating(request):
         .values('student__school_id', 'student__class_name', 'subject')
         .annotate(n=Count('id'))
     }
+    # Group attribution maps. Grade has no teacher FK, so attribution is
+    # derived: Grade.lesson.group wins when set (concrete teaching event);
+    # legacy lesson-less / group-less rows fall back to the student's
+    # current SubjectGroupMembership — an approximation for pre-split
+    # history, never fabricated.
+    group_size = defaultdict(int)
+    for m in SubjectGroupMembership.objects.filter(
+            class_subject__school_id__in=school_ids,
+            class_subject__is_active=True,
+            group__is_active=True,
+    ).values('class_subject_id', 'group_id'):
+        group_size[(m['class_subject_id'], m['group_id'])] += 1
+    group_grade_counts = defaultdict(int)
+    for row in Grade.objects.filter(
+            student__school_id__in=school_ids,
+            lesson__group__is_active=True,
+    ).values('lesson__class_subject_id', 'lesson__group_id').annotate(n=Count('id')):
+        group_grade_counts[
+            (row['lesson__class_subject_id'], row['lesson__group_id'])] += row['n']
+    for row in Grade.objects.filter(
+            student__school_id__in=school_ids,
+    ).exclude(lesson__group__is_active=True).values(
+            'subject',
+            'student__subject_group_memberships__class_subject_id',
+            'student__subject_group_memberships__class_subject__subject',
+            'student__subject_group_memberships__group_id',
+            'student__subject_group_memberships__group__is_active',
+    ).annotate(n=Count('id')):
+        if not row['student__subject_group_memberships__group__is_active']:
+            continue
+        cs_subject = row['student__subject_group_memberships__class_subject__subject']
+        if normalize_subject(row['subject']) != normalize_subject(cs_subject):
+            continue
+        group_grade_counts[(
+            row['student__subject_group_memberships__class_subject_id'],
+            row['student__subject_group_memberships__group_id'],
+        )] += row['n']
     # Use the exact same school-GPA formula as the academic leaderboard
     # (calculate_school_rankings) so all leaderboards show identical values.
     gpa_map = {
@@ -4646,9 +4707,17 @@ def school_readiness_rating(request):
             if min_norm:
                 expected_min += min_norm * n_students
                 norm_grades_done += pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
-            profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
-            if profile:
-                teacher_pairs[profile].append(cs)
+            cs_groups = groups_by_cs.get(cs.id)
+            if cs_groups:
+                # Grouped CS: one workload entry per actual group teacher.
+                # CS-level fields never attribute a grouped subject.
+                for g in cs_groups:
+                    if g.teacher_id:
+                        teacher_pairs[g.teacher].append((cs, g))
+            else:
+                profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
+                if profile:
+                    teacher_pairs[profile].append((cs, None))
 
         teachers = []
         for profile, pairs in teacher_pairs.items():
@@ -4657,15 +4726,23 @@ def school_readiness_rating(request):
             min_grades = 0
             grades_done = 0
             norm_done = 0
-            for cs in pairs:
-                subj_classes[cs.subject].append(cs.class_name)
+            for cs, group in pairs:
+                if group is not None:
+                    # Group-scoped: grades only from this group's members,
+                    # denominator is the group size, not the class size.
+                    subj_classes[f"{cs.subject} — {group.label}"].append(cs.class_name)
+                    n_students = group_size.get((cs.id, group.id), 0)
+                    entered = group_grade_counts.get((cs.id, group.id), 0)
+                else:
+                    subj_classes[cs.subject].append(cs.class_name)
+                    n_students = class_student_counts.get((school.id, cs.class_name), 0)
+                    entered = pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
                 hours += weekly_hours(cs.class_name, cs.subject, cs)
-                entered = pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
                 grades_done += entered
                 # Exclude un-graded subjects (norm == 0) from required minimum.
                 min_norm = quarter_min_norm(cs.class_name, cs.subject, cs)
                 if min_norm:
-                    min_grades += min_norm * class_student_counts.get((school.id, cs.class_name), 0)
+                    min_grades += min_norm * n_students
                     norm_done += entered
             fulfillment = round(norm_done / min_grades * 100, 1) if min_grades else 0.0
             teachers.append({
@@ -4728,7 +4805,9 @@ def school_documents(request):
     if school:
         class_subjects = ClassSubject.objects.filter(
             school=school, is_active=True
-        ).select_related('allocated_teacher', 'teacher').order_by('class_name', 'subject')
+        ).select_related('allocated_teacher', 'teacher').prefetch_related(
+            'groups__teacher'
+        ).order_by('class_name', 'subject')
         user_to_profile = {
             tp.user_id: tp for tp in TeacherProfile.objects.filter(school=school)
         }
@@ -4743,14 +4822,28 @@ def school_documents(request):
             if cs.hours_per_week is not None
         }
 
-        # teacher -> {subject: [class_names]}
+        # teacher -> {display_subject: [(base_subject, class_name)]}
         grouped = {}
         for cs in class_subjects:
-            profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
-            if not profile:
-                continue
-            subj_map = grouped.setdefault(profile, {})
-            subj_map.setdefault(cs.subject, []).append(cs.class_name)
+            cs_groups = [g for g in cs.groups.all() if g.is_active]
+            if cs_groups:
+                # Grouped CS: one workload item per actual group teacher,
+                # labeled "ФАН — Гурӯҳи N". Each group teacher is credited
+                # with the subject's full weekly load for their group.
+                for g in cs_groups:
+                    if not g.teacher_id:
+                        continue
+                    subj_map = grouped.setdefault(g.teacher, {})
+                    subj_map.setdefault(
+                        f"{cs.subject} — {g.label}", []
+                    ).append((cs.subject, cs.class_name))
+            else:
+                profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
+                if not profile:
+                    continue
+                subj_map = grouped.setdefault(profile, {})
+                subj_map.setdefault(cs.subject, []).append(
+                    (cs.subject, cs.class_name))
 
         def class_sort(cn):
             return (class_numeric_part(cn) or 0, cn)
@@ -4759,11 +4852,12 @@ def school_documents(request):
             items = []
             academic_hours = 0
             homeroom_hours = 0
-            for subject, classes in sorted(subj_map.items(), key=lambda kv: kv[0]):
-                classes_sorted = sorted(set(classes), key=class_sort)
+            for subject, entries in sorted(subj_map.items(), key=lambda kv: kv[0]):
+                base_subject = entries[0][0]
+                classes_sorted = sorted({cn for _, cn in entries}, key=class_sort)
                 items.append({'subject': subject, 'classes': classes_sorted})
-                norm = normalize_subject(subject)
-                overrides = [explicit_hours.get((subject, cn)) for cn in classes_sorted]
+                norm = normalize_subject(base_subject)
+                overrides = [explicit_hours.get((base_subject, cn)) for cn in classes_sorted]
                 if any(h is not None for h in overrides):
                     # Per-allocation resolution: saved hours where set, the
                     # existing map/default recommendation otherwise.

@@ -97,6 +97,14 @@
     то тасдиқи шумо ҳеҷ чиз сабт намешавад.
 </p>
 
+{% if has_groups and unassigned_count %}
+<div class="grp-warnings" style="border-color:#dc2626;background:#fef2f2;color:#991b1b;">
+    <strong>⚠️ {{ unassigned_count }} хонанда ба ҳеҷ гурӯҳе ворид нашудааст.</strong><br>
+    Ин хонандагон барои омӯзгорони гурӯҳҳо пинҳонанд. Онҳоро дар ҳамин саҳифа
+    ба гурӯҳи зарурӣ илова кунед ва таркибро аз нав сабт намоед.
+</div>
+{% endif %}
+
 <div class="mode-bar" role="group" aria-label="Равиши тақсимот">
     <button type="button" class="mode-btn" id="mode-gender">👦👧 Писарон / духтарон</button>
     <button type="button" class="mode-btn active" id="mode-journal">📋 Мувофиқи журнали мавҷуда</button>

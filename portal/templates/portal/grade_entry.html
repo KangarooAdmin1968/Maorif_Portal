@@ -2,7 +2,7 @@
 {% load portal_extras %}
 {% block title %}Холҳо — {{ class_name }} — {{ subject }}{% endblock %}
 {% block content %}
-<h1>{{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}</h1>
+<h1>{{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}{% if teacher_group %} — {{ teacher_group.label }}{% endif %}</h1>
 
 <a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
 <a href="{% url 'monthly_journal' school.id class_name subject %}" class="btn btn-secondary" style="margin-bottom:1rem;">📅 Ҷурнали моҳона</a>
@@ -67,7 +67,7 @@
     {% if lessons %}
     <button type="button" class="lesson-chip {% if not selected_lesson %}active{% endif %}" onclick="selectLesson('')">Умумӣ</button>
     {% for l in lessons %}
-    <button type="button" class="lesson-chip {% if selected_lesson and selected_lesson.id == l.id %}active{% endif %}" onclick="selectLesson('{{ l.id }}')"{% if l.topic %} title="{{ l.topic }}"{% endif %}>Дарси {{ l.lesson_number }}{% if l.mode == 'control' %} · Назорат{% endif %}</button>
+    <button type="button" class="lesson-chip {% if selected_lesson and selected_lesson.id == l.id %}active{% endif %}" onclick="selectLesson('{{ l.id }}')"{% if l.topic %} title="{{ l.topic }}"{% endif %}>Дарси {{ l.lesson_number }}{% if l.group_label %} · {{ l.group_label }}{% endif %}{% if l.mode == 'control' %} · Назорат{% endif %}</button>
     {% endfor %}
     {% endif %}
     {% if not daily_quarter_locked %}

@@ -103,7 +103,7 @@
             <div class="dropdown-menu show" id="subject-menu">
                 {% for s in subjects %}
                 <div class="dropdown-item">
-                    <a href="{% url 'grade_entry' school.id class_name s.subject %}">{{ s.subject }}</a>
+                    <a href="{% url 'grade_entry' school.id class_name s.subject %}">{{ s.subject }}{% if s.group_label %} — {{ s.group_label }}{% endif %}</a>
                     {% if can_manage and not s.is_default %}
                     <form action="{% url 'add_remove_subject' school.id class_name %}" method="post" class="inline-form">
                         {% csrf_token %}

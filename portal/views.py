@@ -332,13 +332,15 @@ def result_display(grade, semantics_cfg=None):
     return str(int(grade.score)) if float(grade.score).is_integer() else str(grade.score)
 
 
-def _resolve_assessment_for_grade(student, subject, assessment_id, lesson_id=None):
+def _resolve_assessment_for_grade(student, subject, assessment_id, lesson_id=None, user=None):
     """Resolve and scope-check an Assessment (+ optional Lesson) for a write.
 
     Raises ValueError with a safe message when the objects do not exist or
     belong to a different school/class/subject — foreign IDs are rejected
-    without leaking details. Returns (assessment, lesson) where lesson may
-    be inherited from assessment.lesson when not explicitly supplied.
+    without leaking details. When `user` is a regular teacher on a grouped
+    ClassSubject, an assessment attached to another group's lesson is also
+    rejected. Returns (assessment, lesson) where lesson may be inherited
+    from assessment.lesson when not explicitly supplied.
     """
     try:
         assessment = Assessment.objects.select_related('class_subject__school', 'lesson').get(pk=assessment_id)
@@ -369,6 +371,8 @@ def _resolve_assessment_for_grade(student, subject, assessment_id, lesson_id=Non
         # A Grade row's date comes from the Assessment; it must never
         # disagree with the date of the Lesson it is filed under.
         raise ValueError('Дарс ба ин сана тааллуқ надорад.')
+    if user is not None and lesson is not None and not _teacher_can_use_lesson(user, lesson):
+        raise ValueError('Дарс ба гурӯҳи шумо тааллуқ надорад.')
     return assessment, lesson
 
 
@@ -386,12 +390,13 @@ def _parse_score(raw):
     return score
 
 
-def _resolve_daily_scope(student, subject, date, lesson_id):
+def _resolve_daily_scope(student, subject, date, lesson_id, user=None):
     """Validate the target slot of a regular (non-assessment) daily write.
 
     Returns the resolved Lesson or None for the legacy lesson-less slot.
-    Raises ValueError with a teacher-safe message on forged/mismatched IDs
-    or when a control assessment already owns the slot.
+    Raises ValueError with a teacher-safe message on forged/mismatched IDs,
+    when a control assessment already owns the slot, or when a regular
+    teacher tries to use another group's lesson.
     """
     class_name = normalize_class_name(student.class_name)
     if lesson_id:
@@ -418,6 +423,8 @@ def _resolve_daily_scope(student, subject, date, lesson_id):
             lesson=lesson,
         ).exists():
             raise ValueError('Ин дарс барои кори санҷишӣ таъйин шудааст — холи ҷорӣ дохил карда намешавад.')
+        if user is not None and not _teacher_can_use_lesson(user, lesson):
+            raise ValueError('Дарс ба гурӯҳи шумо тааллуқ надорад.')
         return lesson
     # Lesson-less slot: only legacy lesson-less control assessments lock it.
     if Assessment.objects.filter(
@@ -701,9 +708,12 @@ def can_edit_grade_journal(user, school, class_name, subject):
         )
         # Non-graded classes (e.g. Grade 1 sticker journal) are class-wide:
         # any active subject assignment inside this classroom grants full access
-        if not is_non_graded(class_name):
-            qs = qs.filter(subject=normalize_subject(subject))
-        return qs.filter(_teacher_assignment_filter(user)).exists()
+        if is_non_graded(class_name):
+            return qs.filter(_teacher_assignment_filter(user)).exists()
+        qs = qs.filter(subject=normalize_subject(subject)).prefetch_related(
+            'groups', 'allocated_teacher'
+        )
+        return any(_teacher_can_access_cs(user, cs) for cs in qs)
     return False
 
 
@@ -719,6 +729,140 @@ def can_view_grade_journal(user, school, class_name, subject):
     if role in (settings.ROLE_DIRECTOR, settings.ROLE_PRINCIPAL):
         return True
     return can_edit_grade_journal(user, school, class_name, subject)
+
+
+# ---------------------------------------------------------------------------
+# TeachingGroup scoping (Phase 3)
+#
+# Active TeachingGroups are authoritative for regular teachers: on a grouped
+# ClassSubject the CS-level teacher fields no longer widen journal access.
+# Privileged roles (superuser/director/principal/zavuch) keep full access.
+# ---------------------------------------------------------------------------
+
+def _teacher_can_access_cs(user, cs):
+    """True if a regular teacher may open this ClassSubject's journal.
+
+    Grouped CS -> only its active group teachers; ungrouped CS -> the legacy
+    teacher/allocated_teacher assignment. Not for privileged roles.
+    """
+    if cs.groups.filter(is_active=True).exists():
+        return cs.groups.filter(is_active=True, teacher__user=user).exists()
+    return cs.teacher_id == user.id or (
+        cs.allocated_teacher_id is not None
+        and cs.allocated_teacher.user_id == user.id
+    )
+
+
+def teacher_group_for(user, cs):
+    """The regular teacher's active TeachingGroup on this CS, else None."""
+    if not _is_regular_teacher(user):
+        return None
+    return cs.groups.filter(is_active=True, teacher__user=user).first()
+
+
+def _class_subject_for(school, class_name, subject):
+    """The active ClassSubject row for a school/class/subject triple."""
+    return ClassSubject.objects.filter(
+        school=school,
+        class_name=normalize_class_name(class_name),
+        subject=normalize_subject(subject),
+        is_active=True,
+    ).order_by('pk').first()
+
+
+def visible_students_for(user, cs):
+    """Students visible to `user` for this ClassSubject (ordered by name).
+
+    No active groups -> the whole class (legacy). Grouped -> all students
+    for privileged roles; only own-group members for regular teachers.
+    Students without membership in an active group stay invisible to
+    teachers until the Admin/Zavuch assigns them in the group UI.
+    """
+    students = Student.objects.filter(
+        school=cs.school, class_name=cs.class_name
+    ).order_by('full_name')
+    if not _is_regular_teacher(user):
+        return students
+    group = teacher_group_for(user, cs)
+    if group is None:
+        # Grouped CS without an own group -> nothing; ungrouped -> legacy.
+        if cs.groups.filter(is_active=True).exists():
+            return students.none()
+        return students
+    return students.filter(
+        subject_group_memberships__class_subject=cs,
+        subject_group_memberships__group=group,
+    )
+
+
+def _teacher_can_write_student(user, student, cs):
+    """Server-side membership guard for single-student writes.
+
+    Ungrouped CS -> True (legacy). Grouped CS -> regular teachers may only
+    write students whose membership sits in their own active group.
+    """
+    if cs is None or not _is_regular_teacher(user):
+        return True
+    if not cs.groups.filter(is_active=True).exists():
+        return True
+    return SubjectGroupMembership.objects.filter(
+        class_subject=cs,
+        student=student,
+        group__is_active=True,
+        group__teacher__user=user,
+    ).exists()
+
+
+def _teacher_can_use_lesson(user, lesson):
+    """Group check on a Lesson for grade/journal use by regular teachers.
+
+    Ungrouped CS -> True; grouped CS -> own-group lessons plus legacy
+    group=NULL lessons (shared class history, readable by all).
+    """
+    cs = lesson.class_subject
+    if not _is_regular_teacher(user):
+        return True
+    if not cs.groups.filter(is_active=True).exists():
+        return True
+    if lesson.group_id is None:
+        return True
+    return cs.groups.filter(
+        is_active=True, teacher__user=user, pk=lesson.group_id
+    ).exists()
+
+
+def _teacher_can_edit_lesson(user, lesson):
+    """Stricter variant: teachers may edit/delete only own-group lessons;
+    legacy group=NULL lessons stay read-only for them (Admin/Zavuch manage)."""
+    cs = lesson.class_subject
+    if not _is_regular_teacher(user):
+        return True
+    if not cs.groups.filter(is_active=True).exists():
+        return True
+    return lesson.group_id is not None and cs.groups.filter(
+        is_active=True, teacher__user=user, pk=lesson.group_id
+    ).exists()
+
+
+def _visible_lessons_q(user, cs):
+    """Q for lessons a regular teacher may select on a grouped CS.
+
+    Own-group lessons plus legacy group=NULL rows. (On an ungrouped CS
+    every lesson has group=NULL, so this filter is a no-op there.)
+    """
+    group = teacher_group_for(user, cs)
+    if group is None:
+        return Q(group__isnull=True)
+    return Q(group=group) | Q(group__isnull=True)
+
+
+def _visible_assessments_q(user, cs):
+    """Q for control assessments a regular teacher may use on a grouped CS:
+    own-group lesson assessments plus lesson-less (admin-managed) ones."""
+    group = teacher_group_for(user, cs)
+    if group is None:
+        return Q(lesson__isnull=True)
+    return Q(lesson__isnull=True) | Q(lesson__group=group)
 
 
 def _add_score(totals, key, total, count):
@@ -1245,12 +1389,14 @@ def class_list(request, school_id=None):
     class_names = sorted(student_classes | subject_classes, key=class_numeric_part)
 
     # Regular teachers only see the classes they are assigned to in "Тақсимоти дарсҳо"
+    # or teach a group in (grouped subjects count as assignments).
     if _is_regular_teacher(request.user, role):
-        assigned_class_names = set(
-            ClassSubject.objects.filter(school=school, is_active=True)
-            .filter(_teacher_assignment_filter(request.user))
-            .values_list('class_name', flat=True)
-        )
+        assigned_class_names = {
+            cs.class_name
+            for cs in ClassSubject.objects.filter(school=school, is_active=True)
+            .prefetch_related('groups', 'allocated_teacher')
+            if _teacher_can_access_cs(request.user, cs)
+        }
         class_names = [c for c in class_names if c in assigned_class_names]
 
     student_counts = dict(
@@ -1383,11 +1529,12 @@ def class_detail(request, school_id, class_name):
                 if user_school:
                     return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
                 return redirect('dashboard')
-            if not ClassSubject.objects.filter(
-                school=school, class_name=class_name, is_active=True
-            ).filter(
-                _teacher_assignment_filter(request.user)
-            ).exists():
+            if not any(
+                _teacher_can_access_cs(request.user, cs)
+                for cs in ClassSubject.objects.filter(
+                    school=school, class_name=class_name, is_active=True
+                ).prefetch_related('groups', 'allocated_teacher')
+            ):
                 messages.warning(request, 'Ин синф ё фан ба шумо вобаста карда нашудааст!')
                 return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
         if not has_school_access(request.user, school):
@@ -1403,9 +1550,16 @@ def class_detail(request, school_id, class_name):
         school=school, class_name=class_name, is_active=True,
         subject__in=official_subjects_for(school, class_name)
     ).order_by('subject')
-    # Regular teachers only see their own assigned subjects in the journal picker
+    # Regular teachers only see their own assigned subjects in the journal
+    # picker — for grouped subjects that means their TeachingGroup.
     if _is_regular_teacher(request.user):
-        subjects = subjects.filter(_teacher_assignment_filter(request.user))
+        subjects = [
+            cs for cs in subjects.prefetch_related('groups', 'allocated_teacher')
+            if _teacher_can_access_cs(request.user, cs)
+        ]
+        for cs in subjects:
+            own_group = teacher_group_for(request.user, cs)
+            cs.group_label = own_group.label if own_group else None
     non_graded = is_non_graded(class_name)
     all_classes = sorted({
         c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()
@@ -1692,7 +1846,13 @@ def grade_entry(request, school_id, class_name, subject):
     elif not can_view_grade_journal(request.user, school, class_name, subject):
         return HttpResponse('Дастрасӣ манъ аст.', status=403)
 
-    students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
+    class_subject = _class_subject_for(school, class_name, subject)
+    if class_subject is not None:
+        students = visible_students_for(request.user, class_subject)
+    else:
+        students = Student.objects.filter(
+            school=school, class_name=class_name
+        ).order_by('full_name')
 
     if request.method == 'POST':
         if not can_edit_grade_journal(request.user, school, class_name, subject):
@@ -1723,6 +1883,8 @@ def grade_entry(request, school_id, class_name, subject):
                 or post_lesson.date != date
             ):
                 return HttpResponse('Дарс ба ин синф, фан ё сана тааллуқ надорад.', status=400)
+            if not _teacher_can_use_lesson(request.user, post_lesson):
+                return HttpResponse('Дарс ба гурӯҳи шумо тааллуқ надорад.', status=400)
 
         daily_q = get_date_quarter(date)
         daily_locked = is_quarter_locked(school, class_name, subject, daily_q)
@@ -1852,17 +2014,18 @@ def grade_entry(request, school_id, class_name, subject):
 
     # Lessons for this ClassSubject on the selected date. 'lesson' carries a
     # lesson id; 'ln' carries a lesson number (date navigation keeps the
-    # same position across days when it exists).
-    class_subject = ClassSubject.objects.filter(
-        school=school, class_name=class_name, subject=subject, is_active=True
-    ).order_by('pk').first()
+    # same position across days when it exists). On grouped subjects a
+    # regular teacher sees only their own group's lessons plus legacy
+    # group=NULL rows.
     day_lessons = []
     selected_lesson = None
     if class_subject is not None:
-        day_lessons = list(
-            Lesson.objects.filter(class_subject=class_subject, date=selected_date)
-            .order_by('lesson_number')
-        )
+        lesson_qs = Lesson.objects.filter(
+            class_subject=class_subject, date=selected_date
+        ).select_related('group')
+        if _is_regular_teacher(request.user):
+            lesson_qs = lesson_qs.filter(_visible_lessons_q(request.user, class_subject))
+        day_lessons = list(lesson_qs.order_by('lesson_number'))
         lesson_param = request.GET.get('lesson', '').strip()
         ln_param = request.GET.get('ln', '').strip()
         if lesson_param:
@@ -1995,9 +2158,14 @@ def grade_entry(request, school_id, class_name, subject):
     control_assessments = []
     date_is_control = False
     if class_subject is not None:
-        for a in Assessment.objects.filter(
+        assessments_qs = Assessment.objects.filter(
             class_subject=class_subject, category='control'
-        ).order_by('quarter', 'number', 'date', 'id'):
+        )
+        if _is_regular_teacher(request.user) and class_subject.groups.filter(is_active=True).exists():
+            assessments_qs = assessments_qs.filter(
+                _visible_assessments_q(request.user, class_subject)
+            )
+        for a in assessments_qs.order_by('quarter', 'number', 'date', 'id'):
             control_assessments.append({
                 'id': a.id,
                 'label': _assessment_label(a),
@@ -2039,6 +2207,7 @@ def grade_entry(request, school_id, class_name, subject):
             'id': l.id,
             'lesson_number': l.lesson_number,
             'topic': l.topic,
+            'group_label': l.group.label if l.group_id else None,
             'mode': 'control' if has_control else 'current',
             'has_data': has_data,
         })
@@ -2079,6 +2248,10 @@ def grade_entry(request, school_id, class_name, subject):
         'locked_quarters': locked_quarters,
         'daily_quarter_locked': daily_quarter_locked,
         'class_subject_id': class_subject.id if class_subject else None,
+        'teacher_group': (
+            teacher_group_for(request.user, class_subject)
+            if class_subject else None
+        ),
         'lessons': lessons_payload,
         'selected_lesson': selected_lesson,
         'selected_lesson_has_data': next(
@@ -2134,9 +2307,13 @@ def monthly_journal(request, school_id, class_name, subject):
     prev_month = (month_start - datetime.timedelta(days=1)).replace(day=1)
     next_month = (month_end + datetime.timedelta(days=1)).replace(day=1)
 
-    students = list(Student.objects.filter(
-        school=school, class_name=class_name
-    ).order_by('full_name'))
+    class_subject = _class_subject_for(school, class_name, subject)
+    if class_subject is not None:
+        students = list(visible_students_for(request.user, class_subject))
+    else:
+        students = list(Student.objects.filter(
+            school=school, class_name=class_name
+        ).order_by('full_name'))
 
     can_edit = can_edit_grade_journal(request.user, school, class_name, subject)
     locked_quarters = set(
@@ -2145,27 +2322,39 @@ def monthly_journal(request, school_id, class_name, subject):
         ).values_list('quarter', flat=True)
     )
 
-    class_subject = ClassSubject.objects.filter(
-        school=school, class_name=class_name, subject=subject, is_active=True
-    ).order_by('pk').first()
+    # On grouped subjects a regular teacher sees only their own group's
+    # lesson columns plus legacy group=NULL slots.
+    grouped = (
+        class_subject is not None
+        and _is_regular_teacher(request.user)
+        and class_subject.groups.filter(is_active=True).exists()
+    )
 
     lessons_by_date = defaultdict(list)
     if class_subject is not None:
-        for l in Lesson.objects.filter(
+        lesson_qs = Lesson.objects.filter(
             class_subject=class_subject,
             date__range=(month_start, month_end),
-        ).order_by('date', 'lesson_number'):
+        ).select_related('group')
+        if grouped:
+            lesson_qs = lesson_qs.filter(_visible_lessons_q(request.user, class_subject))
+        for l in lesson_qs.order_by('date', 'lesson_number'):
             lessons_by_date[l.date].append(l)
 
     # Control assessments in the month, keyed by (date, lesson_id) so each
     # column can show its own Назорат marker.
     control_slots = set()
     if class_subject is not None:
-        for a in Assessment.objects.filter(
+        assessment_qs = Assessment.objects.filter(
             class_subject=class_subject,
             category='control',
             date__range=(month_start, month_end),
-        ):
+        )
+        if grouped:
+            assessment_qs = assessment_qs.filter(
+                _visible_assessments_q(request.user, class_subject)
+            )
+        for a in assessment_qs:
             control_slots.add((a.date, a.lesson_id))
 
     # Grade cells: (date, lesson_id) -> student_id -> [cell, ...]
@@ -2349,7 +2538,12 @@ def export_journal_excel(request, school_id, class_name, subject):
         day=calendar.monthrange(month_start.year, month_start.month)[1]
     )
 
-    students = Student.objects.filter(school=school, class_name=class_name)
+    class_subject = _class_subject_for(school, class_name, subject)
+    students = (
+        visible_students_for(request.user, class_subject)
+        if class_subject is not None
+        else Student.objects.filter(school=school, class_name=class_name)
+    )
     grades = Grade.objects.filter(
         student__in=students,
         subject=subject,
@@ -2450,10 +2644,15 @@ def monthly_save(request):
         if not can_edit_grade_journal(request.user, student.school, class_name, subject):
             results.append({'key': key, 'ok': False, 'message': 'Дастрасӣ манъ аст.'})
             continue
+        cs = _class_subject_for(student.school, class_name, subject)
+        if not _teacher_can_write_student(request.user, student, cs):
+            results.append({'key': key, 'ok': False, 'message': 'Дастрасӣ манъ аст.'})
+            continue
         try:
             date = datetime.date.fromisoformat(str(item.get('date', '')))
             lesson = _resolve_daily_scope(
-                student, subject, date, item.get('lesson_id') or ''
+                student, subject, date, item.get('lesson_id') or '',
+                user=request.user,
             )
             if is_quarter_locked(
                 student.school, class_name, subject, get_date_quarter(date)
@@ -2691,6 +2890,13 @@ def save_grade_ajax(request):
         if not can_edit_grade_journal(request.user, student.school, class_name, subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
+        # Grouped ClassSubject: a regular teacher may only write students
+        # who belong to their own active TeachingGroup (forged student_ids
+        # of the other group are rejected here, not by hidden UI).
+        cs = _class_subject_for(student.school, class_name, subject)
+        if not _teacher_can_write_student(request.user, student, cs):
+            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+
         if grade_type == 'daily':
             assessment_id = request.POST.get('assessment_id', '').strip()
             lesson_id = request.POST.get('lesson_id', '').strip()
@@ -2699,7 +2905,8 @@ def save_grade_ajax(request):
             if assessment_id:
                 try:
                     assessment, lesson = _resolve_assessment_for_grade(
-                        student, subject, assessment_id, lesson_id
+                        student, subject, assessment_id, lesson_id,
+                        user=request.user,
                     )
                 except ValueError as e:
                     return JsonResponse({'success': False, 'message': str(e)}, status=200)
@@ -2718,7 +2925,9 @@ def save_grade_ajax(request):
                 # is lesson-scoped for new records and date-wide for the
                 # legacy lesson-less slot. Forged IDs are rejected.
                 try:
-                    lesson = _resolve_daily_scope(student, subject, date, lesson_id)
+                    lesson = _resolve_daily_scope(
+                        student, subject, date, lesson_id, user=request.user
+                    )
                 except ValueError as e:
                     return JsonResponse({'success': False, 'message': str(e)}, status=200)
 
@@ -2892,7 +3101,12 @@ def calc_quarter_from_daily(request, school_id, class_name, subject):
     if not can_edit_grade_journal(request.user, school, class_name, subject):
         return HttpResponse('Дастрасӣ барои тағйир додан манъ аст.', status=403)
 
-    students = Student.objects.filter(school=school, class_name=class_name)
+    class_subject = _class_subject_for(school, class_name, subject)
+    students = (
+        visible_students_for(request.user, class_subject)
+        if class_subject is not None
+        else Student.objects.filter(school=school, class_name=class_name)
+    )
     for student in students:
         grades = Grade.objects.filter(
             student=student,
@@ -2963,6 +3177,10 @@ def assessment_save(request):
         if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
+        is_regular = _is_regular_teacher(request.user)
+        cs_grouped = cs.groups.filter(is_active=True).exists()
+        own_group = teacher_group_for(request.user, cs) if is_regular else None
+
         try:
             date = datetime.date.fromisoformat(date_str) if date_str else (
                 assessment.date if assessment is not None else datetime.date.today()
@@ -3003,6 +3221,21 @@ def assessment_save(request):
             if lesson.date != expected_date:
                 return JsonResponse({'success': False, 'message': 'Дарс ба ин сана тааллуқ надорад.'}, status=200)
 
+        if cs_grouped and is_regular:
+            # A group teacher may only file/edit controls that live on their
+            # own group's lesson; lesson-less assessments on grouped
+            # subjects stay Admin/Zavuch-managed.
+            if assessment is not None and (
+                assessment.lesson_id is None
+                or assessment.lesson.group_id != (own_group.id if own_group else None)
+            ):
+                return JsonResponse({'success': False, 'message': 'Санҷиш ба гурӯҳи шумо тааллуқ надорад.'}, status=200)
+            target_lesson = lesson if lesson is not None else (
+                assessment.lesson if assessment is not None else None
+            )
+            if own_group is None or target_lesson is None or target_lesson.group_id != own_group.id:
+                return JsonResponse({'success': False, 'message': 'Санҷиш бояд ба дарси гурӯҳи шумо вобаста бошад.'}, status=200)
+
         with transaction.atomic():
             if assessment is None:
                 if number is None:
@@ -3031,6 +3264,13 @@ def assessment_save(request):
                 if not created:
                     # Same natural key already exists (double submit): make
                     # the call idempotent instead of duplicating the row.
+                    # Grouped CS: a regular teacher must never hijack a row
+                    # owned by another group (or a lesson-less admin row).
+                    if cs_grouped and is_regular and (
+                        assessment.lesson_id is None
+                        or assessment.lesson.group_id != own_group.id
+                    ):
+                        return JsonResponse({'success': False, 'message': 'Санҷиш ба гурӯҳи шумо тааллуқ надорад.'}, status=200)
                     assessment.title = title or assessment.title
                     assessment.is_ajm = is_ajm
                     if lesson is not None:
@@ -3098,6 +3338,11 @@ def assessment_delete(request):
         cs = assessment.class_subject
         if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+        if _is_regular_teacher(request.user) and cs.groups.filter(is_active=True).exists():
+            own_group = teacher_group_for(request.user, cs)
+            if (own_group is None or assessment.lesson_id is None
+                    or assessment.lesson.group_id != own_group.id):
+                return JsonResponse({'success': False, 'message': 'Санҷиш ба гурӯҳи шумо тааллуқ надорад.'}, status=200)
         if is_quarter_locked(cs.school, cs.class_name, cs.subject, assessment.quarter):
             return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
         deleted_quarter = assessment.quarter
@@ -3153,6 +3398,24 @@ def lesson_save(request):
         if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
+        # Group ownership (Phase 3): on a grouped ClassSubject a regular
+        # teacher's new lessons always belong to their own active group —
+        # a client-supplied group_id is never trusted. Admin/Zavuch may
+        # explicitly target a group, or leave the lesson shared (NULL).
+        group = None
+        if cs.groups.filter(is_active=True).exists():
+            if _is_regular_teacher(request.user):
+                group = teacher_group_for(request.user, cs)
+                if group is None:
+                    return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+            else:
+                gid = request.POST.get('group_id', '').strip()
+                if gid:
+                    try:
+                        group = cs.groups.get(pk=int(gid), is_active=True)
+                    except (TeachingGroup.DoesNotExist, ValueError, TypeError):
+                        return JsonResponse({'success': False, 'message': 'Гурӯҳ ёфт нашуд.'}, status=200)
+
         try:
             date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
         except ValueError:
@@ -3180,11 +3443,17 @@ def lesson_save(request):
                 class_subject=cs,
                 date=date,
                 lesson_number=number,
-                defaults={'topic': topic},
+                defaults={'topic': topic, 'group': group},
             )
-            if not created and topic:
-                lesson.topic = topic
-                lesson.save()
+            if not created:
+                # The slot already exists: a regular teacher may only touch
+                # their own group's lesson — never edit or re-label a row
+                # owned by another group or left shared (group=NULL).
+                if _is_regular_teacher(request.user) and not _teacher_can_edit_lesson(request.user, lesson):
+                    return JsonResponse({'success': False, 'message': 'Дарс ба гурӯҳи шумо тааллуқ надорад.'}, status=403)
+                if topic:
+                    lesson.topic = topic
+                    lesson.save()
 
         return JsonResponse({'success': True, 'lesson': {
             'id': lesson.id,
@@ -3214,6 +3483,8 @@ def lesson_delete(request):
         cs = lesson.class_subject
         if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+        if not _teacher_can_edit_lesson(request.user, lesson):
+            return JsonResponse({'success': False, 'message': 'Дарс ба гурӯҳи шумо тааллуқ надорад.'}, status=403)
         if is_quarter_locked(cs.school, cs.class_name, cs.subject, get_date_quarter(lesson.date)):
             return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
         if Grade.objects.filter(lesson=lesson).exists() or Assessment.objects.filter(lesson=lesson).exists():
@@ -3947,6 +4218,15 @@ def class_groups(request, cs_id):
     g1_gender, g2_gender = gender_split(students_json)
     g1_balanced, g2_balanced = balanced_split(students_json)
 
+    # Students with no membership in an active group are invisible to group
+    # teachers — surface the count so the Admin/Zavuch can fix it here.
+    member_ids = {
+        sid
+        for entry in existing_json.values()
+        for sid in entry['members']
+    }
+    unassigned_count = sum(1 for s in students if s.id not in member_ids)
+
     return render(request, 'school/class_groups.html', {
         'cs': cs,
         'school': school,
@@ -3958,6 +4238,7 @@ def class_groups(request, cs_id):
             'balanced': {'g1': g1_balanced, 'g2': g2_balanced},
         },
         'has_groups': bool(groups),
+        'unassigned_count': unassigned_count,
         'group_labels': GROUP_LABELS,
     })
 

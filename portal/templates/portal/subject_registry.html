@@ -1,0 +1,287 @@
+{% extends 'portal/base.html' %}
+{% block title %}Феҳристи фанҳо - Портали маориф{% endblock %}
+{% block extra_head %}
+<style>
+.subj-card { max-width: 860px; margin: 1rem auto; }
+.subj-form label.scope { display: block; margin: 0.4rem 0; font-weight: 600; }
+.subj-form input[type="text"] { width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px; }
+.subj-scope { margin: 0.8rem 0; padding: 0.8rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.subj-schools, .subj-classes { display: none; margin-top: 0.6rem; max-height: 220px; overflow-y: auto; }
+.subj-schools.visible, .subj-classes.visible { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.25rem 0.8rem; }
+.subj-schools label, .subj-classes label { font-weight: 400; display: flex; gap: 0.35rem; align-items: center; }
+.subj-pick-list { margin: 0.6rem 0; max-height: 320px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+.subj-pick { display: flex; gap: 0.5rem; align-items: center; padding: 0.45rem 0.7rem; border-bottom: 1px solid #f1f5f9; cursor: pointer; font-weight: 500; }
+.subj-pick:hover { background: #f8fafc; }
+.subj-pick input { margin: 0; }
+.subj-search { width: 100%; padding: 0.5rem 0.7rem; border: 1px solid #cbd5e1; border-radius: 6px; margin-bottom: 0.5rem; }
+.subj-create { margin-top: 0.8rem; padding: 0.8rem; border: 1px dashed #cbd5e1; border-radius: 8px; }
+.reg-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+.reg-table th, .reg-table td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #e2e8f0; text-align: left; font-size: 0.92rem; }
+.reg-table th { background: #003366; color: #fff; }
+.scope-badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.8rem; margin: 0.1rem; }
+.scope-all { background: #dbeafe; color: #1d4ed8; }
+.scope-school { background: #dcfce7; color: #166534; }
+.scope-class { background: #fef9c3; color: #854d0e; }
+.scope-off { background: #f1f5f9; color: #94a3b8; }
+.subj-preview { margin: 0.8rem 0; padding: 0.9rem 1rem; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; }
+.subj-preview p { margin: 0.3rem 0; }
+.subj-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 1rem; }
+.subj-reason { width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px; font-family: inherit; }
+</style>
+{% endblock %}
+{% block content %}
+
+{% if step == 'select' %}
+<div class="card subj-card">
+    <h2>📚 Феҳристи фанҳо</h2>
+
+    <form method="post" class="subj-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="choose_subject">
+        <label for="subj-search"><b>Фанро интихоб кунед</b></label>
+        <input type="text" id="subj-search" class="subj-search" placeholder="Ҷустуҷӯи фан..." autocomplete="off">
+        <div class="subj-pick-list" id="subj-pick-list">
+            {% for name in subject_names %}
+            <label class="subj-pick"><input type="radio" name="pick_name" value="{{ name }}"> {{ name }}</label>
+            {% empty %}
+            <p class="muted" style="padding:0.6rem;">Ҳанӯз фанҳо сабт нашудаанд.</p>
+            {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-success">Идома</button>
+    </form>
+
+    <div class="subj-create">
+        <p class="muted" style="margin-top:0;">Фан дар рӯйхат нест</p>
+        <button type="button" class="btn" id="toggle-create">➕ Фани нав эҷод кардан</button>
+        <form method="post" class="subj-form" id="create-form" hidden>
+            {% csrf_token %}
+            <input type="hidden" name="action" value="choose_subject">
+            <label for="new-name" style="margin-top:0.7rem;"><b>Номи фан</b></label>
+            <input type="text" id="new-name" name="new_name" placeholder="Масалан: Забон ва адабиёти ӯзбек">
+            <div class="subj-actions">
+                <button type="submit" class="btn btn-success">Идома</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card subj-card">
+    <h3>Фанҳои сабтшуда</h3>
+    <table class="reg-table">
+        <thead><tr><th>Фан</th><th>Дастрасӣ</th></tr></thead>
+        <tbody>
+        {% for subj in registry %}
+        <tr>
+            <td>{{ subj.name }}</td>
+            <td>
+                {% for a in subj.availabilities.all %}
+                <span class="scope-badge {% if not a.is_active %}scope-off{% elif not a.school_id %}scope-all{% elif a.class_name %}scope-class{% else %}scope-school{% endif %}">
+                    {% if not a.school_id %}Ҳама муассисаҳо{% else %}{{ a.school.name }}{% if a.class_name %} / {{ a.class_name }}{% endif %}{% endif %}{% if not a.is_active %} (ҳомӯш){% endif %}
+                </span>
+                {% empty %}<span class="muted">—</span>{% endfor %}
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="2" class="muted">Ҳанӯз фанҳои иловагӣ сабт нашудаанд.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% elif step == 'classes' %}
+<div class="card subj-card">
+    <h2>{% if is_new %}➕ Фани нав{% else %}Танзими фан{% endif %}</h2>
+
+    <form method="post" class="subj-form" id="classes-form">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="preview">
+        {% if is_new %}<input type="hidden" name="new_name" value="{{ subj_name }}">{% else %}<input type="hidden" name="pick_name" value="{{ subj_name }}">{% endif %}
+
+        <div class="subj-preview">
+            <p><b>Фан:</b> {{ subj_name }}</p>
+            {% if restricted %}<p><b>Муассиса:</b> {{ user_school.name }}</p>{% endif %}
+        </div>
+
+        {% if restricted %}
+        <input type="hidden" name="scope" value="classes">
+        <input type="hidden" name="schools" value="{{ user_school.id }}">
+        {% else %}
+        <div class="subj-scope">
+            <b>Муассиса:</b>
+            {% if allow_global %}
+            <label class="scope"><input type="radio" name="scope" value="all" {% if scope == 'all' %}checked{% endif %}> Ҳама муассисаҳо</label>
+            {% endif %}
+            <label class="scope"><input type="radio" name="scope" value="school" {% if scope == 'school' %}checked{% endif %}> Тамоми синфҳои муассисаи интихобшуда</label>
+            <label class="scope"><input type="radio" name="scope" value="classes" {% if scope != 'all' and scope != 'school' %}checked{% endif %}> Синфҳои интихобшуда</label>
+
+            <div class="subj-schools" id="schools-box">
+                {% for s in schools %}
+                <label><input type="checkbox" name="schools" value="{{ s.id }}" {% if s.id in checked_school_ids %}checked{% endif %}> {{ s.name }}</label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="subj-scope" id="classes-block">
+            <b>Синфҳоро интихоб кунед</b>
+            {% if whole_schools %}
+            <p class="muted">Ин фан аллакай барои тамоми синфҳои {{ whole_schools|join:", " }} фаъол аст.</p>
+            {% endif %}
+            <label class="scope" style="margin-top:0.5rem;"><input type="checkbox" id="select-all-classes"> Ҳамаи синфҳо</label>
+            <div class="subj-classes visible" id="classes-box">
+                {% for c in class_choices %}
+                <label><input type="checkbox" name="classes" value="{{ c }}" {% if c in checked_classes %}checked{% endif %}> {{ c }}
+                    {% if c in configured %}<span class="scope-badge scope-school">фаъол</span>{% endif %}
+                    {% if c in pending_removal %}<span class="scope-badge scope-off">дар интизорӣ</span>{% endif %}
+                </label>
+                {% empty %}
+                <span class="muted">Синфҳо ёфт нашуданд.</span>
+                {% endfor %}
+            </div>
+            <p class="muted" style="margin-bottom:0;">Синфҳои аллакай танзимшуда бетағйир мемонанд. Барои хориҷ кардани фан аз синф дархост фиристед.</p>
+        </div>
+
+        <div class="subj-actions">
+            <a href="{% url 'subject_registry' %}" class="btn">↩ Баргаштан</a>
+            <button type="submit" class="btn btn-success">Пешнамоиш</button>
+        </div>
+    </form>
+
+    {% if restricted and configured %}
+    <div class="subj-create">
+        <h3 style="margin-top:0;">📨 Дархости хориҷ кардани фан</h3>
+        <form method="post" action="{% url 'request_deactivation' %}" class="subj-form">
+            {% csrf_token %}
+            <input type="hidden" name="subject" value="{{ subj_name }}">
+            <b>Фан:</b> {{ subj_name }}<br>
+            <b>Муассиса:</b> {{ user_school.name }}
+            <div class="subj-classes visible" style="margin-top:0.5rem;">
+                {% for c in class_choices %}{% if c in configured %}
+                <label><input type="checkbox" name="classes" value="{{ c }}" {% if c in pending_removal %}disabled{% endif %}> {{ c }}
+                    {% if c in pending_removal %}<span class="scope-badge scope-off">дар интизорӣ</span>{% endif %}
+                </label>
+                {% endif %}{% endfor %}
+            </div>
+            <label for="reason" style="margin-top:0.7rem;"><b>Сабаби дархост</b></label>
+            <textarea id="reason" name="reason" class="subj-reason" rows="3" placeholder="Сабаби хориҷ кардани фанро нависед..."></textarea>
+            <div class="subj-actions">
+                <button type="submit" class="btn btn-warning">📨 Фиристодани дархост</button>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+{% elif step == 'preview' or step == 'confirm' %}
+<div class="card subj-card">
+    <h2>Пешнамоиш</h2>
+    <div class="subj-preview">
+        <p><b>Фан:</b> {{ subj_name }}</p>
+        <p><b>Муассиса:</b>
+            {% if scope == 'all' %}Ҳама муассисаҳо{% else %}{% for s in target_schools %}{{ s.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}
+        </p>
+        <p><b>Синфҳо:</b>
+            {% if scope == 'classes' %}{{ class_names|join:", " }}{% else %}Ҳамаи синфҳо{% endif %}
+        </p>
+        <p class="muted">
+            {% if scope == 'all' %}Ин фан барои ҳама муассисаҳо дастрас мешавад.
+            {% elif scope == 'classes' %}Ин фан ба {{ class_names|length }} синф илова карда мешавад.
+            {% else %}Ин фан ба тамоми синфҳои муассисаи интихобшуда илова карда мешавад.{% endif %}
+        </p>
+    </div>
+
+    {% if step == 'preview' %}
+    <div class="subj-actions">
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="back_classes">
+            {% if is_new %}<input type="hidden" name="new_name" value="{{ subj_name }}">{% else %}<input type="hidden" name="pick_name" value="{{ subj_name }}">{% endif %}
+            <input type="hidden" name="scope" value="{{ scope }}">
+            {% for s in target_schools %}<input type="hidden" name="schools" value="{{ s.id }}">{% endfor %}
+            {% for c in class_names %}<input type="hidden" name="classes" value="{{ c }}">{% endfor %}
+            <button type="submit" class="btn">↩ Баргаштан</button>
+        </form>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="confirm">
+            {% if is_new %}<input type="hidden" name="new_name" value="{{ subj_name }}">{% else %}<input type="hidden" name="pick_name" value="{{ subj_name }}">{% endif %}
+            <input type="hidden" name="scope" value="{{ scope }}">
+            {% for s in target_schools %}<input type="hidden" name="schools" value="{{ s.id }}">{% endfor %}
+            {% for c in class_names %}<input type="hidden" name="classes" value="{{ c }}">{% endfor %}
+            <button type="submit" class="btn btn-success">✅ Тасдиқ кардан</button>
+        </form>
+    </div>
+    {% else %}
+    <p><b>Шумо дурустии номи фан ва синфҳои интихобшударо санҷидед?</b></p>
+    <div class="subj-actions">
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="back_preview">
+            {% if is_new %}<input type="hidden" name="new_name" value="{{ subj_name }}">{% else %}<input type="hidden" name="pick_name" value="{{ subj_name }}">{% endif %}
+            <input type="hidden" name="scope" value="{{ scope }}">
+            {% for s in target_schools %}<input type="hidden" name="schools" value="{{ s.id }}">{% endfor %}
+            {% for c in class_names %}<input type="hidden" name="classes" value="{{ c }}">{% endfor %}
+            <button type="submit" class="btn">Не, баргаштан</button>
+        </form>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save">
+            <input type="hidden" name="ack" value="yes">
+            {% if is_new %}<input type="hidden" name="new_name" value="{{ subj_name }}">{% else %}<input type="hidden" name="pick_name" value="{{ subj_name }}">{% endif %}
+            <input type="hidden" name="scope" value="{{ scope }}">
+            {% for s in target_schools %}<input type="hidden" name="schools" value="{{ s.id }}">{% endfor %}
+            {% for c in class_names %}<input type="hidden" name="classes" value="{{ c }}">{% endfor %}
+            <button type="submit" class="btn btn-success">Ҳа, тасдиқ мекунам</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<script>
+(function () {
+    var search = document.getElementById('subj-search');
+    if (search) {
+        search.addEventListener('input', function () {
+            var q = search.value.trim().toLowerCase();
+            document.querySelectorAll('#subj-pick-list .subj-pick').forEach(function (el) {
+                el.style.display = (!q || el.textContent.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+            });
+        });
+    }
+    var toggle = document.getElementById('toggle-create');
+    var createForm = document.getElementById('create-form');
+    if (toggle && createForm) {
+        toggle.addEventListener('click', function () {
+            createForm.hidden = !createForm.hidden;
+            if (!createForm.hidden) {
+                var inp = document.getElementById('new-name');
+                if (inp) inp.focus();
+            }
+        });
+    }
+    var selectAll = document.getElementById('select-all-classes');
+    var classesBox = document.getElementById('classes-box');
+    if (selectAll && classesBox) {
+        selectAll.addEventListener('change', function () {
+            classesBox.querySelectorAll('input[name="classes"]').forEach(function (cb) {
+                cb.checked = selectAll.checked;
+            });
+        });
+    }
+    var radios = document.querySelectorAll('input[name="scope"]');
+    var schoolsBox = document.getElementById('schools-box');
+    var classesBlock = document.getElementById('classes-block');
+    function syncScope() {
+        var v = document.querySelector('input[name="scope"]:checked');
+        v = v ? v.value : 'classes';
+        if (schoolsBox) schoolsBox.classList.toggle('visible', v === 'school' || v === 'classes');
+        if (classesBlock) classesBlock.style.display = (v === 'classes' || !schoolsBox) ? '' : 'none';
+    }
+    if (radios.length) {
+        radios.forEach(function (r) { r.addEventListener('change', syncScope); });
+        syncScope();
+    }
+})();
+</script>
+{% endblock %}

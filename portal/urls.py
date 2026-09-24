@@ -28,6 +28,7 @@ urlpatterns = [
     path('lesson-save/', views.lesson_save, name='lesson_save'),
     path('lesson-delete/', views.lesson_delete, name='lesson_delete'),
     path('school/<int:school_id>/class/<str:class_name>/subjects/', views.add_remove_subject, name='add_remove_subject'),
+    path('subjects/', views.subject_registry, name='subject_registry'),
     path('class/<str:class_name>/download-template/', views.download_template, name='download_template'),
     path('class/<str:class_name>/import/', views.import_excel, name='import_excel_class'),
     path('school/<int:school_id>/import_excel/', views.import_excel, name='import_excel'),

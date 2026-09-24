@@ -4,7 +4,11 @@ import io
 import pandas as pd
 from django.db.models import Avg, Count, Q
 from django.conf import settings
-from .models import School, Student, Grade, ClassSubject, SubjectDeactivationRequest, normalize_class_name, normalize_subject, is_litsey
+from .models import (
+    School, Student, Grade, ClassSubject, Subject, SubjectAvailability,
+    SubjectDeactivationRequest, normalize_class_name, normalize_subject,
+    is_litsey,
+)
 
 
 # Default national curriculum subjects by grade
@@ -167,12 +171,51 @@ def preserved_subjects_for(school, class_name):
     ]
 
 
+def canonical_subject_for(name, user=None):
+    """Get or create the canonical Subject row for a (normalized) name."""
+    name = normalize_subject(name)
+    if not name:
+        return None
+    subject, _ = Subject.objects.get_or_create(name=name)
+    if user is not None and subject.created_by_id is None:
+        subject.created_by = user
+        subject.save(update_fields=['created_by'])
+    if not subject.is_active:
+        subject.is_active = True
+        subject.save(update_fields=['is_active'])
+    return subject
+
+
+def registry_subjects_for(school, class_name):
+    """Canonical registry subjects applicable to this school+class.
+
+    Availability precedence: exact (school, class) row > school-wide row >
+    global row. An inactive more-specific row is an explicit opt-out.
+    """
+    class_name = normalize_class_name(class_name)
+    applicable = SubjectAvailability.objects.filter(
+        is_active=True, subject__is_active=True
+    ).filter(
+        Q(school=school) | Q(school__isnull=True)
+    ).filter(
+        Q(class_name='') | Q(class_name=class_name)
+    )
+    names = set(applicable.values_list('subject__name', flat=True))
+    blocked = set(
+        SubjectAvailability.objects.filter(
+            school=school, class_name=class_name, is_active=False
+        ).values_list('subject__name', flat=True)
+    )
+    return names - blocked
+
+
 def official_subjects_for(school, class_name):
-    """Subject set visible for a school+class: curriculum ∪ extras ∪ preserved."""
+    """Subject set visible for a school+class: curriculum ∪ extras ∪ preserved ∪ registry."""
     return (
         official_subjects()
         | set(extra_subjects_for(school, class_name))
         | set(preserved_subjects_for(school, class_name))
+        | registry_subjects_for(school, class_name)
     )
 
 
@@ -186,10 +229,12 @@ def ensure_class_subjects(school, class_name):
     class_name = normalize_class_name(class_name)
     subjects = default_subjects_for_class(class_name)
     extras = extra_subjects_for(school, class_name)
+    registry = registry_subjects_for(school, class_name)
     official = (
         {normalize_subject(s) for s in subjects}
         | set(extras)
         | set(preserved_subjects_for(school, class_name))
+        | registry
     )
     created = 0
     for subj in subjects:
@@ -213,10 +258,11 @@ def ensure_class_subjects(school, class_name):
             obj.allocated_teacher = None
             obj.save()
 
-    # School-scoped extras (e.g. the Uzbek classes at School No. 5) are
-    # additions to the curriculum, not defaults — is_default stays False but
-    # they are part of `official` so the sweep below never removes them.
-    for subj in extras:
+    # School-scoped extras (e.g. the Uzbek classes at School No. 5) and
+    # canonical registry subjects are additions to the curriculum, not
+    # defaults — is_default stays False but they are part of `official` so
+    # the sweep below never removes them.
+    for subj in set(extras) | registry:
         obj, c = ClassSubject.objects.get_or_create(
             school=school,
             class_name=class_name,

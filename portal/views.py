@@ -22,14 +22,15 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, CLASS_LETTERS
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, CLASS_LETTERS
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
     default_subjects_for_class, ensure_class_subjects, is_non_graded,
     get_school_number, is_academic_school, academic_schools,
     academic_school_ids, official_subjects,
-    official_subjects_for
+    official_subjects_for, canonical_subject_for,
+    registry_subjects_for,
 )
 from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
@@ -583,6 +584,20 @@ def _can_manage_school(user, school):
     if user.is_superuser:
         return True
     return _is_zavuch(user) and get_user_school(user) == school
+
+
+def _can_manage_subjects(user):
+    """Return True if the user may open the canonical subject workflow.
+
+    Mirrors the subject_registry permission model: superuser, district
+    director / school principal, or a zavuch (deputy director). Regular
+    teachers are never allowed.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or _is_zavuch(user):
+        return True
+    return get_user_role(user) in (settings.ROLE_DIRECTOR, settings.ROLE_PRINCIPAL)
 
 
 def _validate_class_name(raw):
@@ -2686,7 +2701,7 @@ def monthly_save(request):
 @login_required
 def add_remove_subject(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    if not is_academic_school(school) or not has_school_access(request.user, school):
+    if not is_academic_school(school) or not _can_manage_school(request.user, school):
         return redirect('dashboard')
     class_name = normalize_class_name(class_name)
 
@@ -2695,20 +2710,401 @@ def add_remove_subject(request, school_id, class_name):
         subject = request.POST.get('subject', '').strip()
         subject = normalize_subject(subject)
         if action == 'add' and subject:
-            get_or_create_unique(
+            # Registry first: a canonical Subject + class-scoped availability
+            # keep the subject alive across ensure_class_subjects() sweeps —
+            # the ClassSubject row alone used to be silently deactivated.
+            # Official curriculum names need no registry entry.
+            canonical = None
+            if subject not in official_subjects():
+                canonical = canonical_subject_for(subject, user=request.user)
+                if canonical is not None:
+                    SubjectAvailability.objects.update_or_create(
+                        subject=canonical, school=school, class_name=class_name,
+                        defaults={'is_active': True},
+                    )
+            obj, _ = get_or_create_unique(
                 ClassSubject,
                 school=school,
                 class_name=class_name,
                 subject=subject,
                 defaults={'is_active': True, 'is_default': False}
             )
+            if not obj.is_active:
+                obj.is_active = True
+                obj.save(update_fields=['is_active'])
         elif action == 'remove' and subject:
             ClassSubject.objects.filter(
                 school=school,
                 class_name=class_name,
                 subject=subject
             ).update(is_active=False)
+            # If this class has a registry availability row, deactivate it as
+            # an explicit opt-out so ensure_class_subjects() cannot re-add it.
+            SubjectAvailability.objects.filter(
+                subject__name=subject, school=school, class_name=class_name
+            ).update(is_active=False)
+            if Subject.objects.filter(name=subject).exists():
+                SubjectAvailability.objects.get_or_create(
+                    subject_id=Subject.objects.get(name=subject).id,
+                    school=school, class_name=class_name,
+                    defaults={'is_active': False},
+                )
     return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+def _registry_class_choices(schools):
+    """Class names selectable for the given schools."""
+    return sorted({
+        c for c in ClassSubject.objects.filter(
+            school__in=schools, is_active=True
+        ).values_list('class_name', flat=True)
+    } | {
+        c for c in Student.objects.filter(
+            school__in=schools
+        ).values_list('class_name', flat=True)
+    }, key=class_numeric_part)
+
+
+def _registry_subject_choices():
+    """Selectable names: official curriculum ∪ canonical registry."""
+    registry_names = Subject.objects.filter(
+        is_active=True).values_list('name', flat=True)
+    return sorted(set(official_subjects()) | set(registry_names))
+
+
+def _registry_name_taken(name):
+    """True when the normalized name is already selectable in the list."""
+    return name in official_subjects() or Subject.objects.filter(
+        name=name).exists()
+
+
+def _configured_classes_for(subject_name, school):
+    """Classes of `school` where the subject is currently available.
+
+    Sources: an active school-wide/global availability row, active
+    class-scoped availability rows (minus explicit opt-outs), or an already
+    active ClassSubject row (e.g. an official curriculum subject).
+    Returns (configured_set, whole_school_bool).
+    """
+    if not school:
+        return set(), False
+    base = SubjectAvailability.objects.filter(
+        subject__name=subject_name, subject__is_active=True)
+    whole_school = base.filter(
+        Q(school__isnull=True, class_name='') |
+        Q(school=school, class_name=''),
+        is_active=True,
+    ).exists()
+    active = set(base.filter(
+        school=school, is_active=True,
+    ).exclude(class_name='').values_list('class_name', flat=True))
+    opted_out = set(base.filter(
+        school=school, is_active=False,
+    ).exclude(class_name='').values_list('class_name', flat=True))
+    cs_active = set(ClassSubject.objects.filter(
+        school=school, subject=subject_name, is_active=True,
+    ).values_list('class_name', flat=True))
+    return (active - opted_out) | cs_active, whole_school
+
+
+def _pending_removal_classes(subject_name, school):
+    """Classes with a pending deactivation request for this subject."""
+    if not school:
+        return set()
+    return set(ClassSubject.objects.filter(
+        school=school, subject=subject_name,
+        subjectdeactivationrequest__status='pending',
+    ).values_list('class_name', flat=True))
+
+
+def _wizard_subject_name(request):
+    """Resolve the subject being configured from POST: picked or new."""
+    pick = normalize_subject(request.POST.get('pick_name', ''))
+    new = normalize_subject(request.POST.get('new_name', ''))
+    if pick:
+        return pick, False
+    return new, bool(new)
+
+
+@login_required
+def subject_registry(request):
+    """Controlled 'Фани нав' workflow on top of the canonical registry.
+
+    Steps (server-driven; state is carried via hidden inputs):
+      select  — pick an existing subject or create a new canonical one
+      classes — choose the school/classes scope (zavuch locked to own school)
+      preview — Пешнамоиш before saving
+      confirm — double safety confirmation
+      save    — apply availability and return to Тақсимоти дарсҳо
+
+    A plain POST without 'action' keeps the legacy single-form behaviour
+    (name + scope + schools + classes) used by older tests and scripts.
+    """
+    user = request.user
+    is_zavuch = _is_zavuch(user)
+    privileged = user.is_superuser or get_user_role(user) in (
+        settings.ROLE_DIRECTOR, settings.ROLE_PRINCIPAL)
+    if not (privileged or is_zavuch):
+        return HttpResponse('Дастрасӣ манъ аст.', status=403)
+
+    user_school = get_user_school(user)
+    restricted = is_zavuch and not privileged
+    if restricted:
+        schools = [user_school] if user_school else []
+        allow_global = False
+    else:
+        schools = list(School.objects.filter(id__in=academic_school_ids()).order_by('name'))
+        allow_global = True
+
+    base_ctx = {
+        'schools': schools,
+        'allow_global': allow_global,
+        'user_school': user_school,
+        'restricted': restricted,
+    }
+
+    def render_select(extra=None):
+        ctx = dict(base_ctx)
+        ctx.update({
+            'step': 'select',
+            'subject_names': _registry_subject_choices(),
+            'registry': (
+                Subject.objects.filter(is_active=True)
+                .prefetch_related('availabilities__school')
+                .order_by('name')
+            ),
+        })
+        if extra:
+            ctx.update(extra)
+        return render(request, 'portal/subject_registry.html', ctx)
+
+    def wizard_state():
+        """Scope/class selections re-derived (and re-validated) per step."""
+        scope = request.POST.get('scope', 'classes')
+        if restricted:
+            scope = 'classes'
+            target_schools = [user_school] if user_school else []
+        else:
+            ids = {str(i) for i in request.POST.getlist('schools')}
+            target_schools = [s for s in schools if str(s.id) in ids]
+            if scope == 'all' and not allow_global:
+                scope = 'classes'
+        class_names = [normalize_class_name(c)
+                       for c in request.POST.getlist('classes') if c.strip()]
+        if scope == 'classes' and target_schools:
+            allowed = set(_registry_class_choices(target_schools))
+            class_names = [c for c in class_names if c in allowed]
+        return scope, target_schools, class_names
+
+    def render_classes(name, is_new, scope=None, class_names=None, extra=None):
+        scope = scope or 'classes'
+        if restricted:
+            target_schools = [user_school] if user_school else []
+            checked_school_ids = [s.id for s in target_schools]
+        else:
+            ids = {str(i) for i in request.POST.getlist('schools')}
+            if not ids and user_school:
+                ids = {str(user_school.id)}
+            target_schools = [s for s in schools if str(s.id) in ids]
+            checked_school_ids = [s.id for s in target_schools]
+        class_choices = _registry_class_choices(schools)
+        configured, pending, whole_schools = set(), set(), []
+        if not is_new:
+            for sch in target_schools:
+                conf, whole = _configured_classes_for(name, sch)
+                if whole:
+                    whole_schools.append(sch.name)
+                    conf |= set(_registry_class_choices([sch]))
+                configured |= conf
+                pending |= _pending_removal_classes(name, sch)
+        checked = set(class_names or []) | configured
+        ctx = dict(base_ctx)
+        ctx.update({
+            'step': 'classes',
+            'subj_name': name,
+            'is_new': is_new,
+            'scope': scope,
+            'checked_school_ids': checked_school_ids,
+            'class_choices': class_choices,
+            'checked_classes': checked,
+            'configured': configured,
+            'pending_removal': pending,
+            'whole_schools': whole_schools,
+        })
+        if extra:
+            ctx.update(extra)
+        return render(request, 'portal/subject_registry.html', ctx)
+
+    def render_preview(name, is_new, scope, target_schools, class_names):
+        ctx = dict(base_ctx)
+        ctx.update({
+            'step': 'preview',
+            'subj_name': name,
+            'is_new': is_new,
+            'scope': scope,
+            'target_schools': target_schools,
+            'class_names': class_names,
+        })
+        return render(request, 'portal/subject_registry.html', ctx)
+
+    def render_confirm(name, is_new, scope, target_schools, class_names):
+        ctx = dict(base_ctx)
+        ctx.update({
+            'step': 'confirm',
+            'subj_name': name,
+            'is_new': is_new,
+            'scope': scope,
+            'target_schools': target_schools,
+            'class_names': class_names,
+        })
+        return render(request, 'portal/subject_registry.html', ctx)
+
+    def scope_error(scope, target_schools, class_names):
+        """Validation shared by preview/confirm/save steps."""
+        if scope == 'all':
+            return None if allow_global else 'Дастрасӣ манъ аст.'
+        if not target_schools:
+            return 'Муассиса ё синф интихоб нашудааст.'
+        if scope == 'classes' and not class_names:
+            return 'Синфҳоро интихоб кунед.'
+        return None
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+
+        # Legacy single-form save (no 'action'): identical to the original
+        # behaviour so existing tests and scripts keep working.
+        if action is None:
+            name = request.POST.get('name', '').strip()
+            scope = request.POST.get('scope', 'classes')
+            school_ids = request.POST.getlist('schools')
+            class_names = request.POST.getlist('classes')
+            subject = canonical_subject_for(name, user=user) if name else None
+            if subject is None:
+                messages.error(request, 'Номи фан холӣ аст.')
+                return redirect('subject_registry')
+
+            if restricted:
+                school_ids = [str(user_school.id)] if user_school else []
+                if scope == 'all':
+                    scope = 'school'
+
+            if scope == 'all' and allow_global:
+                SubjectAvailability.objects.update_or_create(
+                    subject=subject, school=None, class_name='',
+                    defaults={'is_active': True},
+                )
+            else:
+                targets = [s for s in schools if str(s.id) in school_ids]
+                saved = False
+                for sch in targets:
+                    if scope == 'classes':
+                        for cn in class_names:
+                            cn = normalize_class_name(cn)
+                            SubjectAvailability.objects.update_or_create(
+                                subject=subject, school=sch, class_name=cn,
+                                defaults={'is_active': True},
+                            )
+                            ensure_class_subjects(sch, cn)
+                            saved = True
+                    else:
+                        SubjectAvailability.objects.update_or_create(
+                            subject=subject, school=sch, class_name='',
+                            defaults={'is_active': True},
+                        )
+                        saved = True
+                if not saved:
+                    messages.error(request, 'Муассиса ё синф интихоб нашудааст.')
+                    return redirect('subject_registry')
+            messages.success(request, f'Фан «{subject.name}» захира шуд.')
+            return redirect('subject_registry')
+
+        # ---------------- wizard steps ----------------
+        if action == 'choose_subject':
+            name, is_new = _wizard_subject_name(request)
+            if not name:
+                messages.error(request, 'Фанро интихоб кунед.')
+                return redirect('subject_registry')
+            if is_new:
+                if _registry_name_taken(name):
+                    messages.error(
+                        request,
+                        'Ин фан аллакай дар рӯйхат мавҷуд аст. '
+                        'Лутфан фанни мавҷударо интихоб кунед.')
+                    return redirect('subject_registry')
+            elif not _registry_name_taken(name):
+                messages.error(request, 'Фанро интихоб кунед.')
+                return redirect('subject_registry')
+            return render_classes(name, is_new)
+
+        if action == 'back_classes':
+            name, is_new = _wizard_subject_name(request)
+            if not name:
+                return redirect('subject_registry')
+            scope = request.POST.get('scope', 'classes')
+            class_names = [normalize_class_name(c)
+                           for c in request.POST.getlist('classes') if c.strip()]
+            return render_classes(name, is_new, scope=scope,
+                                  class_names=class_names)
+
+        if action in ('preview', 'back_preview', 'confirm', 'save'):
+            name, is_new = _wizard_subject_name(request)
+            if not name:
+                messages.error(request, 'Фанро интихоб кунед.')
+                return redirect('subject_registry')
+            scope, target_schools, class_names = wizard_state()
+            error = scope_error(scope, target_schools, class_names)
+            if error:
+                if action == 'back_preview':
+                    return render_preview(name, is_new, scope,
+                                          target_schools, class_names)
+                messages.error(request, error)
+                return render_classes(name, is_new, scope=scope,
+                                      class_names=class_names)
+            if action == 'preview':
+                return render_preview(name, is_new, scope,
+                                      target_schools, class_names)
+            if action == 'back_preview':
+                return render_preview(name, is_new, scope,
+                                      target_schools, class_names)
+            if action == 'confirm':
+                return render_confirm(name, is_new, scope,
+                                      target_schools, class_names)
+
+            # action == 'save' — the second confirmation screen is the only
+            # source of ack=yes; anything else lands back on it.
+            if request.POST.get('ack') != 'yes':
+                return render_confirm(name, is_new, scope,
+                                      target_schools, class_names)
+            subject = canonical_subject_for(name, user=user)
+            if scope == 'all':
+                SubjectAvailability.objects.update_or_create(
+                    subject=subject, school=None, class_name='',
+                    defaults={'is_active': True},
+                )
+            else:
+                for sch in target_schools:
+                    if scope == 'classes':
+                        for cn in class_names:
+                            SubjectAvailability.objects.update_or_create(
+                                subject=subject, school=sch, class_name=cn,
+                                defaults={'is_active': True},
+                            )
+                            ensure_class_subjects(sch, cn)
+                    else:
+                        SubjectAvailability.objects.update_or_create(
+                            subject=subject, school=sch, class_name='',
+                            defaults={'is_active': True},
+                        )
+            messages.success(request, 'Фан бо муваффақият илова карда шуд.')
+            if user.is_superuser and target_schools:
+                return redirect(
+                    f'{reverse("lesson_allocation")}?school_id={target_schools[0].id}')
+            return redirect('lesson_allocation')
+
+        return redirect('subject_registry')
+
+    return render_select()
 
 
 @login_required
@@ -4035,6 +4431,7 @@ def lesson_allocation(request):
         'teachers': teachers,
         'is_superuser': request.user.is_superuser,
         'is_zavuch': _is_zavuch(request.user, get_user_role(request.user)),
+        'can_manage_subjects': _can_manage_subjects(request.user),
         'my_requests': my_requests,
         'pending_request_ids': pending_request_ids,
         'max_weekly_hours': MAX_WEEKLY_HOURS,
@@ -4392,6 +4789,60 @@ def request_deactivation(request):
     if not _is_zavuch(request.user, get_user_role(request.user)):
         messages.error(request, 'Танҳо завучҳо метавонанд дархости хориҷкунӣ ирсол кунанд.')
         return redirect('lesson_allocation')
+    school = get_user_school(request.user)
+    if not school or not is_academic_school(school) or not has_school_access(request.user, school):
+        messages.error(request, 'Шумо метавонед танҳо барои муассисаи худ дархост диҳед.')
+        return redirect('lesson_allocation')
+    reason = request.POST.get('reason', '').strip()
+    wants_json = (
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or request.headers.get('Accept', '').startswith('application/json')
+    )
+
+    # Batch mode from the registry workflow: subject name + class list.
+    subject_name = normalize_subject(request.POST.get('subject', ''))
+    if subject_name:
+        class_names = [normalize_class_name(c)
+                       for c in request.POST.getlist('classes') if c.strip()]
+        made = 0
+        for cn in class_names:
+            cs = ClassSubject.objects.filter(
+                school=school, class_name=cn, subject=subject_name,
+                is_active=True).first()
+            if cs is None:
+                # Configured via availability but the ClassSubject row was
+                # never materialized — let ensure create it so the request
+                # has a concrete scope, then approve/deactivate normally.
+                active_avail = SubjectAvailability.objects.filter(
+                    subject__name=subject_name, school=school,
+                    class_name=cn, is_active=True).exists()
+                if not active_avail:
+                    continue
+                ensure_class_subjects(school, cn)
+                cs = ClassSubject.objects.filter(
+                    school=school, class_name=cn, subject=subject_name,
+                    is_active=True).first()
+            if cs is None:
+                continue
+            if SubjectDeactivationRequest.objects.filter(
+                    class_subject=cs,
+                    status__in=['pending', 'approved']).exists():
+                continue
+            SubjectDeactivationRequest.objects.create(
+                class_subject=cs, requested_by=request.user,
+                status='pending', notes=reason)
+            made += 1
+        if wants_json:
+            status = 'ok' if made else 'exists'
+            return JsonResponse({'status': status})
+        if made:
+            messages.success(
+                request, 'Дархост барои хориҷ кардани фан фиристода шуд.')
+        else:
+            messages.warning(
+                request, 'Дархост фиристода нашуд. Синфҳои интихобшударо санҷед.')
+        return redirect('subject_registry')
+
     cs_id = request.POST.get('cs_id')
     if not cs_id:
         return redirect('lesson_allocation')
@@ -4400,12 +4851,11 @@ def request_deactivation(request):
     except (ValueError, ClassSubject.DoesNotExist):
         messages.error(request, 'Фан ёфт нашуд.')
         return redirect('lesson_allocation')
-    school = get_user_school(request.user)
-    if not school or not is_academic_school(school) or not has_school_access(request.user, school) or cs.school != school:
+    if cs.school != school:
         messages.error(request, 'Шумо метавонед танҳо барои муассисаи худ дархост диҳед.')
         return redirect('lesson_allocation')
     if SubjectDeactivationRequest.objects.filter(class_subject=cs, status__in=['pending', 'approved']).exists():
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('Accept', '').startswith('application/json'):
+        if wants_json:
             return JsonResponse({'status': 'exists', 'message': 'Дархости мутаносиб аллакай вуҷуд дорад'})
         messages.warning(request, 'Дархости мутаносиб аллакай вуҷуд дорад.')
         return redirect(f'{reverse("lesson_allocation")}?class={cs.class_name}')
@@ -4413,8 +4863,9 @@ def request_deactivation(request):
         class_subject=cs,
         requested_by=request.user,
         status='pending',
+        defaults={'notes': reason},
     )
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('Accept', '').startswith('application/json'):
+    if wants_json:
         return JsonResponse({'status': 'ok', 'message': 'Дархост ирсол шуд'})
     messages.success(request, f'Дархости хориҷкунии «{cs.subject}» барои {cs.class_name} ирсол шуд.')
     return redirect(f'{reverse("lesson_allocation")}?class={cs.class_name}')
@@ -4448,6 +4899,21 @@ def review_deactivation_request(request):
         cs.teacher = None
         cs.allocated_teacher = None
         cs.save()
+        # Only the requested school/class scope is removed: deactivate the
+        # matching registry availability as an explicit opt-out so
+        # ensure_class_subjects() cannot re-seed it. Other schools/classes
+        # and the canonical Subject record itself stay untouched.
+        SubjectAvailability.objects.filter(
+            subject__name=cs.subject, school=cs.school,
+            class_name=cs.class_name,
+        ).update(is_active=False)
+        reg_subject = Subject.objects.filter(name=cs.subject).first()
+        if reg_subject is not None:
+            SubjectAvailability.objects.get_or_create(
+                subject=reg_subject, school=cs.school,
+                class_name=cs.class_name,
+                defaults={'is_active': False},
+            )
         # Approve all other pending duplicates for the same subject/class cleanly.
         SubjectDeactivationRequest.objects.filter(class_subject=cs, status='pending').update(
             status='approved', reviewed_by=request.user, reviewed_at=now

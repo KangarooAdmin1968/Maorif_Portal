@@ -19,6 +19,8 @@
                 <th>Синф</th>
                 <th>Фан</th>
                 <th>Завуч</th>
+                <th>Сабаби дархост</th>
+                <th>Ҳолат</th>
                 <th>Сана</th>
                 <th>Амал</th>
             </tr>
@@ -30,24 +32,28 @@
                 <td>{{ req.class_subject.class_name }}</td>
                 <td>{{ req.class_subject.subject }}</td>
                 <td>{{ req.requested_by.get_full_name|default:req.requested_by.username }}</td>
+                <td>{{ req.notes|default:"—" }}</td>
+                <td>
+                    {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">Тасдиқ шуд</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">Рад шуд</span>{% endif %}
+                </td>
                 <td>{{ req.requested_at|date:"d.m.Y H:i" }}</td>
                 <td>
                     <form action="{% url 'review_deactivation_request' %}" method="post" style="display:inline;">
                         {% csrf_token %}
                         <input type="hidden" name="request_id" value="{{ req.id }}">
                         <input type="hidden" name="action" value="approve">
-                        <button type="submit" class="btn btn-success btn-sm">Тасдиқ кардан</button>
+                        <button type="submit" class="btn btn-success btn-sm">✅ Тасдиқ кардан</button>
                     </form>
                     <form action="{% url 'review_deactivation_request' %}" method="post" style="display:inline;">
                         {% csrf_token %}
                         <input type="hidden" name="request_id" value="{{ req.id }}">
                         <input type="hidden" name="action" value="reject">
-                        <button type="submit" class="btn btn-danger btn-sm">Рад кардан</button>
+                        <button type="submit" class="btn btn-danger btn-sm">❌ Рад кардан</button>
                     </form>
                 </td>
             </tr>
             {% empty %}
-            <tr><td colspan="6">Дархостҳои дар тайёрӣ нестанд.</td></tr>
+            <tr><td colspan="8">Дархостҳои дар интизорӣ нестанд.</td></tr>
             {% endfor %}
         </tbody>
     </table>

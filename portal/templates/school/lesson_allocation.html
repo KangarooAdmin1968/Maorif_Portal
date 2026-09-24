@@ -123,6 +123,12 @@
 {% endif %}
 <h1>{{ school.name }} — Тақсимоти дарсҳо ба омӯзгорон</h1>
 
+{% if can_manage_subjects %}
+<div style="margin: .75rem 0;">
+    <a href="{% url 'subject_registry' %}" class="btn btn-success">➕ Фани нав</a>
+</div>
+{% endif %}
+
 <div class="alloc-tabs">
     <button type="button" class="alloc-tab active" id="tab-classes" onclick="switchTab('classes')">📚 Тақсимоти синфҳо</button>
     <button type="button" class="alloc-tab" id="tab-gaps" onclick="switchTab('gaps')">⚠️ Камбудиҳо <span class="gap-badge" id="gap-count">0</span></button>
@@ -252,7 +258,7 @@
                     <td>{{ req.class_subject.subject }}</td>
                     <td>{{ req.class_subject.class_name }}</td>
                     <td>
-                        {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟢 Тасдиқшуда</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🔴 Радшуда</span>{% endif %}
+                        {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟢 Тасдиқ шуд</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🔴 Рад шуд</span>{% endif %}
                     </td>
                     <td>{{ req.requested_at|date:"d.m.Y H:i" }}</td>
                 </tr>

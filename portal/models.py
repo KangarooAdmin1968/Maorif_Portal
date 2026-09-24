@@ -244,6 +244,66 @@ class ClassSubject(models.Model):
         super().save(*args, **kwargs)
 
 
+class Subject(models.Model):
+    """Canonical subject registry — one row per distinct subject name.
+
+    TJC_SUBJECTS remains the official curriculum source; this registry holds
+    intentionally added custom subjects (e.g. 'Забон ва адабиёти ӯзбек') so
+    they have one identity instead of per-class ad-hoc ClassSubject strings.
+    Grade/QuarterGrade stay string-based and keep matching by name.
+    """
+    name = models.CharField('Фан', max_length=100, unique=True)
+    is_active = models.BooleanField('Фаъол?', default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True,
+                                   related_name='created_subjects', verbose_name='Эҷодкарда')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Фан (реестр)'
+        verbose_name_plural = 'Реестри фанҳо'
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        self.name = normalize_subject(self.name)
+        super().save(*args, **kwargs)
+
+
+class SubjectAvailability(models.Model):
+    """Where a canonical subject may be used.
+
+    Precedence (most specific wins):
+      1. (subject, school, class_name) — per-class rule
+      2. (subject, school, '')         — whole school
+      3. (subject, NULL, '')           — Ҳама муассисаҳо
+    An inactive more-specific row is an explicit opt-out over a broader
+    active row (e.g. subject enabled school-wide but removed from 5-Д).
+    """
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE,
+                                related_name='availabilities', verbose_name='Фан')
+    school = models.ForeignKey(School, on_delete=models.CASCADE, blank=True, null=True,
+                               related_name='subject_availabilities', verbose_name='Муассиса')
+    class_name = models.CharField('Синф', max_length=20, blank=True, default='')
+    is_active = models.BooleanField('Фаъол?', default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Дастрасии фан'
+        verbose_name_plural = 'Дастрасии фанҳо'
+
+    def __str__(self):
+        scope = self.school.name if self.school_id else 'Ҳама муассисаҳо'
+        if self.class_name:
+            return f"{self.subject.name} — {scope} / {self.class_name}"
+        return f"{self.subject.name} — {scope}"
+
+    def save(self, *args, **kwargs):
+        if self.class_name:
+            self.class_name = normalize_class_name(self.class_name)
+        super().save(*args, **kwargs)
+
+
 class TeachingGroup(models.Model):
     """A teaching subgroup inside one canonical ClassSubject.
 

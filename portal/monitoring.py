@@ -86,3 +86,31 @@ def can_view_full_school_detail(user, school):
 def can_view_cross_school_aggregate(user):
     """True if the user may see the multi-school aggregate comparison."""
     return _monitoring_scope(user) in (SCOPE_DISTRICT, SCOPE_SCHOOL_AGG)
+
+
+def scope_monitoring_stats(user, stats):
+    """Apply the viewer's monitoring scope to _get_monitoring_stats() rows.
+
+    District scope: rows pass through unchanged. School scope (principal):
+    only the user's own school survives. school_agg (zavuch): all rows are
+    kept, but schools outside their own are reduced to aggregate columns —
+    zavuch_username/zavuch_user/logged_in are masked so no individual user
+    data or last_login timestamp ever reaches the response or workbook.
+    """
+    if can_view_all_schools_monitoring(user):
+        return stats
+    scoped = []
+    for row in stats:
+        school = row['school']
+        if not can_view_school_monitoring(user, school):
+            continue
+        if not can_view_full_school_detail(user, school):
+            row = {
+                **row,
+                'zavuch_username': '—',
+                'zavuch_user': None,
+                'logged_in': False,
+                'masked': True,
+            }
+        scoped.append(row)
+    return scoped

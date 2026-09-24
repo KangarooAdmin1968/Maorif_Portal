@@ -36,6 +36,7 @@ from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
     weekly_hours, quarter_min_norm,
 )
+from .monitoring import can_access_monitoring, scope_monitoring_stats
 from .assessment_catalog import (
     ASSESSMENT_PURPOSES, SUMMATIVE_SCOPES,
     SEMANTIC_SINGLE, SEMANTIC_PAIRED, SEMANTIC_CONVERTED,
@@ -4982,10 +4983,8 @@ def _get_monitoring_stats():
 
 @login_required
 def monitoring_dashboard(request):
-    """Monitoring dashboard for superusers, staff, and school Zavuchs."""
-    role = get_user_role(request.user)
-    is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
-    if not (request.user.is_superuser or request.user.is_staff or is_zavuch):
+    """Monitoring dashboard scoped by the centralized permission helpers."""
+    if not can_access_monitoring(request.user):
         return redirect('dashboard')
     stats = _get_monitoring_stats()
     stats = [
@@ -4994,6 +4993,7 @@ def monitoring_dashboard(request):
         and 'идораи маориф' not in (s['school'].name or '').lower()
         and s['zavuch_username'] != 'zavuch_0'
     ]
+    stats = scope_monitoring_stats(request.user, stats)
     return render(request, 'portal/monitoring_dashboard.html', {'stats': stats})
 
 
@@ -5353,11 +5353,16 @@ def school_documents(request):
 
 @login_required
 def export_monitoring_excel(request):
-    """Export the monitoring dashboard data as a styled Excel workbook."""
-    if not request.user.is_superuser:
+    """Export the monitoring dashboard data as a styled Excel workbook.
+
+    Uses the same centralized scope as the dashboard: district viewers get
+    every school's full detail, principals only their own school, and
+    zavuchs get aggregate-only rows for other schools.
+    """
+    if not can_access_monitoring(request.user):
         return redirect('dashboard')
 
-    stats = _get_monitoring_stats()
+    stats = scope_monitoring_stats(request.user, _get_monitoring_stats())
     wb = Workbook()
     ws = wb.active
     ws.title = 'Назорати муассисаҳо'
@@ -5394,7 +5399,10 @@ def export_monitoring_excel(request):
         ws.cell(row=idx, column=2, value=row['school'].name).alignment = left_align
         ws.cell(row=idx, column=3, value=row['zavuch_username']).alignment = left_align
 
-        login_status = 'Фаъол' if row['logged_in'] else 'Ғайрифаъол'
+        if row.get('masked'):
+            login_status = '—'
+        else:
+            login_status = 'Фаъол' if row['logged_in'] else 'Ғайрифаъол'
         ws.cell(row=idx, column=4, value=login_status).alignment = center_align
 
         ws.cell(row=idx, column=5, value=row['class_count']).alignment = center_align

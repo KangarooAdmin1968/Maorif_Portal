@@ -26,12 +26,14 @@
             </thead>
             <tbody>
                 {% for row in stats %}
-                <tr class="{% if not row.logged_in or row.class_count == 0 or row.student_count == 0 %}table-danger{% else %}table-success{% endif %}">
+                <tr class="{% if row.masked %}{% elif not row.logged_in or row.class_count == 0 or row.student_count == 0 %}table-danger{% else %}table-success{% endif %}">
                     <td>{{ forloop.counter }}</td>
                     <td>{{ row.school.name }}</td>
-                    <td>{{ row.zavuch_username }}</td>
+                    <td>{% if row.masked %}—{% else %}{{ row.zavuch_username }}{% endif %}</td>
                     <td>
-                        {% if row.logged_in %}
+                        {% if row.masked %}
+                            —
+                        {% elif row.logged_in %}
                             <span class="badge badge-green">Фаъол ✅</span>
                             <small class="login-date">{{ row.zavuch_user.last_login|date:"d.m.Y H:i" }}</small>
                         {% else %}

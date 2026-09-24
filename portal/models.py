@@ -567,3 +567,55 @@ class SubjectDeactivationRequest(models.Model):
         verbose_name = 'Дархости хориҷкунии фан'
         verbose_name_plural = 'Дархостҳои хориҷкунии фан'
         ordering = ['-requested_at']
+
+
+class DailyActivity(models.Model):
+    """One activity row per user per local (Asia/Dushanbe) day.
+
+    Authenticated users are keyed by (user, date). Rows with user=NULL are
+    the single daily aggregate for anonymous parent/student portal visitors
+    — the partial unique constraint below keeps it to exactly one row per
+    date. `username` is a snapshot so history stays identifiable if the
+    User row is later deleted (remove_teacher drops auth rows).
+    """
+    CATEGORY_CHOICES = [
+        ('staff', 'Корманди маориф'),
+        ('director', 'Раиси маориф'),
+        ('principal', 'Директори муассиса'),
+        ('zavuch', 'Завуч'),
+        ('teacher', 'Муаллим'),
+        ('parent_student', 'Волид/хонанда'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, verbose_name='Корбар')
+    username = models.CharField('Номи корбар', max_length=150, blank=True)
+    date = models.DateField('Сана', db_index=True)
+    category = models.CharField('Категория', max_length=20, choices=CATEGORY_CHOICES)
+    school = models.ForeignKey(School, on_delete=models.SET_NULL, blank=True, null=True, verbose_name='Муассиса')
+    login_count = models.PositiveIntegerField('Миқдори воридшавӣ', default=0)
+    first_seen = models.DateTimeField('Аввалин фаъолият')
+    last_seen = models.DateTimeField('Охирин фаъолият')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'date'],
+                name='dailyactivity_user_date',
+            ),
+            models.UniqueConstraint(
+                fields=['date'],
+                condition=models.Q(user__isnull=True),
+                name='dailyactivity_anon_date',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['date', 'school']),
+            models.Index(fields=['date', 'category']),
+        ]
+        verbose_name = 'Фаъолияти ҳаррӯза'
+        verbose_name_plural = 'Фаъолияти ҳаррӯза'
+        ordering = ['-date']
+
+    def __str__(self):
+        who = self.username or 'Анонимӣ'
+        return f"{who} — {self.date} — {self.get_category_display()}"

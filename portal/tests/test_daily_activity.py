@@ -8,10 +8,12 @@ anonymous per-day aggregate row, and login failure isolation.
 import datetime
 from unittest import mock
 
-from django.contrib.auth.models import User
-from django.test import TestCase
+from django.contrib.auth.models import AnonymousUser, User
+from django.http import HttpResponse
+from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
+from portal.middleware import DailyActivityMiddleware, SESSION_FLAG_KEY
 from portal.models import DailyActivity
 from portal.signals import record_daily_activity
 from portal.tests.helpers import make_school, make_user
@@ -164,3 +166,122 @@ class FailureIsolationTests(DailyActivityBase):
             self.assertTrue(self._login(self.teacher_a))
         self.assertEqual(
             DailyActivity.objects.filter(user=self.teacher_a).count(), 0)
+
+
+class DailyActivityMiddlewareTests(DailyActivityBase):
+    """DailyActivityMiddleware: session-flag-gated once-per-day recording."""
+
+    def setUp(self):
+        self.rf = RequestFactory()
+        self.mw = DailyActivityMiddleware(lambda r: HttpResponse('ok'))
+
+    def _request(self, user, session=None):
+        request = self.rf.get('/')
+        request.user = user
+        # A plain dict satisfies the .get()/__setitem__ API the middleware
+        # uses and guarantees the flag check itself runs zero queries.
+        request.session = {} if session is None else session
+        return request
+
+    # -- unit level (RequestFactory) -------------------------------------
+
+    def test_authenticated_request_creates_daily_activity(self):
+        self.mw(self._request(self.teacher_a))
+        row = self._row(self.teacher_a)
+        self.assertEqual(row.date, timezone.localdate())
+        self.assertEqual(row.category, 'teacher')
+        self.assertEqual(row.login_count, 0)
+
+    def test_request_sets_today_session_flag(self):
+        session = {}
+        self.mw(self._request(self.teacher_a, session))
+        self.assertEqual(
+            session[SESSION_FLAG_KEY], timezone.localdate().isoformat())
+
+    def test_second_request_no_new_row(self):
+        session = {}
+        self.mw(self._request(self.teacher_a, session))
+        self.mw(self._request(self.teacher_a, session))
+        self.assertEqual(
+            DailyActivity.objects.filter(user=self.teacher_a).count(), 1)
+
+    def test_flagged_request_does_not_call_recording(self):
+        session = {}
+        self.mw(self._request(self.teacher_a, session))
+        with mock.patch('portal.middleware.record_daily_activity') as rec:
+            self.mw(self._request(self.teacher_a, session))
+            rec.assert_not_called()
+
+    def test_yesterday_flag_records_again(self):
+        yesterday = (timezone.localdate()
+                     - datetime.timedelta(days=1)).isoformat()
+        session = {SESSION_FLAG_KEY: yesterday}
+        with mock.patch('portal.middleware.record_daily_activity') as rec:
+            self.mw(self._request(self.teacher_a, session))
+            rec.assert_called_once_with(self.teacher_a, count_login=False)
+        self.assertEqual(
+            session[SESSION_FLAG_KEY], timezone.localdate().isoformat())
+
+    def test_today_flag_runs_zero_queries(self):
+        session = {SESSION_FLAG_KEY: timezone.localdate().isoformat()}
+        with self.assertNumQueries(0):
+            self.mw(self._request(self.teacher_a, session))
+
+    def test_middleware_does_not_increment_login_count(self):
+        self._login(self.teacher_a)  # signal: login_count=1
+        self.client.get('/')
+        self.assertEqual(self._row(self.teacher_a).login_count, 1)
+
+    def test_login_signal_still_increments_login_count(self):
+        self._login(self.teacher_a)
+        self.client.get('/')
+        self.client.logout()
+        self._login(self.teacher_a)
+        self.assertEqual(self._row(self.teacher_a).login_count, 2)
+
+    def test_anonymous_request_no_activity(self):
+        self.mw(self._request(AnonymousUser()))
+        self.assertEqual(DailyActivity.objects.count(), 0)
+
+    def test_recording_failure_still_returns_response(self):
+        with mock.patch('portal.middleware.record_daily_activity',
+                        side_effect=Exception('boom')):
+            resp = self.mw(self._request(self.teacher_a))
+        self.assertEqual(resp.status_code, 200)
+
+    def test_presence_updates_last_seen(self):
+        record_daily_activity(self.teacher_a, count_login=False)
+        row = self._row(self.teacher_a)
+        stale = row.last_seen - datetime.timedelta(hours=2)
+        DailyActivity.objects.filter(pk=row.pk).update(last_seen=stale)
+        self.mw(self._request(self.teacher_a))
+        row.refresh_from_db()
+        self.assertGreater(row.last_seen, stale)
+
+    # -- integration level (test client through real middleware stack) ----
+
+    def test_client_request_records_and_flags_session(self):
+        self.client.force_login(self.teacher_a)  # signal row
+        DailyActivity.objects.filter(user=self.teacher_a).delete()
+        resp = self.client.get('/')
+        self.assertEqual(resp.status_code, 200)
+        row = self._row(self.teacher_a)
+        self.assertEqual(row.login_count, 0)  # created by middleware
+        self.assertEqual(
+            self.client.session[SESSION_FLAG_KEY],
+            timezone.localdate().isoformat())
+
+    def test_client_second_request_skips_recording(self):
+        self.client.force_login(self.teacher_a)
+        DailyActivity.objects.filter(user=self.teacher_a).delete()
+        self.client.get('/')
+        with mock.patch('portal.middleware.record_daily_activity') as rec:
+            self.client.get('/')
+            rec.assert_not_called()
+
+    def test_user_last_login_unchanged_by_middleware(self):
+        self._login(self.teacher_a)
+        last_login = User.objects.get(pk=self.teacher_a.pk).last_login
+        self.client.get('/')
+        self.assertEqual(
+            User.objects.get(pk=self.teacher_a.pk).last_login, last_login)

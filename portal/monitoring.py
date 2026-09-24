@@ -114,3 +114,95 @@ def scope_monitoring_stats(user, stats):
             }
         scoped.append(row)
     return scoped
+
+
+def get_activity_summary(user):
+    """Aggregate DailyActivity statistics for the monitoring dashboard.
+
+    Read-only: exactly two aggregate queries regardless of school count —
+    (1) today + current-month totals via filtered aggregates, (2) one
+    grouped query for the last 7 local dates. Anonymous aggregate rows
+    (user IS NULL) are excluded, matching the Phase 2 design.
+
+    Scope: district and school_agg (zavuch) see merged district-wide
+    aggregates (no individual or per-school data is produced); school
+    scope (principal) is limited to their own school. Returns None when
+    the user has no monitoring access. Only plain numbers and dates are
+    returned — never usernames, users, or seen timestamps.
+    """
+    import datetime
+
+    from django.db.models import Count, Q, Sum, Value
+    from django.db.models.functions import Coalesce
+    from django.utils import timezone
+
+    from .models import DailyActivity
+
+    scope = _monitoring_scope(user)
+    if scope is None:
+        return None
+
+    today = timezone.localdate()
+    month_start = today.replace(day=1)
+    week_start = today - datetime.timedelta(days=6)
+
+    school = None
+    if scope == SCOPE_SCHOOL:
+        from .views import get_user_school
+        school = get_user_school(user)
+        if school is None:
+            empty = {'active_users': 0, 'logins': 0}
+            return {
+                'today': dict(empty),
+                'month': dict(empty),
+                'daily': [
+                    {'date': today - datetime.timedelta(days=i),
+                     'active_users': 0, 'logins': 0}
+                    for i in range(6, -1, -1)
+                ],
+            }
+
+    base = DailyActivity.objects.filter(user__isnull=False)
+    if school is not None:
+        base = base.filter(school=school)
+
+    agg = base.filter(
+        date__gte=month_start, date__lte=today
+    ).aggregate(
+        today_users=Count('user', distinct=True, filter=Q(date=today)),
+        today_logins=Coalesce(
+            Sum('login_count', filter=Q(date=today)), Value(0)),
+        month_users=Count('user', distinct=True),
+        month_logins=Coalesce(Sum('login_count'), Value(0)),
+    )
+
+    daily_map = {
+        row['date']: row
+        for row in base.filter(
+            date__gte=week_start, date__lte=today
+        ).values('date').annotate(
+            active_users=Count('user', distinct=True),
+            logins=Sum('login_count'),
+        )
+    }
+    daily = []
+    for i in range(6, -1, -1):
+        day = today - datetime.timedelta(days=i)
+        row = daily_map.get(day)
+        daily.append({
+            'date': day,
+            'active_users': row['active_users'] if row else 0,
+            'logins': row['logins'] if row else 0,
+        })
+
+    return {
+        'today': {
+            'active_users': agg['today_users'],
+            'logins': agg['today_logins'],
+        },
+        'month': {
+            'active_users': agg['month_users'],
+            'logins': agg['month_logins'],
+        },
+        'daily': daily,
+    }

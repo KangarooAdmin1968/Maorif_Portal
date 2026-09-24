@@ -36,7 +36,9 @@ from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
     weekly_hours, quarter_min_norm,
 )
-from .monitoring import can_access_monitoring, scope_monitoring_stats
+from .monitoring import (
+    can_access_monitoring, get_activity_summary, scope_monitoring_stats,
+)
 from .assessment_catalog import (
     ASSESSMENT_PURPOSES, SUMMATIVE_SCOPES,
     SEMANTIC_SINGLE, SEMANTIC_PAIRED, SEMANTIC_CONVERTED,
@@ -4994,7 +4996,10 @@ def monitoring_dashboard(request):
         and s['zavuch_username'] != 'zavuch_0'
     ]
     stats = scope_monitoring_stats(request.user, stats)
-    return render(request, 'portal/monitoring_dashboard.html', {'stats': stats})
+    return render(request, 'portal/monitoring_dashboard.html', {
+        'stats': stats,
+        'activity': get_activity_summary(request.user),
+    })
 
 
 @login_required

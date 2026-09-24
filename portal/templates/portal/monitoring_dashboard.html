@@ -10,6 +10,45 @@
     {% endif %}
 </div>
 
+{% if activity %}
+<section class="card activity-summary">
+    <h2 class="activity-title">📊 Фаъолияти истифодабарандагон</h2>
+    <div class="activity-cards">
+        <div class="activity-card">
+            <div class="activity-card-title">Фаъолияти имрӯз</div>
+            <div class="activity-card-row">Истифодабарандагони фаъол: <strong>{{ activity.today.active_users }}</strong></div>
+            <div class="activity-card-row">Шумораи воридшавӣ: <strong>{{ activity.today.logins }}</strong></div>
+        </div>
+        <div class="activity-card">
+            <div class="activity-card-title">Фаъолият дар моҳи ҷорӣ</div>
+            <div class="activity-card-row">Истифодабарандагони фаъол: <strong>{{ activity.month.active_users }}</strong></div>
+            <div class="activity-card-row">Шумораи воридшавӣ: <strong>{{ activity.month.logins }}</strong></div>
+        </div>
+    </div>
+    <h3 class="activity-subtitle">Фаъолияти 7 рӯзи охир</h3>
+    <div class="table-responsive">
+        <table class="data-table activity-table">
+            <thead>
+                <tr>
+                    <th>Сана</th>
+                    <th>Истифодабарандагони фаъол</th>
+                    <th>Воридшавӣ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in activity.daily %}
+                <tr>
+                    <td>{{ day.date|date:"d.m.Y" }}</td>
+                    <td>{{ day.active_users }}</td>
+                    <td>{{ day.logins }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
 <section class="card">
     <div class="table-responsive">
         <table class="data-table monitoring-table">
@@ -73,6 +112,41 @@
 </section>
 
 <style>
+.activity-summary {
+    margin-bottom: 1rem;
+}
+.activity-title {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+}
+.activity-subtitle {
+    margin: 0.75rem 0 0.5rem;
+    font-size: 1rem;
+}
+.activity-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+.activity-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+}
+.activity-card-title {
+    font-weight: 700;
+    color: #003366;
+    margin-bottom: 0.35rem;
+}
+.activity-card-row {
+    font-size: 0.95rem;
+}
+.activity-table th,
+.activity-table td {
+    text-align: center;
+}
 .monitoring-table th,
 .monitoring-table td {
     text-align: center;
@@ -113,6 +187,12 @@
 }
 @media (max-width: 768px) {
     .monitoring-table {
+        font-size: 0.85rem;
+    }
+    .activity-cards {
+        grid-template-columns: 1fr;
+    }
+    .activity-table {
         font-size: 0.85rem;
     }
     .badge {

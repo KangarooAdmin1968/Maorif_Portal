@@ -3,6 +3,7 @@ import re
 from django.conf import settings
 
 from .models import School, Student, ClassSubject
+from .monitoring import can_access_monitoring
 from .utils import class_numeric_part, is_academic_school
 
 
@@ -10,6 +11,7 @@ def user_role(request):
     """Expose the current user's role and Zavuch status to all templates."""
     role = ''
     is_zavuch = False
+    can_monitor = False
     if request.user.is_authenticated:
         try:
             role = request.user.userprofile.role
@@ -19,10 +21,14 @@ def user_role(request):
             (role and role.lower() == 'zavuch') or
             request.user.username.lower().startswith('zavuch_')
         )
+        # userprofile was already resolved above, so this check reuses the
+        # cached relation and costs no extra query.
+        can_monitor = can_access_monitoring(request.user)
     return {
         'user_role': role,
         'ROLE_ZAVUCH': getattr(settings, 'ROLE_ZAVUCH', 'zavuch'),
         'is_zavuch': is_zavuch,
+        'can_monitor': can_monitor,
     }
 
 

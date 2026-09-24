@@ -225,3 +225,61 @@ class ExportScopeTests(MonitoringDashboardBase):
         resp = self.client.get(reverse('export_monitoring_excel'))
         self.assertEqual(resp.status_code, 302)
         self.assertIn('/login/', resp.url)
+
+
+class MonitoringNavLinkTests(MonitoringDashboardBase):
+    """The 'Мониторинг' navbar link in base.html is shown only to users
+    with monitoring access (context flag `can_monitor`)."""
+
+    def _nav_html(self, user=None):
+        if user is not None:
+            self.client.force_login(user)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        return resp.content.decode('utf-8')
+
+    def _assert_visible(self, user):
+        html = self._nav_html(user)
+        self.assertIn('Мониторинг', html)
+        self.assertIn('href="/monitoring-dashboard/"', html)
+
+    def _assert_hidden(self, user):
+        html = self._nav_html(user)
+        self.assertNotIn('/monitoring-dashboard/', html)
+
+    def test_superuser_sees_monitoring_link(self):
+        self._assert_visible(self.admin)
+
+    def test_staff_sees_monitoring_link(self):
+        self._assert_visible(self.staff_u)
+
+    def test_director_sees_monitoring_link(self):
+        self._assert_visible(self.director)
+
+    def test_principal_sees_monitoring_link(self):
+        self._assert_visible(self.principal_a)
+
+    def test_zavuch_sees_monitoring_link(self):
+        self._assert_visible(self.zavuch_a)
+
+    def test_teacher_does_not_see_monitoring_link(self):
+        self._assert_hidden(self.teacher_a)
+
+    def test_profileless_user_does_not_see_monitoring_link(self):
+        self._assert_hidden(self.bare)
+
+    def test_anonymous_does_not_see_monitoring_link(self):
+        self._assert_hidden(None)
+
+    def test_teacher_nav_otherwise_unchanged(self):
+        html = self._nav_html(self.teacher_a)
+        for label in ('Асосӣ', 'Ивази рамз', 'Баромад'):
+            self.assertIn(label, html)
+
+    def test_monitoring_check_adds_no_query(self):
+        """Once userprofile is loaded (the user_role context processor does
+        that on every page), can_access_monitoring costs zero queries."""
+        _ = self.teacher_a.userprofile.role
+        from portal.monitoring import can_access_monitoring
+        with self.assertNumQueries(0):
+            can_access_monitoring(self.teacher_a)

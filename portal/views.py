@@ -895,20 +895,26 @@ def calculate_school_rankings():
     """Return all schools ranked by average GPA from daily and quarterly grades (excluding non-graded classes)."""
     totals = {}
 
-    for g in Grade.objects.filter(score__isnull=False).select_related('student'):
-        if is_non_graded(g.student.class_name):
+    for row in Grade.objects.filter(score__isnull=False).values(
+            'student__school_id', 'student__class_name').annotate(
+            total=Sum('score'), count=Count('score')):
+        if is_non_graded(row['student__class_name']):
             continue
-        _add_score(totals, g.student.school_id, g.score, 1)
+        _add_score(totals, row['student__school_id'], row['total'], row['count'])
 
-    for q in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).select_related('student'):
-        if is_non_graded(q.class_name):
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values(
+            'student__school_id', 'class_name').annotate(
+            total=Sum('grade'), count=Count('grade')):
+        if is_non_graded(row['class_name']):
             continue
-        _add_score(totals, q.student.school_id, q.grade, 1)
+        _add_score(totals, row['student__school_id'], row['total'], row['count'])
 
-    for q in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).select_related('student'):
-        if is_non_graded(q.class_name):
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values(
+            'student__school_id', 'class_name').annotate(
+            total=Sum('att_grade'), count=Count('att_grade')):
+        if is_non_graded(row['class_name']):
             continue
-        _add_score(totals, q.student.school_id, q.att_grade, 1)
+        _add_score(totals, row['student__school_id'], row['total'], row['count'])
 
     schools = [s for s in School.objects.all() if is_academic_school(s)]
     data = []

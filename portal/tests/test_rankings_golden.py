@@ -77,6 +77,15 @@ class SchoolRankingGoldenTests(RankingBase):
         data = {item['school'].id: item for item in calculate_school_rankings()}
         self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.40)
 
+    def test_non_graded_quarter_and_attestation_excluded(self):
+        # QuarterGrade rows are excluded on their own class_name — a '1-А'
+        # quarter or attestation grade must not lift School A either.
+        # Leak would give (42+10+10)/7 = 8.86.
+        make_quarter_grade(self.s4, '1-А', MATH, 1, grade=10)
+        make_quarter_grade(self.s4, '1-А', MATH, 0, att=10)
+        data = {item['school'].id: item for item in calculate_school_rankings()}
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.40)
+
     def test_school_with_no_grades_present_with_zero(self):
         empty = make_school('Мактаб №99')
         data = {item['school'].id: item for item in calculate_school_rankings()}

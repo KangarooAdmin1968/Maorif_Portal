@@ -9,10 +9,10 @@ from .forms import ClassSubjectAdminForm, BulkClassSubjectForm
 from .models import (
     School, Teacher, Student, Grade, QuarterGrade, QuarterLock,
     ClassSubject, UserProfile, SubjectDeactivationRequest,
-    Lesson, Assessment,
+    Lesson, Assessment, SubjectAvailability,
     normalize_class_name, normalize_subject,
 )
-from .utils import class_numeric_part
+from .utils import class_numeric_part, canonical_subject_for
 
 
 admin.site.site_header = "Шӯъбаи маорифи ноҳияи Зафаробод"
@@ -142,6 +142,7 @@ class ClassSubjectAdmin(admin.ModelAdmin):
             if form.is_valid():
                 grade = form.cleaned_data['grade']
                 subject = normalize_subject(form.cleaned_data['subject'])
+                canonical = canonical_subject_for(subject)
                 deactivated = 0
                 for school in School.objects.all():
                     class_names = set()
@@ -156,6 +157,15 @@ class ClassSubjectAdmin(admin.ModelAdmin):
                                 is_active=True,
                             ).update(is_active=False)
                             deactivated += n
+                            if canonical is not None and ClassSubject.objects.filter(
+                                    school=school,
+                                    class_name=normalize_class_name(cn),
+                                    subject=subject).exists():
+                                SubjectAvailability.objects.update_or_create(
+                                    subject=canonical, school=school,
+                                    class_name=normalize_class_name(cn),
+                                    defaults={'is_active': False},
+                                )
                 self.message_user(
                     request,
                     f'{deactivated} сабтҳои "{subject}" барои синфи {grade} ғайрифаъол шуд.',
@@ -173,6 +183,10 @@ class ClassSubjectAdmin(admin.ModelAdmin):
         })
 
     def save_model(self, request, obj, form, change):
+        was_active = None
+        if change:
+            was_active = ClassSubject.objects.filter(
+                pk=obj.pk).values_list('is_active', flat=True).first()
         reactivated = False
         if not change:
             existing = ClassSubject.objects.filter(
@@ -191,6 +205,28 @@ class ClassSubjectAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
         if reactivated:
             self.message_user(request, 'Фан бомуваффақият фаъол карда шуд', level=messages.SUCCESS)
+            # Explicit re-add: clear any stale opt-out so the class-move
+            # reactivation path can revive the row later.
+            SubjectAvailability.objects.filter(
+                subject__name=obj.subject, school=obj.school,
+                class_name=obj.class_name,
+            ).update(is_active=True)
+        # Keep the explicit opt-out marker in sync so the class-move
+        # reactivation path can tell an intentional removal from an
+        # empty-class deactivation.
+        if was_active and not obj.is_active:
+            canonical = canonical_subject_for(obj.subject)
+            if canonical is not None:
+                SubjectAvailability.objects.update_or_create(
+                    subject=canonical, school=obj.school,
+                    class_name=obj.class_name,
+                    defaults={'is_active': False},
+                )
+        elif was_active is False and obj.is_active:
+            SubjectAvailability.objects.filter(
+                subject__name=obj.subject, school=obj.school,
+                class_name=obj.class_name,
+            ).update(is_active=True)
 
 
 @admin.register(SubjectDeactivationRequest)

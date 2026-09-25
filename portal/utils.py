@@ -285,6 +285,38 @@ def ensure_class_subjects(school, class_name):
     return created
 
 
+def reactivate_class_subjects(school, class_name, require_students=True):
+    """Reactivate ClassSubjects that were only inactive because the class was empty.
+
+    Runs on student-arrival write paths (and class creation): an inactive
+    official-subject row is revived only when no explicit opt-out exists.
+    An approved SubjectDeactivationRequest or an inactive SubjectAvailability
+    row (class-scoped or broader) marks an intentional removal and stays
+    inactive. Non-official rows are never revived — the ensure sweep owns
+    them.
+    """
+    class_name = normalize_class_name(class_name)
+    if require_students and not Student.objects.filter(
+            school=school, class_name=class_name).exists():
+        return
+    official = official_subjects_for(school, class_name)
+    protected = SubjectDeactivationRequest.objects.filter(
+        class_subject__school=school,
+        class_subject__class_name=class_name,
+        status='approved',
+    ).values_list('class_subject_id', flat=True)
+    opted_out = SubjectAvailability.objects.filter(
+        Q(school=school, class_name__in=(class_name, ''))
+        | Q(school__isnull=True, class_name=''),
+        is_active=False,
+    ).values_list('subject__name', flat=True)
+    ClassSubject.objects.filter(
+        school=school, class_name=class_name, is_active=False,
+        subject__in=official,
+    ).exclude(id__in=protected).exclude(subject__in=opted_out).update(
+        is_active=True)
+
+
 def school_gpa(school):
     avg = Grade.objects.filter(student__school=school, score__isnull=False).aggregate(avg=Avg('score'))['avg']
     return round(avg, 2) if avg else 0.0
@@ -401,6 +433,7 @@ def parse_import_excel(school, class_name, file_obj):
     fixed_cols = {name_col, class_col} if class_col else {name_col}
 
     imported = 0
+    imported_classes = set()
     for _, row in df.iterrows():
         ism = str(row.get(name_col, '')).strip()
         if not ism or ism.lower() in ('nan', 'none', ''):
@@ -410,6 +443,7 @@ def parse_import_excel(school, class_name, file_obj):
         else:
             c_name = class_name
         c_name = normalize_class_name(c_name)
+        imported_classes.add(c_name)
 
         student, _ = Student.objects.update_or_create(
             id=f"{school.name}__{c_name}__{ism}",
@@ -444,4 +478,8 @@ def parse_import_excel(school, class_name, file_obj):
                     imported += 1
             except (ValueError, TypeError):
                 continue
+    # Students may have arrived in classes whose subjects were deactivated
+    # while empty — revive them (intentional opt-outs stay untouched).
+    for c_name in imported_classes:
+        reactivate_class_subjects(school, c_name)
     return imported

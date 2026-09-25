@@ -30,7 +30,7 @@ from .utils import (
     get_school_number, is_academic_school, academic_schools,
     academic_school_ids, official_subjects,
     official_subjects_for, canonical_subject_for,
-    registry_subjects_for,
+    registry_subjects_for, reactivate_class_subjects,
 )
 from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
@@ -1512,6 +1512,9 @@ def add_class(request, school_id):
         return redirect('class_list', school_id=school.id)
 
     ensure_class_subjects(school, class_name)
+    # A class re-created on top of previously deactivated rows revives its
+    # stored configuration (intentional opt-outs stay untouched).
+    reactivate_class_subjects(school, class_name, require_students=False)
     messages.success(request, f'Синфи «{class_name}» бомуваффақият сохта шуд.')
     return redirect('class_list', school_id=school.id)
 
@@ -1724,6 +1727,7 @@ def add_student(request, school_id, class_name):
             class_name=class_name,
             school=school
         )
+        reactivate_class_subjects(school, class_name)
         messages.success(request, 'Хонанда илова шуд.')
     return redirect('class_detail', school_id=school.id, class_name=class_name)
 
@@ -1787,6 +1791,7 @@ def edit_student(request, school_id, class_name):
         return redirect('class_detail', school_id=school.id, class_name=class_name)
 
     ensure_class_subjects(school, target_class)
+    reactivate_class_subjects(school, target_class)
     _deactivate_empty_class(school, class_name)
     messages.success(request, f'Хонанда {full_name} таҳрир шуд.')
     # Stay on the source class so the zavuch can transfer the next student
@@ -1839,6 +1844,7 @@ def transfer_class(request, school_id, class_name):
         return redirect('class_detail', school_id=school.id, class_name=source_class)
 
     ensure_class_subjects(school, target_class)
+    reactivate_class_subjects(school, target_class)
     ClassSubject.objects.filter(school=school, class_name=source_class).update(is_active=False)
     messages.success(request, 'Хонандагон бомуваффақият кӯчонида шуданд.')
     return redirect('class_detail', school_id=school.id, class_name=target_class)
@@ -2725,6 +2731,13 @@ def add_remove_subject(request, school_id, class_name):
                         subject=canonical, school=school, class_name=class_name,
                         defaults={'is_active': True},
                     )
+            else:
+                # Re-adding a curriculum subject clears any opt-out an
+                # earlier 'remove' wrote (see below).
+                SubjectAvailability.objects.filter(
+                    subject__name=subject, school=school,
+                    class_name=class_name, is_active=False,
+                ).update(is_active=True)
             obj, _ = get_or_create_unique(
                 ClassSubject,
                 school=school,
@@ -2741,15 +2754,17 @@ def add_remove_subject(request, school_id, class_name):
                 class_name=class_name,
                 subject=subject
             ).update(is_active=False)
-            # If this class has a registry availability row, deactivate it as
-            # an explicit opt-out so ensure_class_subjects() cannot re-add it.
-            SubjectAvailability.objects.filter(
-                subject__name=subject, school=school, class_name=class_name
-            ).update(is_active=False)
-            if Subject.objects.filter(name=subject).exists():
+            # Always record an explicit opt-out (not only when a canonical
+            # Subject already exists) so neither ensure_class_subjects() nor
+            # the class-move reactivation path can re-add a subject that was
+            # intentionally removed.
+            canonical = canonical_subject_for(subject, user=request.user)
+            if canonical is not None:
+                SubjectAvailability.objects.filter(
+                    subject=canonical, school=school, class_name=class_name
+                ).update(is_active=False)
                 SubjectAvailability.objects.get_or_create(
-                    subject_id=Subject.objects.get(name=subject).id,
-                    school=school, class_name=class_name,
+                    subject=canonical, school=school, class_name=class_name,
                     defaults={'is_active': False},
                 )
     return redirect('class_detail', school_id=school.id, class_name=class_name)
@@ -4782,6 +4797,15 @@ def deactivate_subject(request):
         return redirect('lesson_allocation')
     cs.is_active = False
     cs.save()
+    # Same explicit opt-out the approval flow writes — a later student
+    # arrival must not silently reactivate an intentional removal.
+    reg_subject = canonical_subject_for(cs.subject)
+    if reg_subject is not None:
+        SubjectAvailability.objects.update_or_create(
+            subject=reg_subject, school=cs.school,
+            class_name=cs.class_name,
+            defaults={'is_active': False},
+        )
     messages.success(request, f'Фани «{cs.subject}» барои {cs.class_name} хориҷ шуд.')
     return redirect(f'{reverse("lesson_allocation")}?school_id={cs.school_id}')
 

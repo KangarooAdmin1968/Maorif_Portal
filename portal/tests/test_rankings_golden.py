@@ -130,6 +130,23 @@ class ClassRankingGoldenTests(RankingBase):
         data = self._by_key(calculate_class_rankings())
         self.assertNotIn((self.idora.id, '5-А'), data)
 
+    def test_non_graded_quarter_grade_row_excluded(self):
+        # A QuarterGrade carrying non-graded class_name '1-А' must not create
+        # a '1-А' entry even though it belongs to a graded 7-А student.
+        make_quarter_grade(self.s1, '1-А', MATH, 1, grade=10)
+        data = self._by_key(calculate_class_rankings())
+        self.assertNotIn((self.school_a.id, '1-А'), data)
+        self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.40)
+
+    def test_class_entry_from_quarter_only_resolves_school_name(self):
+        # '9-Д' has no students at School A — the QuarterGrade row alone
+        # creates the entry and its school_name is resolved.
+        make_quarter_grade(self.s1, '9-Д', MATH, 1, grade=6)
+        data = self._by_key(calculate_class_rankings())
+        entry = data[(self.school_a.id, '9-Д')]
+        self.assertEqual(entry['school_name'], 'Мактаб №1')
+        self.assertAlmostEqual(entry['gpa'], 6.0)
+
     def test_school_filter_by_id(self):
         data = calculate_class_rankings(school_filter=str(self.school_a.id))
         self.assertTrue(all(d['school_id'] == self.school_a.id for d in data))

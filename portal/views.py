@@ -936,69 +936,75 @@ def calculate_school_rankings():
 def calculate_class_rankings(school_filter=None):
     """Return class rankings with district and school ranks from all grade records."""
     entries = {}
-    academic_school_ids = {s.id for s in School.objects.all() if is_academic_school(s)}
+    schools_by_id = {s.id: s for s in School.objects.all()}
+    academic_school_ids = {sid for sid, s in schools_by_id.items() if is_academic_school(s)}
+
+    # student_id -> (school_id, raw class_name): lets the grade aggregations
+    # group by the local student FK instead of joining Student per grade row.
+    students = {
+        st_id: (st_school, st_cls)
+        for st_id, st_school, st_cls in Student.objects.values_list('id', 'school_id', 'class_name')
+    }
 
     # Seed with every school/class combination that has students (exclude non-graded classes)
-    for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
-        sid = row['school_id']
+    for sid, raw_cls in students.values():
         if sid not in academic_school_ids:
             continue
-        cname = normalize_class_name(row['class_name'])
+        cname = normalize_class_name(raw_cls)
         if is_non_graded(cname):
             continue
-        sname = row['school__name'] or ''
         key = (sid, cname)
-        entries[key] = {'school_id': sid, 'school_name': sname, 'class_name': cname, 'total': 0.0, 'count': 0}
+        entries[key] = {'school_id': sid, 'school_name': schools_by_id[sid].name, 'class_name': cname, 'total': 0.0, 'count': 0}
 
     # Daily grades
-    for row in Grade.objects.filter(score__isnull=False).values('student__school', 'student__class_name').annotate(total=Sum('score'), count=Count('score')):
-        sid = row['student__school']
-        if sid not in academic_school_ids:
+    for row in Grade.objects.filter(score__isnull=False).values('student').annotate(total=Sum('score'), count=Count('score')):
+        info = students.get(row['student'])
+        if info is None or info[0] not in academic_school_ids:
             continue
-        cname = normalize_class_name(row['student__class_name'])
+        cname = normalize_class_name(info[1])
         if is_non_graded(cname):
             continue
-        key = (sid, cname)
+        key = (info[0], cname)
         if key not in entries:
-            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
+            entries[key] = {'school_id': info[0], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
         entries[key]['count'] += int(row['count'])
 
     # Quarterly grades
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student__school', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
-        sid = row['student__school']
-        if sid not in academic_school_ids:
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
+        info = students.get(row['student'])
+        if info is None or info[0] not in academic_school_ids:
             continue
         cname = normalize_class_name(row['class_name'])
         if is_non_graded(cname):
             continue
-        key = (sid, cname)
+        key = (info[0], cname)
         if key not in entries:
-            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
+            entries[key] = {'school_id': info[0], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
         entries[key]['count'] += int(row['count'])
 
     # Attestation grades
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student__school', 'class_name').annotate(total=Sum('att_grade'), count=Count('att_grade')):
-        sid = row['student__school']
-        if sid not in academic_school_ids:
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student', 'class_name').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+        info = students.get(row['student'])
+        if info is None or info[0] not in academic_school_ids:
             continue
         cname = normalize_class_name(row['class_name'])
         if is_non_graded(cname):
             continue
-        key = (sid, cname)
+        key = (info[0], cname)
         if key not in entries:
-            entries[key] = {'school_id': row['student__school'], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
+            entries[key] = {'school_id': info[0], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
         entries[key]['total'] += float(row['total'] or 0)
         entries[key]['count'] += int(row['count'])
 
     # Resolve any missing school names
     missing_ids = {e['school_id'] for e in entries.values() if not e['school_name']}
     if missing_ids:
-        name_map = {s.id: s.name for s in School.objects.filter(id__in=missing_ids)}
         for e in entries.values():
             if not e['school_name']:
-                e['school_name'] = name_map.get(e['school_id'], '')
+                school = schools_by_id.get(e['school_id'])
+                e['school_name'] = school.name if school else ''
 
     data = [
         {

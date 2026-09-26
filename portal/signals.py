@@ -2,12 +2,16 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth.signals import user_logged_in
+from django.core.cache import cache
 from django.db import IntegrityError
 from django.db.models import F
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from django.utils import timezone
 
-from .models import DailyActivity
+from .models import (
+    ClassSubject, DailyActivity, Grade, QuarterGrade, School, Student,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,3 +100,24 @@ def on_user_logged_in(sender, request, user, **kwargs):
         record_daily_activity(user, count_login=True)
     except Exception:
         logger.exception('Failed to record daily activity on login')
+
+
+def invalidate_ranking_caches(sender, **kwargs):
+    """Drop the global ranking-result cache keys when ranking inputs change.
+
+    Deliberately cheap: deletes cache keys only — no ranking computation,
+    no model writes, no queries. A failure to invalidate must never break
+    the model save/delete that triggered it; the 60s TTL is the backstop.
+    """
+    from .views import RANKING_CACHE_KEYS  # local import avoids cycles
+
+    try:
+        cache.delete_many(RANKING_CACHE_KEYS)
+    except Exception:
+        logger.exception('Failed to invalidate ranking caches')
+
+
+for _model in (Grade, QuarterGrade, Student, School, ClassSubject):
+    post_save.connect(invalidate_ranking_caches, sender=_model)
+    post_delete.connect(invalidate_ranking_caches, sender=_model)
+del _model

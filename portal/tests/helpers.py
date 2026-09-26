@@ -20,6 +20,7 @@ Users mirror production conventions:
 import datetime
 
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.test import TestCase
 
 from portal.models import (
@@ -152,3 +153,10 @@ class GoldenBase(TestCase):
                                       teacher=cls.teacher_a)
         cls.cs_b = make_class_subject(cls.school_b, '7-Б', MATH,
                                       teacher=cls.teacher_b)
+
+    def setUp(self):
+        # Ranking-result caches live outside the test transaction — clear
+        # them so a result computed on rolled-back fixtures cannot leak
+        # into the next test.
+        from portal.views import RANKING_CACHE_KEYS
+        cache.delete_many(RANKING_CACHE_KEYS)

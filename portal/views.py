@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Avg, Count, Sum, Q, Max
+from django.core.cache import cache
 import calendar
 import io
 import json
@@ -891,8 +892,42 @@ def _add_score(totals, key, total, count):
     prev[1] += int(count)
 
 
+# Short-lived cache for the global (user-independent) ranking results.
+# TTL stays even with signal invalidation: out-of-band scripts and
+# QuerySet.update()/raw SQL can bypass model signals.
+RANKING_CACHE_TTL = 60
+RANKING_CACHE_KEYS = (
+    'rank:v1:school',
+    'rank:v1:class:unfiltered',
+    'rank:v1:subject',
+    'rank:v1:top:prelimit',
+)
+
+
+def _ranking_cache_get(key):
+    try:
+        return cache.get(key)
+    except Exception:
+        return None
+
+
+def _ranking_cache_set(key, value):
+    try:
+        cache.set(key, value, RANKING_CACHE_TTL)
+    except Exception:
+        pass
+
+
 def calculate_school_rankings():
     """Return all schools ranked by average GPA from daily and quarterly grades (excluding non-graded classes)."""
+    data = _ranking_cache_get(RANKING_CACHE_KEYS[0])
+    if data is None:
+        data = _calculate_school_rankings_uncached()
+        _ranking_cache_set(RANKING_CACHE_KEYS[0], data)
+    return data
+
+
+def _calculate_school_rankings_uncached():
     totals = {}
 
     for row in Grade.objects.filter(score__isnull=False).values(
@@ -935,6 +970,22 @@ def calculate_school_rankings():
 
 def calculate_class_rankings(school_filter=None):
     """Return class rankings with district and school ranks from all grade records."""
+    data = _ranking_cache_get(RANKING_CACHE_KEYS[1])
+    if data is None:
+        data = _calculate_class_rankings_uncached()
+        _ranking_cache_set(RANKING_CACHE_KEYS[1], data)
+
+    if school_filter:
+        try:
+            sid = int(school_filter)
+            data = [item for item in data if item['school_id'] == sid]
+        except (ValueError, TypeError):
+            data = [item for item in data if school_filter.lower() in item['school_name'].lower()]
+
+    return data
+
+
+def _calculate_class_rankings_uncached():
     entries = {}
     schools_by_id = {s.id: s for s in School.objects.all()}
     academic_school_ids = {sid for sid, s in schools_by_id.items() if is_academic_school(s)}
@@ -1036,6 +1087,16 @@ def calculate_class_rankings(school_filter=None):
             school_state[school]['prev_gpa'] = gpa
         item['school_rank'] = school_state[school]['rank']
 
+    return data
+
+
+def calculate_top_students(school_filter=None, limit=100):
+    """Return top-performing graded students (2-11) with dense school/district ranks."""
+    data = _ranking_cache_get(RANKING_CACHE_KEYS[3])
+    if data is None:
+        data = _calculate_top_students_uncached()
+        _ranking_cache_set(RANKING_CACHE_KEYS[3], data)
+
     if school_filter:
         try:
             sid = int(school_filter)
@@ -1043,11 +1104,14 @@ def calculate_class_rankings(school_filter=None):
         except (ValueError, TypeError):
             data = [item for item in data if school_filter.lower() in item['school_name'].lower()]
 
+    if len(data) > limit:
+        cutoff_gpa = data[limit - 1]['gpa']
+        data = [item for item in data if item['gpa'] >= cutoff_gpa]
+
     return data
 
 
-def calculate_top_students(school_filter=None, limit=100):
-    """Return top-performing graded students (2-11) with dense school/district ranks."""
+def _calculate_top_students_uncached():
     academic_school_ids = {s.id for s in School.objects.all() if is_academic_school(s)}
     totals = defaultdict(lambda: [0.0, 0])
 
@@ -1124,22 +1188,19 @@ def calculate_top_students(school_filter=None, limit=100):
             state['prev_gpa'] = item['gpa']
         item['school_rank'] = state['rank']
 
-    if school_filter:
-        try:
-            sid = int(school_filter)
-            data = [item for item in data if item['school_id'] == sid]
-        except (ValueError, TypeError):
-            data = [item for item in data if school_filter.lower() in item['school_name'].lower()]
-
-    if len(data) > limit:
-        cutoff_gpa = data[limit - 1]['gpa']
-        data = [item for item in data if item['gpa'] >= cutoff_gpa]
-
     return data
 
 
 def calculate_subject_rankings():
     """Return subject rankings including all default subjects with 0.0 GPA if no grades exist."""
+    data = _ranking_cache_get(RANKING_CACHE_KEYS[2])
+    if data is None:
+        data = _calculate_subject_rankings_uncached()
+        _ranking_cache_set(RANKING_CACHE_KEYS[2], data)
+    return data
+
+
+def _calculate_subject_rankings_uncached():
     totals = {}
     for row in Grade.objects.filter(score__isnull=False).values('subject').annotate(total=Sum('score'), count=Count('score')):
         subj = normalize_subject(row['subject'])

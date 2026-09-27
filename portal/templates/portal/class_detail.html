@@ -479,7 +479,7 @@ function updateTransferMessage() {
     baleBtn.style.display = '';
     if (isValidTransfer(source, target)) {
         confirmText.textContent =
-            `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} гузаронед?`;
+            `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ({{ total_count }} нафар) ба синфи ${target} гузаронед?`;
         document.getElementById('transfer-warning-text').innerHTML =
             `⚠️ Огоҳӣ:<br>` +
             `Шумо ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} мегузаронед.<br>` +

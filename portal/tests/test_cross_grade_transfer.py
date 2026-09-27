@@ -524,5 +524,7 @@ class ConfirmationTextTests(CrossGradeBase):
 
         self.assertContains(resp, 'Синфи қабулкунанда')
         self.assertContains(resp, 'интиқолшаванда: 3 нафар')
+        # The step-1 confirmation question also names the exact count.
+        self.assertContains(resp, '(3 нафар)')
         self.assertContains(resp, 'Гузарондан')
         self.assertContains(resp, 'Бекор кардан')

@@ -82,7 +82,7 @@
                 <p id="transfer-warning-text" style="margin:1rem 0; color:#b91c1c; font-weight:bold; line-height:1.5;"></p>
                 <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
                     <button type="button" class="btn btn-secondary" onclick="closeTransferClassModal()">Бекор кардан</button>
-                    <button type="submit" class="btn btn-danger">Бале, синфро бандед ва кӯчонед</button>
+                    <button type="submit" id="transfer-submit-btn" class="btn btn-danger">Бале, синфро бандед ва кӯчонед</button>
                 </div>
             </div>
         </form>
@@ -244,6 +244,7 @@
 const TAJIK_LETTERS = 'АБВГҒДЕЁЖЗИӢЙКҚЛМНОПРСТУӮФХҲЧҶШЪЭЮЯ';
 const LATIN_TO_CYRILLIC = {'A':'А','B':'Б','C':'В','K':'К'};
 const ALL_CLASSES = [{% for c in all_classes %}'{{ c }}'{% if not forloop.last %},{% endif %}{% endfor %}];
+const EMPTY_TARGETS = [{% for c in empty_targets %}'{{ c }}'{% if not forloop.last %},{% endif %}{% endfor %}];
 
 // Preserve scroll position across student add/edit/remove redirects
 const SCROLL_KEY = 'classDetailScroll:' + location.pathname;
@@ -382,6 +383,20 @@ function isValidClassMerge(source, target) {
     return isLetterBefore(t.letter, s.letter);
 }
 
+function isValidTransfer(source, target) {
+    // Server-verified list: existing empty classes in this school.
+    return EMPTY_TARGETS.indexOf(target) !== -1;
+}
+
+function transferTargetError(source, target) {
+    const s = parseClassName(source);
+    const t = parseClassName(target);
+    if (s && t && s.num === t.num && isLetterBefore(s.letter, t.letter)) {
+        return 'Кӯчонидан танҳо аз ҳарфи ҷуфттар ба ҳарфи пештар иҷозат дорад (масалан: 10-Б -> 10-А).';
+    }
+    return 'Гузарондан танҳо ба синфи мавҷудаи холӣ иҷозат дорад.';
+}
+
 function buildTransferTargetOptions() {
     const source = normalizeClassName('{{ class_name }}');
     const sourceParts = parseClassName(source);
@@ -390,7 +405,10 @@ function buildTransferTargetOptions() {
     if (sourceParts) {
         ALL_CLASSES.forEach(c => {
             const p = parseClassName(c);
-            if (p && p.num === sourceParts.num && isLetterBefore(p.letter, sourceParts.letter)) {
+            // Empty classes belong to the transfer group — merge options
+            // are populated same-grade merge targets only.
+            if (p && p.num === sourceParts.num && isLetterBefore(p.letter, sourceParts.letter)
+                && EMPTY_TARGETS.indexOf(c) === -1) {
                 const opt = document.createElement('option');
                 opt.value = c;
                 opt.textContent = c;
@@ -399,7 +417,21 @@ function buildTransferTargetOptions() {
         });
     }
 
-    if (sourceParts && sourceParts.letter === 'А') {
+    if (EMPTY_TARGETS.length) {
+        const grp = document.createElement('optgroup');
+        grp.label = 'Синфи қабулкунанда (танҳо синфҳои холӣ)';
+        EMPTY_TARGETS.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            grp.appendChild(opt);
+        });
+        select.appendChild(grp);
+    }
+
+    // «А» classes cannot merge same-grade, but may still transfer to an
+    // existing empty class in another grade.
+    if (sourceParts && sourceParts.letter === 'А' && !EMPTY_TARGETS.length) {
         select.disabled = true;
     } else {
         select.disabled = false;
@@ -427,16 +459,17 @@ function updateTransferMessage() {
     const sourceParts = parseClassName(source);
     const confirmText = document.getElementById('transfer-confirm-text');
     const baleBtn = document.getElementById('transfer-bale-btn');
-    if (sourceParts && sourceParts.letter === 'А') {
+    const submitBtn = document.getElementById('transfer-submit-btn');
+    const sel = document.getElementById('transfer-target-class');
+    const target = sel.value ? normalizeClassName(sel.value) : '';
+    const targetParts = target ? parseClassName(target) : null;
+    if (sourceParts && sourceParts.letter === 'А' && !EMPTY_TARGETS.length) {
         confirmText.textContent = 'Синфи асосии «А» наметавонад ба дигар синфҳо муттаҳид карда шавад!';
         baleBtn.disabled = true;
         baleBtn.style.display = 'none';
         return;
     }
-    const sel = document.getElementById('transfer-target-class');
-    const target = sel.value ? normalizeClassName(sel.value) : '';
-    const isValidTarget = target && parseClassName(target);
-    if (!isValidTarget) {
+    if (!targetParts) {
         confirmText.textContent = 'Лутфан, синфи ҳадафро интихоб намоед.';
         baleBtn.disabled = true;
         baleBtn.style.display = 'none';
@@ -444,10 +477,23 @@ function updateTransferMessage() {
     }
     baleBtn.disabled = false;
     baleBtn.style.display = '';
-    confirmText.textContent =
-        `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} кӯчонед?`;
-    document.getElementById('transfer-warning-text').textContent =
-        `⚠️ ОГОҲӢ! Пас аз ин амал синфи ${source} БАТАМОМ БАСТА МЕШАВАД ва ин амалро бекор кардан ғайриимкон аст! Қарори шумо қатъӣ аст?`;
+    if (isValidTransfer(source, target)) {
+        confirmText.textContent =
+            `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} гузаронед?`;
+        document.getElementById('transfer-warning-text').innerHTML =
+            `⚠️ Огоҳӣ:<br>` +
+            `Шумо ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} мегузаронед.<br>` +
+            `Синфи ${target} холӣ мебошад.<br>` +
+            `Шумораи хонандагони интиқолшаванда: {{ total_count }} нафар.<br>` +
+            `Оё мутмаин ҳастед?`;
+        submitBtn.textContent = 'Гузарондан';
+    } else {
+        confirmText.textContent =
+            `Оё шумо дар ҳақиқат мехоҳед ҳамаи хонандагони синфи ${source}-ро ба синфи ${target} кӯчонед?`;
+        document.getElementById('transfer-warning-text').textContent =
+            `⚠️ ОГОҲӢ! Пас аз ин амал синфи ${source} БАТАМОМ БАСТА МЕШАВАД ва ин амалро бекор кардан ғайриимкон аст! Қарори шумо қатъӣ аст?`;
+        submitBtn.textContent = 'Бале, синфро бандед ва кӯчонед';
+    }
 }
 function proceedToTransferStep2() {
     const sel = document.getElementById('transfer-target-class');
@@ -457,12 +503,8 @@ function proceedToTransferStep2() {
     }
     const target = normalizeClassName(sel.value);
     const source = '{{ class_name }}';
-    if (!isValidClassMerge(source, target)) {
-        if (source.endsWith('-А') || source.endsWith('-A')) {
-            alert('Синфи асосии «А» наметавонад ба дигар синфҳо кӯчонида шавад! Танҳо синфҳои «Б, В, Г» метавонанд ба синфи «А» муттаҳид карда шаванд.');
-        } else {
-            alert('Кӯчонидан танҳо аз ҳарфи ҷуфттар ба ҳарфи пештар иҷозат дорад (масалан: 10-Б -> 10-А).');
-        }
+    if (!isValidClassMerge(source, target) && !isValidTransfer(source, target)) {
+        alert(transferTargetError(source, target));
         return false;
     }
     const form = document.getElementById('transfer-class-modal').querySelector('form');
@@ -478,12 +520,8 @@ function validateTransferForm(form) {
     const sel = document.getElementById('transfer-target-class');
     const target = normalizeClassName(sel.value);
     const source = '{{ class_name }}';
-    if (!isValidClassMerge(source, target)) {
-        if (source.endsWith('-А') || source.endsWith('-A')) {
-            alert('Синфи асосии «А» наметавонад ба дигар синфҳо кӯчонида шавад! Танҳо синфҳои «Б, В, Г» метавонанд ба синфи «А» муттаҳид карда шаванд.');
-        } else {
-            alert('Кӯчонидан танҳо аз ҳарфи ҷуфттар ба ҳарфи пештар иҷозат дорад (масалан: 10-Б -> 10-А).');
-        }
+    if (!isValidClassMerge(source, target) && !isValidTransfer(source, target)) {
+        alert(transferTargetError(source, target));
         return false;
     }
     return true;

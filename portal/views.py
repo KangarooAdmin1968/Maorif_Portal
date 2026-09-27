@@ -636,6 +636,14 @@ def _is_valid_class_merge(source, target):
     return s_i > t_i
 
 
+def _class_exists(school, class_name):
+    """A class exists when it has ClassSubject rows or students at the school."""
+    return (
+        ClassSubject.objects.filter(school=school, class_name=class_name).exists()
+        or Student.objects.filter(school=school, class_name=class_name).exists()
+    )
+
+
 def _deactivate_empty_class(school, class_name):
     """Deactivate all ClassSubjects for a class that no longer has students."""
     class_name = normalize_class_name(class_name)
@@ -643,12 +651,18 @@ def _deactivate_empty_class(school, class_name):
         ClassSubject.objects.filter(school=school, class_name=class_name).update(is_active=False)
 
 
-def _move_student(school, student, new_class_name, new_full_name=None, gender=None):
+def _move_student(school, student, new_class_name, new_full_name=None,
+                  gender=None, relabel_quarter_grades=True):
     """Move a student to a new class and/or name, preserving grade history.
 
     Because the Student primary key is derived from school + class + full name,
     a new Student row is created and all Grade / QuarterGrade records are
     re-linked to it. The old row is then removed.
+
+    relabel_quarter_grades controls the QuarterGrade.class_name field: same-
+    grade merges relabel rows so the merged class journal shows them, while
+    cross-grade promotion keeps the original class label so grade-5 quarter
+    history cannot be overwritten by grade-6 update_or_create lookups.
     """
     new_full_name = (new_full_name or student.full_name).strip()
     new_class_name = normalize_class_name(new_class_name)
@@ -672,9 +686,10 @@ def _move_student(school, student, new_class_name, new_full_name=None, gender=No
             gender=gender or None,
         )
         Grade.objects.filter(student_id=old_id).update(student=new_student)
-        QuarterGrade.objects.filter(student_id=old_id).update(
-            student=new_student, class_name=new_class_name
-        )
+        quarter_update = {'student': new_student}
+        if relabel_quarter_grades:
+            quarter_update['class_name'] = new_class_name
+        QuarterGrade.objects.filter(student_id=old_id).update(**quarter_update)
         Student.objects.filter(id=old_id).delete()
 
     return new_student
@@ -1655,11 +1670,22 @@ def class_detail(request, school_id, class_name):
             own_group = teacher_group_for(request.user, cs)
             cs.group_label = own_group.label if own_group else None
     non_graded = is_non_graded(class_name)
-    all_classes = sorted({
+    student_classes = {
         c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()
-    } | {
+    }
+    all_classes = sorted(student_classes | {
         c for c in ClassSubject.objects.filter(school=school).values_list('class_name', flat=True).distinct()
     }, key=class_numeric_part)
+    # Full-class transfer targets: every EXISTING class in this school that
+    # currently has zero students — any grade, any letter, any prior usage.
+    # Emptiness is decided by the student-class set, so a previously-used
+    # but now-empty class stays eligible.
+    empty_targets = [
+        c for c in all_classes
+        if c != class_name
+        and c not in student_classes
+        and _validate_class_name(c)
+    ]
     return render(request, 'portal/class_detail.html', {
         'school': school,
         'class_name': class_name,
@@ -1670,6 +1696,7 @@ def class_detail(request, school_id, class_name):
         'subjects': subjects,
         'non_graded': non_graded,
         'all_classes': all_classes,
+        'empty_targets': empty_targets,
     })
 
 
@@ -1896,7 +1923,14 @@ def transfer_class(request, school_id, class_name):
         messages.warning(request, 'Синфи манба ва ҳадаф якхеланд.')
         return redirect('class_detail', school_id=school.id, class_name=source_class)
 
-    if not _is_valid_class_merge(source_class, target_class):
+    # Routing is decided by target emptiness FIRST:
+    #   - empty target  -> safe full-class transfer path (any grade/letter);
+    #   - populated target -> existing same-grade merge rules only.
+    target_populated = Student.objects.filter(
+        school=school, class_name=target_class).exists()
+    merge_ok = _is_valid_class_merge(source_class, target_class)
+
+    if target_populated and not merge_ok:
         if source_class.endswith('-А'):
             messages.error(request, 'Синфи асосии «А» наметавонад ба дигар синфҳо кӯчонида шавад! Танҳо синфҳои «Б, В, Г» метавонанд ба синфи «А» муттаҳид карда шаванд.')
         else:
@@ -1907,6 +1941,34 @@ def transfer_class(request, school_id, class_name):
     if not students:
         messages.warning(request, 'Синфи манба холӣ аст.')
         return redirect('class_detail', school_id=school.id, class_name=source_class)
+
+    if not target_populated:
+        # Full-class transfer to an existing empty class — any grade, any
+        # letter (e.g. 5-Д -> 6-Д, 5-Д -> 7-Д, 5-Д -> 5-Е, 5-Д -> 5-А).
+        # The target is never created here and never merged — it must
+        # already exist with zero students.
+        if not _class_exists(school, target_class):
+            messages.error(request, f'Синфи ҳадаф «{target_class}» вуҷуд надорад. Аввал онро дар рӯйхати синфҳо эҷод кунед.')
+            return redirect('class_detail', school_id=school.id, class_name=source_class)
+        try:
+            with transaction.atomic():
+                # Re-checked inside the transaction: the target may have
+                # gained students after the dialog was opened.
+                if Student.objects.filter(school=school, class_name=target_class).exists():
+                    raise ValueError(f'Синфи ҳадаф «{target_class}» холӣ нест. Гузарондан танҳо ба синфи холӣ иҷозат дода мешавад.')
+                for student in Student.objects.filter(
+                        school=school, class_name=source_class).order_by('full_name'):
+                    _move_student(
+                        school, student, target_class, student.full_name,
+                        gender=student.gender, relabel_quarter_grades=False,
+                    )
+        except ValueError as e:
+            messages.error(request, str(e))
+            return redirect('class_detail', school_id=school.id, class_name=source_class)
+        reactivate_class_subjects(school, target_class)
+        _deactivate_empty_class(school, source_class)
+        messages.success(request, f'Ҳамаи хонандагони синфи {source_class} ба синфи {target_class} бомуваффақият гузаронида шуданд.')
+        return redirect('class_detail', school_id=school.id, class_name=target_class)
 
     try:
         with transaction.atomic():

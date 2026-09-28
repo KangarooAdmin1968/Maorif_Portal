@@ -9,6 +9,7 @@ import calendar
 import io
 import json
 import re
+import threading
 import urllib.parse
 import datetime
 from collections import defaultdict
@@ -489,6 +490,26 @@ def _assessment_label(assessment):
     return label
 
 
+def _grade_slot_label(grade):
+    """Student-facing label for a Grade row: subject plus its slot context.
+
+    A plain legacy row shows just the subject ('АЛГЕБРА'). Rows bound to a
+    lesson or a control assessment keep that distinction visible
+    ('АЛГЕБРА (дарси 2)', 'АЛГЕБРА (Назоратӣ №1)') so legitimate same-day
+    slots are never collapsed into an apparent duplicate. Callers must
+    select_related('lesson', 'assessment').
+    """
+    parts = []
+    if grade.assessment_id:
+        a = grade.assessment
+        parts.append(
+            f"Назоратӣ №{a.number}" if a is not None and a.number else 'Назоратӣ'
+        )
+    if grade.lesson_id:
+        parts.append(f"дарси {grade.lesson.lesson_number}")
+    return grade.subject + (f" ({', '.join(parts)})" if parts else '')
+
+
 def is_quarter_locked(school, class_name, subject, quarter):
     """Return True if the given quarter is administratively locked."""
     if quarter is None:
@@ -513,26 +534,41 @@ def get_or_create_unique(model, defaults=None, **lookup):
     return model.objects.create(**params), True
 
 
+# Serializes the check-then-create sequence in get_or_create_grade within
+# this process. Without it, a double-submitted save (the journal fires both
+# 'change' and 'blur', and offline-queue replay can overlap a live save) can
+# race: both requests see zero rows and both INSERT identical Grade rows.
+# A DB unique constraint cannot express the logical key — (assessment,
+# lesson) are nullable FKs, so SQLite treats NULL rows as distinct and a
+# plain unique_together would still allow duplicates.
+# NOTE: this lock is per-process. On a multi-worker deployment a cross-worker
+# race remains possible; it is tolerated by design — the next write with the
+# same key merges and removes the extra rows, and read paths dedupe
+# identical rows for display.
+_DAILY_GRADE_LOCK = threading.Lock()
+
+
 def get_or_create_grade(defaults=None, **lookup):
     """Fetch-or-create a daily Grade row; merges and removes duplicate rows."""
-    qs = Grade.objects.filter(**lookup).order_by('pk')
-    rows = list(qs)
-    if rows:
-        grade = rows[0]
-        if len(rows) > 1:
-            changed = False
-            for extra in rows[1:]:
-                for field in ('score', 'attendance', 'behavior_score', 'sticker'):
-                    if getattr(grade, field) in (None, '') and getattr(extra, field) not in (None, ''):
-                        setattr(grade, field, getattr(extra, field))
-                        changed = True
-            Grade.objects.filter(pk__in=[r.pk for r in rows[1:]]).delete()
-            if changed:
-                grade.save()
-        return grade, False
-    params = dict(lookup)
-    params.update(defaults or {})
-    return Grade.objects.create(**params), True
+    with _DAILY_GRADE_LOCK:
+        qs = Grade.objects.filter(**lookup).order_by('pk')
+        rows = list(qs)
+        if rows:
+            grade = rows[0]
+            if len(rows) > 1:
+                changed = False
+                for extra in rows[1:]:
+                    for field in ('score', 'attendance', 'behavior_score', 'sticker'):
+                        if getattr(grade, field) in (None, '') and getattr(extra, field) not in (None, ''):
+                            setattr(grade, field, getattr(extra, field))
+                            changed = True
+                Grade.objects.filter(pk__in=[r.pk for r in rows[1:]]).delete()
+                if changed:
+                    grade.save()
+            return grade, False
+        params = dict(lookup)
+        params.update(defaults or {})
+        return Grade.objects.create(**params), True
 
 
 def get_user_school(user):
@@ -1771,10 +1807,13 @@ def sticker_entry(request, school_id, class_name):
         if g.sticker:
             daily_stickers[g.student_id] = g.sticker
 
-    # Most recent prior behavior score per student (carry-over default)
+    # Most recent prior behavior score per student for THIS subject only —
+    # conduct is subject-specific and must never borrow another subject's
+    # value as the carry-over default.
     prior_behavior = {}
     for g in Grade.objects.filter(
         student__in=students,
+        subject=subject,
         behavior_score__isnull=False,
         date__lt=selected_date
     ).order_by('student_id', '-date'):
@@ -2101,15 +2140,23 @@ def grade_entry(request, school_id, class_name, subject):
                 att = request.POST.get(f"attendance_{student.id}", '').strip()
                 grade.attendance = att if att in ('+', '-') else None
 
-                beh = request.POST.get(f"behavior_{student.id}", '').strip()
-                if beh:
-                    try:
-                        b = int(beh)
-                        grade.behavior_score = b if 1 <= b <= 5 else None
-                    except ValueError:
+                # Conduct is written only when the field was actually
+                # submitted — the journal disables untouched behavior selects
+                # on submit, so an absent key means 'leave the stored value
+                # alone'. This keeps a batch save from materializing the
+                # carry-over/default prefill (or a foreign subject's value)
+                # into rows for students the teacher never edited.
+                beh_key = f"behavior_{student.id}"
+                if beh_key in request.POST:
+                    beh = request.POST.get(beh_key, '').strip()
+                    if beh:
+                        try:
+                            b = int(beh)
+                            grade.behavior_score = b if 1 <= b <= 5 else None
+                        except ValueError:
+                            grade.behavior_score = None
+                    else:
                         grade.behavior_score = None
-                else:
-                    grade.behavior_score = None
 
                 if grade.score is None and not grade.attendance and grade.behavior_score is None:
                     grade.delete()
@@ -2221,10 +2268,13 @@ def grade_entry(request, school_id, class_name, subject):
         if g.behavior_score is not None:
             daily_behavior[g.student_id] = g.behavior_score
 
-    # Most recent prior behavior score per student (carry-over default)
+    # Most recent prior behavior score per student for THIS subject only —
+    # conduct is subject-specific: a Physics mark must never carry over as
+    # the default for Algebra (or vice versa).
     prior_behavior = {}
     for g in Grade.objects.filter(
         student__in=students,
+        subject=subject,
         behavior_score__isnull=False,
         date__lt=selected_date,
         assessment__isnull=True,
@@ -4125,36 +4175,80 @@ def student_detail(request, student_id):
         recent_stickers = Grade.objects.filter(student=student, sticker__isnull=False).order_by('-date')[:15]
 
     today = datetime.date.today()
-    today_grades = [
-        {'subject': g.subject, 'score': int(g.score) if g.score == int(g.score) else g.score}
-        for g in Grade.objects.filter(student=student, date=today, score__isnull=False)
-    ]
+    # One display line per logical slot. Accidental duplicate rows (same
+    # subject/score AND same lesson/assessment slot) collapse into a single
+    # line; legitimate different slots keep their own labelled line.
+    today_grades = []
+    seen_today_grades = set()
+    for g in (
+        Grade.objects
+        .filter(student=student, date=today, score__isnull=False)
+        .select_related('lesson', 'assessment')
+        .order_by('subject', 'lesson__lesson_number', 'assessment__number', 'pk')
+    ):
+        key = (g.subject, g.lesson_id, g.assessment_id, g.score)
+        if key in seen_today_grades:
+            continue
+        seen_today_grades.add(key)
+        today_grades.append({
+            'subject': _grade_slot_label(g),
+            'score': int(g.score) if g.score == int(g.score) else g.score,
+        })
 
     today_attendance = Grade.objects.filter(student=student, date=today, attendance__in=['+', '-'])
     today_excused = today_attendance.filter(attendance='+').count()
     today_unexcused = today_attendance.filter(attendance='-').count()
 
-    today_behavior_qs = Grade.objects.filter(student=student, date=today, behavior_score__isnull=False)
+    # Behavior stats dedupe accidental identical rows per logical slot
+    # (subject, lesson, assessment); the first row per slot wins — the same
+    # row get_or_create_grade keeps when merging duplicates. Legitimate
+    # different slots (D1/D2, assessment) each keep their own entry.
+    today_behavior_rows = {}
+    for g in (
+        Grade.objects
+        .filter(student=student, date=today, behavior_score__isnull=False)
+        .select_related('lesson', 'assessment')
+        .order_by('pk')
+    ):
+        today_behavior_rows.setdefault(
+            (g.subject, g.lesson_id, g.assessment_id), g
+        )
+
     today_behavior_breakdown = {}
     today_total_infractions = 0
-    for g in today_behavior_qs:
+    today_behavior_values = []
+    for g in today_behavior_rows.values():
+        today_behavior_values.append(g.behavior_score)
         infractions = 5 - g.behavior_score
-        today_behavior_breakdown[g.subject] = {'score': g.behavior_score, 'infractions': infractions}
+        label = _grade_slot_label(g)
+        if label not in today_behavior_breakdown:
+            today_behavior_breakdown[label] = {
+                'score': g.behavior_score, 'infractions': infractions,
+            }
         today_total_infractions += infractions
     today_behavior_status = 'Намунавӣ' if today_total_infractions == 0 else 'Нигаронкунанда'
 
-    today_avg_qs = today_behavior_qs.aggregate(avg=Avg('behavior_score'))
-    today_avg = today_avg_qs['avg'] if today_avg_qs['avg'] is not None else None
+    today_avg = (
+        sum(today_behavior_values) / len(today_behavior_values)
+        if today_behavior_values else None
+    )
 
     previous_day = Grade.objects.filter(
         student=student, behavior_score__isnull=False, date__lt=today
     ).order_by('-date').values_list('date', flat=True).first()
     yesterday_avg = None
     if previous_day:
-        yesterday_avg_qs = Grade.objects.filter(
-            student=student, date=previous_day, behavior_score__isnull=False
-        ).aggregate(avg=Avg('behavior_score'))
-        yesterday_avg = yesterday_avg_qs['avg'] if yesterday_avg_qs['avg'] is not None else None
+        yesterday_values = {}
+        for g in (
+            Grade.objects
+            .filter(student=student, date=previous_day, behavior_score__isnull=False)
+            .order_by('pk')
+        ):
+            yesterday_values.setdefault(
+                (g.subject, g.lesson_id, g.assessment_id), g.behavior_score
+            )
+        if yesterday_values:
+            yesterday_avg = sum(yesterday_values.values()) / len(yesterday_values)
 
     behavior_trend = None
     behavior_trend_class = ''

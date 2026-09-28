@@ -167,12 +167,16 @@ function saveInput(input) {
         if (value && !Number.isInteger(Number(value))) return;
     }
     if (value === input.dataset.origValue) return;
+    // Skip re-sending a value whose request is already in flight — change
+    // and blur can fire together for one edit.
+    if (input.dataset.inflight === value) return;
     const status = document.getElementById('daily-status-' + input.dataset.rowId);
     const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: document.getElementById('daily-date').value, type: 'daily'};
     params[field] = value;
     pushPending({name: input.name, value: value, rowId: input.dataset.rowId, params: params});
     backupDrafts();
     if (!navigator.onLine) { showOfflineBanner(); return; }
+    input.dataset.inflight = value;
     const data = new URLSearchParams(params);
     fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
     .then(r => {
@@ -180,6 +184,7 @@ function saveInput(input) {
         return r.json();
     })
     .then(resp => {
+        delete input.dataset.inflight;
         if (resp.success) {
             input.dataset.origValue = value;
             removePending(input.name);
@@ -188,7 +193,7 @@ function saveInput(input) {
             showStatus(status, resp.message || 'Хатo');
         }
     })
-    .catch(e => { showStatus(status, 'Хатo: ' + e.message); showOfflineBanner(); });
+    .catch(e => { delete input.dataset.inflight; showStatus(status, 'Хатo: ' + e.message); showOfflineBanner(); });
 }
 function saveAll() { document.querySelectorAll('.daily-input').forEach(el => { if (!el.disabled && el.value !== el.dataset.origValue) saveInput(el); }); }
 function moveFocus(input, direction) {

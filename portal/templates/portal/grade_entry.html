@@ -735,6 +735,10 @@ function saveDaily(input) {
     if (value && !Number.isInteger(Number(value))) return;
   }
   if (value === input.dataset.origValue && !points) return;
+  // An identical request is already in flight (change+blur fire together,
+  // and blur arrives before the response updates origValue) — sending a
+  // second copy could create a duplicate Grade row server-side.
+  if (!points && input.dataset.inflight === value) return;
   const status = document.getElementById('daily-status-' + input.dataset.rowId);
   const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: document.getElementById('daily-date').value, type: 'daily'};
   if (assessmentId) params.assessment_id = assessmentId;
@@ -748,6 +752,7 @@ function saveDaily(input) {
   pushPending({name: input.name, value: value, rowId: input.dataset.rowId, params: params});
   backupDrafts();
   if (!navigator.onLine) { showOfflineBanner(); return; }
+  input.dataset.inflight = value;
   const data = new URLSearchParams(params);
   fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
   .then(r => {
@@ -755,6 +760,7 @@ function saveDaily(input) {
     if (!r.ok) {
       // Deterministic 4xx — the server rejected this request for good;
       // retrying cannot help, so drop the queued item instead of looping.
+      delete input.dataset.inflight;
       removePending(input.name);
       r.json().then(j => showStatus(status, (j && j.message) || 'Хатo'))
               .catch(() => showStatus(status, 'Хатo'));
@@ -763,6 +769,7 @@ function saveDaily(input) {
     return r.json();
   })
   .then(resp => {
+    delete input.dataset.inflight;
     if (!resp) return;
     if (resp.success) {
       if (assessmentId && resp.score !== undefined) {
@@ -791,6 +798,9 @@ function saveDaily(input) {
     }
   })
   .catch(err => {
+    // Network failure — the item stays in the offline queue; clearing the
+    // in-flight marker lets a later blur/manual save retry the same value.
+    delete input.dataset.inflight;
     if (err && err.serverDown) { showStatus(status, 'Сервер дастрас нест — баъдтар такрор мешавад.'); }
     else { showStatus(status, 'Хатo'); showOfflineBanner(); }
   });
@@ -844,13 +854,26 @@ function saveQuarter(input) {
 function saveAll() {
   document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
     if (el.disabled || el.value === el.dataset.origValue) return;
+    // A behavior select the teacher never changed carries only the
+    // carry-over/default prefill — it is not an explicit conduct entry and
+    // must not be written into this subject's Grade rows.
+    if (el.classList.contains('daily-behavior') && !el.dataset.touched) return;
     if (el.classList.contains('q-input') || el.classList.contains('att-input')) saveQuarter(el);
     else saveDaily(el);
   });
 }
 function handleFormSubmit(e) {
+  // Untouched behavior selects are excluded from the full-form POST — their
+  // value is only the carry-over/default prefill, not an explicit edit.
+  // (Score/attendance inputs always re-post their shown value harmlessly.)
+  const untouchedBehavior = [];
+  document.querySelectorAll('.daily-behavior:not(:disabled)').forEach(el => {
+    if (!el.dataset.touched) { untouchedBehavior.push(el); el.disabled = true; }
+  });
   if (!navigator.onLine) {
     e.preventDefault();
+    // The page stays put on the offline path — restore the fields.
+    untouchedBehavior.forEach(el => { el.disabled = false; });
     saveAll();
     showOfflineBanner();
   }
@@ -886,7 +909,10 @@ document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, 
 });
 document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => {
   el.addEventListener('input', backupDrafts);
-  el.addEventListener('change', () => saveDaily(el));
+  // 'change' only fires on a real user modification — it marks the field as
+  // explicitly touched (batch submit skips untouched behavior selects) and
+  // triggers the immediate save; the blur handler below is the fallback.
+  el.addEventListener('change', () => { el.dataset.touched = '1'; saveDaily(el); });
   el.addEventListener('blur', () => saveDaily(el));
 });
 document.querySelectorAll('.q-input, .att-input').forEach(el => {

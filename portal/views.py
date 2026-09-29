@@ -1820,6 +1820,10 @@ def sticker_entry(request, school_id, class_name):
         if g.student_id not in prior_behavior:
             prior_behavior[g.student_id] = g.behavior_score
 
+    # Display chain per student: today's slot value -> latest stored value
+    # FOR THIS SUBJECT -> neutral default 5. The 5 is display-only: untouched
+    # behavior selects are excluded from batch submits and saveAll, and the
+    # server writes behavior_score only when the field is actually posted.
     behavior_default = {}
     for s in students:
         if s.id in daily_behavior:
@@ -2282,6 +2286,10 @@ def grade_entry(request, school_id, class_name, subject):
         if g.student_id not in prior_behavior:
             prior_behavior[g.student_id] = g.behavior_score
 
+    # Display chain per student: today's slot value -> latest stored value
+    # FOR THIS SUBJECT -> neutral default 5. The 5 is display-only: untouched
+    # behavior selects are excluded from batch submits and saveAll, and the
+    # server writes behavior_score only when the field is actually posted.
     behavior_default = {}
     for s in students:
         if s.id in daily_behavior:

@@ -274,7 +274,27 @@ class ConductPrefillIsolationTests(GoldenBase):
         # Physics conduct 3 must not appear in the Algebra journal.
         make_grade(self.s1, subject=PHYSICS, behavior=3, date=YESTERDAY)
         self.assertNotEqual(self._behavior_default()[self.s1.id], 3)
-        self.assertEqual(self._behavior_default()[self.s1.id], 5)  # fallback
+        self.assertEqual(self._behavior_default()[self.s1.id], 5)  # display default
+
+    def test_no_conduct_displays_default_five(self):
+        # Desired rule: no stored conduct for THIS subject -> the select
+        # shows the display-only default 5 (never persisted unless touched).
+        self.assertEqual(self._behavior_default()[self.s1.id], 5)
+        resp = self.client.get(self.url, {'date': TODAY.isoformat()})
+        html = resp.content.decode('utf-8')
+        row = html[html.index(f'name="behavior_{self.s1.id}"'):]
+        row = row[:row.index('</select>')]
+        self.assertIn('value="5" selected', row)
+        # ...and it creates no stored value — the default is UI-only.
+        self.assertFalse(
+            Grade.objects.filter(
+                student=self.s1, subject=MATH,
+                behavior_score__isnull=False).exists())
+
+    def test_stored_five_displays_as_five(self):
+        # A real stored 5 is shown — only the auto-fallback is removed.
+        make_grade(self.s1, subject=MATH, behavior=5, date=TODAY)
+        self.assertEqual(self._behavior_default()[self.s1.id], 5)
 
     def test_same_subject_history_still_carries(self):
         make_grade(self.s1, subject=MATH, behavior=4, date=YESTERDAY)
@@ -285,6 +305,19 @@ class ConductPrefillIsolationTests(GoldenBase):
         make_grade(self.s1, subject=MATH, behavior=2, date=TODAY)
         make_grade(self.s1, subject=PHYSICS, behavior=1, date=YESTERDAY)
         self.assertEqual(self._behavior_default()[self.s1.id], 2)
+
+    def test_lesson_slots_have_independent_conduct(self):
+        # D1 and D2 keep separate conduct values; the journal prefill for
+        # each slot reflects that slot's stored row.
+        l1 = make_lesson(self.cs_a, TODAY, 1)
+        l2 = make_lesson(self.cs_a, TODAY, 2)
+        grade_in_slot(self.s1, behavior=3, lesson=l1)
+        grade_in_slot(self.s1, behavior=5, lesson=l2)
+        for lesson, expected in ((l1, 3), (l2, 5)):
+            resp = self.client.get(
+                self.url, {'date': TODAY.isoformat(), 'lesson': lesson.id})
+            self.assertEqual(
+                resp.context['behavior_default'][self.s1.id], expected)
 
     def test_sticker_prefill_scoped_to_pseudo_subject(self):
         st = make_student(self.school_a, '1-А', 'Синчалак Солеҳов')
@@ -368,6 +401,20 @@ class ConductSubjectIndependenceTests(GoldenBase):
             Grade.objects.get(
                 student=self.s1, subject=PHYSICS).behavior_score, 4)
 
+    def test_algebra_change_to_five_physics_unaffected(self):
+        # Algebra teacher's edit writes only the Algebra row.
+        make_grade(self.s1, subject=MATH, behavior=3, date=TODAY)
+        phys = make_grade(self.s1, subject=PHYSICS, behavior=2, date=TODAY)
+        resp = post_daily(
+            self.client, self.s1, subject=MATH,
+            extra={'behavior_score': '5'})
+        self.assertTrue(resp.json()['success'])
+        phys.refresh_from_db()
+        self.assertEqual(
+            Grade.objects.get(
+                student=self.s1, subject=MATH).behavior_score, 5)
+        self.assertEqual(phys.behavior_score, 2)
+
     def test_each_subject_keeps_own_conduct(self):
         make_grade(self.s1, subject=MATH, behavior=5)
         make_grade(self.s1, subject=PHYSICS, behavior=3)
@@ -389,6 +436,14 @@ class OverallBehaviorTests(GoldenBase):
         make_grade(self.s1, subject=HISTORY, behavior=5)
         # (5 + 3 + 5 + 5) / 4 = 4.5 -> Намунавӣ
         self.assertEqual(self.s1.behavior_status, 'Намунавӣ')
+
+    def test_three_seven_five_average(self):
+        # (3 + 2 + 5 + 5) / 4 = 3.75 -> Қаноатбахш (existing thresholds).
+        make_grade(self.s1, subject=MATH, behavior=3)
+        make_grade(self.s1, subject=PHYSICS, behavior=2)
+        make_grade(self.s1, subject=TAJIK, behavior=5)
+        make_grade(self.s1, subject=HISTORY, behavior=5)
+        self.assertEqual(self.s1.behavior_status, 'Қаноатбахш')
 
     def test_per_subject_mean_then_across_subjects(self):
         # Physics gets two marks (3 and 5 -> mean 4): the subject still

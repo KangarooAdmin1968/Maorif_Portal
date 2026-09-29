@@ -4,6 +4,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.conf import settings
+from django.utils.functional import cached_property
 
 
 SCHOOL_TYPE_CHOICES = [
@@ -144,21 +145,46 @@ class Student(models.Model):
             return grade_level not in settings.NON_GRADED_CLASSES
         return True
 
+    @cached_property
+    def conduct_map(self):
+        """Current conduct value per subject — read-side projection.
+
+        The LATEST stored behavior_score per normalized subject wins:
+        ``order_by('-date', '-pk')`` picks the newest day first, and for
+        same-day multi-slot rows the most recently written record. Class
+        subjects with no stored value contribute the display-only default
+        5, which is never persisted. Historical Grade rows stay intact —
+        only reads interpret them, so academic data is untouched.
+        """
+        latest = {}
+        for subj, val in (
+            self.grade_set
+            .filter(behavior_score__isnull=False)
+            .order_by('-date', '-pk')
+            .values_list('subject', 'behavior_score')
+        ):
+            latest.setdefault(normalize_subject(subj), val)
+        subjects = set(latest)
+        subjects.update(
+            normalize_subject(s) for s in
+            ClassSubject.objects
+            .filter(school=self.school, class_name=self.class_name,
+                    is_active=True)
+            .values_list('subject', flat=True)
+        )
+        return {s: latest.get(s, 5) for s in subjects}
+
     @property
     def behavior_status(self):
-        """Calculates the overall behavioral status badge in Tajik.
+        """Overall conduct badge — mean of CURRENT per-subject values.
 
-        Each subject contributes equally: the per-subject average of behavior
-        marks is computed first, then averaged across all subjects.
+        Each subject counts once at its latest value (see conduct_map) or
+        the display-only default 5; the existing thresholds are unchanged.
+        A student with no entered conduct reads as Намунавӣ since every
+        relevant subject is assumed to be at the good-behavior default.
         """
-        from django.db.models import Avg
-        per_subject = self.grade_set.filter(
-            behavior_score__isnull=False
-        ).values('subject').annotate(avg=Avg('behavior_score'))
-        count = per_subject.count()
-        if not count:
-            return "Маълумот нест"
-        avg_behavior = sum(r['avg'] for r in per_subject) / count
+        values = list(self.conduct_map.values())
+        avg_behavior = sum(values) / len(values) if values else 5
         if avg_behavior >= 4.5:
             return "Намунавӣ"
         elif avg_behavior >= 3.0:

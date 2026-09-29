@@ -490,6 +490,27 @@ def _assessment_label(assessment):
     return label
 
 
+def _conduct_advice(conduct_map):
+    """Short Tajik recommendation built from current per-subject conduct.
+
+    Deterministic static text — no external calls. Names only subjects
+    whose current value is at or below the existing satisfactory
+    boundary (<=3); everything else stays positive.
+    """
+    if not conduct_map:
+        return ''
+    if all(v == 5 for v in conduct_map.values()):
+        return ('Рафтори шумо намунавӣ аст. Ҳамин тавр идома диҳед — '
+                'интизом ва эҳтиром асоси муваффақият мебошанд.')
+    low = sorted(s for s, v in conduct_map.items() if v <= 3)
+    if low:
+        return ('Дар фанҳои ' + ', '.join(low) +
+                ' ба интизом ва иштироки фаъол дар дарс диққати бештар '
+                'диҳед. Кӯшиши шумо натиҷаро ҳатман беҳтар мекунад.')
+    return ('Натиҷаи тарбияи шумо хуб аст. '
+            'Кӯшиш кунед, ки ин сатҳро ҳамеша нигоҳ доред.')
+
+
 def _grade_slot_label(grade):
     """Student-facing label for a Grade row: subject plus its slot context.
 
@@ -1816,7 +1837,7 @@ def sticker_entry(request, school_id, class_name):
         subject=subject,
         behavior_score__isnull=False,
         date__lt=selected_date
-    ).order_by('student_id', '-date'):
+    ).order_by('student_id', '-date', '-pk'):
         if g.student_id not in prior_behavior:
             prior_behavior[g.student_id] = g.behavior_score
 
@@ -2282,7 +2303,7 @@ def grade_entry(request, school_id, class_name, subject):
         behavior_score__isnull=False,
         date__lt=selected_date,
         assessment__isnull=True,
-    ).order_by('student_id', '-date'):
+    ).order_by('student_id', '-date', '-pk'):
         if g.student_id not in prior_behavior:
             prior_behavior[g.student_id] = g.behavior_score
 
@@ -4147,6 +4168,15 @@ def student_detail(request, student_id):
     subjects = sorted(subject_scores.keys())
     scores = [subject_scores[s] for s in subjects]
 
+    # Тарбия: current conduct per subject — latest stored behavior_score
+    # ('-date','-pk') or the display-only default 5. Student.conduct_map is
+    # a cached projection, so the badge, this chart and the advice share
+    # one fetch; no Grade rows are created or modified here.
+    conduct_map = student.conduct_map
+    conduct_subjects = sorted(conduct_map)
+    conduct_scores = [conduct_map[s] for s in conduct_subjects]
+    conduct_advice = _conduct_advice(conduct_map)
+
     non_graded = is_non_graded(student.class_name)
 
     if non_graded:
@@ -4280,6 +4310,9 @@ def student_detail(request, student_id):
         'district_rank': district_rank,
         'subjects': subjects,
         'scores': scores,
+        'conduct_subjects': conduct_subjects,
+        'conduct_scores': conduct_scores,
+        'conduct_advice': conduct_advice,
         'recent_stickers': recent_stickers,
         'sticker_labels': {'⭐': 'Ситора', '☀️': 'Офтобак', '🌸': 'Гул', '📖': 'Китоб'},
         'today': today,

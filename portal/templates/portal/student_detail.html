@@ -403,6 +403,85 @@ new Chart(ctx, {
 </script>
 {% endif %}
 
+{% if not non_graded and conduct_subjects %}
+<section class="chart-card" style="margin-top:1.5rem;">
+    <h2>🌟 Тарбия аз рӯи фанҳо</h2>
+    <div class="chart-wrapper">
+        <canvas id="conductChart"></canvas>
+    </div>
+</section>
+
+{% if conduct_advice %}
+<section class="chart-card" style="margin-top:1.5rem;">
+    <h2>💡 Тавсия</h2>
+    <p style="margin:0; font-size:1.05rem; color:#334155; line-height:1.7;">{{ conduct_advice }}</p>
+</section>
+{% endif %}
+
+{{ conduct_subjects|json_script:"conduct-subjects-data" }}
+{{ conduct_scores|json_script:"conduct-scores-data" }}
+<script>
+const conductSubjects = JSON.parse(document.getElementById('conduct-subjects-data').textContent);
+const conductScores = JSON.parse(document.getElementById('conduct-scores-data').textContent);
+
+const conductColors = conductScores.map(v =>
+    v >= 5 ? '#22C55E' :
+    v === 4 ? '#3B82F6' :
+    v === 3 ? '#EAB308' :
+    '#EF4444'
+);
+
+new Chart(document.getElementById('conductChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+        labels: conductSubjects,
+        datasets: [{
+            label: 'Тарбия',
+            data: conductScores,
+            backgroundColor: conductColors,
+            borderRadius: 6,
+            barPercentage: 0.6,
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            datalabels: {
+                anchor: 'end',
+                align: 'top',
+                offset: 4,
+                color: '#1E293B',
+                font: { weight: 'bold', size: 12 },
+                formatter: function(value) {
+                    return Number(value);
+                }
+            },
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        return 'Тарбия: ' + context.raw;
+                    }
+                }
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                min: 0,
+                max: 5,
+                ticks: { stepSize: 1 }
+            },
+            x: {
+                ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 }
+            }
+        }
+    }
+});
+</script>
+{% endif %}
+
 {% if recent_stickers %}
 <section class="chart-card" style="margin-top:1.5rem;">
     <h2>⭐ Таърихи стикерҳо</h2>

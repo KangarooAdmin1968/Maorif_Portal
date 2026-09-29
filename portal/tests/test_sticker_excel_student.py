@@ -339,7 +339,9 @@ class StudentDerivedMetricsTests(GoldenBase):
         self.assertEqual(self.s1.attendance_percentage, 0.0)
 
     def test_behavior_status_labels(self):
-        self.assertEqual(self.s1.behavior_status, 'Маълумот нест')
+        # No entered conduct: every subject sits at the display-only
+        # default 5 -> exemplary (never 'Маълумот нест').
+        self.assertEqual(self.s1.behavior_status, 'Намунавӣ')
         make_grade(self.s1, score=8, date=D_Q1, behavior=5)
         self.assertEqual(self.s1.behavior_status, 'Намунавӣ')
 

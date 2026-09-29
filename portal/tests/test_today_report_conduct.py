@@ -17,15 +17,19 @@ Issue 2 coverage:
   journal (display) or be persisted (batch save).
 - Batch save never materializes untouched behavior fields (no phantom
   behavior_score rows, stored values preserved when the key is absent).
-- Student.behavior_status keeps the subject-equal aggregate design.
+- Student.behavior_status / Student.conduct_map implement the current-value
+  model: latest stored behavior_score per subject ('-date','-pk'), class
+  subjects without a stored value contribute the display-only default 5,
+  existing thresholds unchanged, no data -> Намунавӣ.
 """
 import datetime
 
 from django.urls import reverse
 
-from portal.models import Assessment, Grade, Lesson
+from portal.models import Assessment, ClassSubject, Grade, Lesson
 from portal.tests.helpers import (
-    MATH, PERIOD, TAJIK, GoldenBase, make_grade, make_student,
+    MATH, PERIOD, TAJIK, GoldenBase, make_class_subject, make_grade,
+    make_student,
 )
 from portal.views import get_date_quarter, get_or_create_grade
 
@@ -34,6 +38,7 @@ TODAY = datetime.date.today()
 YESTERDAY = TODAY - datetime.timedelta(days=1)
 PHYSICS = 'ФИЗИКА'
 HISTORY = 'ТАЪРИХ'
+BIOLOGY = 'БИОЛОГИЯ'
 
 
 def make_lesson(class_subject, date=TODAY, lesson_number=1, topic=''):
@@ -306,6 +311,15 @@ class ConductPrefillIsolationTests(GoldenBase):
         make_grade(self.s1, subject=PHYSICS, behavior=1, date=YESTERDAY)
         self.assertEqual(self._behavior_default()[self.s1.id], 2)
 
+    def test_prior_same_day_latest_write_wins(self):
+        # Several same-date rows for one subject resolve deterministically
+        # by -pk: the most recently written value is the current one.
+        l1 = make_lesson(self.cs_a, YESTERDAY, 1)
+        l2 = make_lesson(self.cs_a, YESTERDAY, 2)
+        grade_in_slot(self.s1, behavior=3, lesson=l1)
+        grade_in_slot(self.s1, behavior=5, lesson=l2)
+        self.assertEqual(self._behavior_default()[self.s1.id], 5)
+
     def test_lesson_slots_have_independent_conduct(self):
         # D1 and D2 keep separate conduct values; the journal prefill for
         # each slot reflects that slot's stored row.
@@ -426,10 +440,94 @@ class ConductSubjectIndependenceTests(GoldenBase):
                 student=self.s1, subject=PHYSICS).behavior_score, 3)
 
 
+class CurrentConductTests(GoldenBase):
+    """Student.conduct_map: current conduct per subject — latest stored
+    value (-date,-pk) or the display-only default 5 for class subjects."""
+
+    def _universe(self, *subjects):
+        """Restrict the student's class to exactly these active subjects."""
+        ClassSubject.objects.filter(
+            school=self.school_a,
+            class_name=self.s1.class_name).update(is_active=False)
+        for name in subjects:
+            make_class_subject(self.school_a, self.s1.class_name, name)
+
+    def test_no_stored_conduct_all_five_no_rows(self):
+        self._universe(MATH, PHYSICS)
+        self.assertEqual(self.s1.conduct_map, {MATH: 5, PHYSICS: 5})
+        # the default is display-only — nothing was persisted
+        self.assertFalse(
+            Grade.objects.filter(
+                student=self.s1, behavior_score__isnull=False).exists())
+
+    def test_stored_value_and_default_side_by_side(self):
+        self._universe(MATH, PHYSICS)
+        make_grade(self.s1, subject=MATH, behavior=3, date=TODAY)
+        self.assertEqual(self.s1.conduct_map, {MATH: 3, PHYSICS: 5})
+
+    def test_cross_day_latest_wins_old_row_stays(self):
+        self._universe(MATH)
+        old = make_grade(self.s1, subject=MATH, behavior=3, date=YESTERDAY)
+        make_grade(self.s1, subject=MATH, behavior=5, date=TODAY)
+        self.assertEqual(self.s1.conduct_map[MATH], 5)
+        # historical rows are never deleted and stay readable
+        self.assertEqual(
+            Grade.objects.filter(
+                student=self.s1, subject=MATH,
+                behavior_score__isnull=False).count(), 2)
+        self.assertEqual(
+            Grade.objects.get(pk=old.pk).behavior_score, 3)
+
+    def test_same_day_multi_slot_pk_wins(self):
+        self._universe(MATH)
+        l1 = make_lesson(self.cs_a, TODAY, 1)
+        l2 = make_lesson(self.cs_a, TODAY, 2)
+        grade_in_slot(self.s1, behavior=3, lesson=l1)
+        grade_in_slot(self.s1, behavior=5, lesson=l2)
+        self.assertEqual(self.s1.conduct_map[MATH], 5)
+
+    def test_subjects_stay_independent(self):
+        self._universe(MATH, PHYSICS)
+        make_grade(self.s1, subject=MATH, behavior=3, date=TODAY)
+        make_grade(self.s1, subject=PHYSICS, behavior=5, date=TODAY)
+        self.client.force_login(self.admin)
+        resp = post_daily(self.client, self.s1, subject=PHYSICS,
+                          extra={'behavior_score': '2'})
+        self.assertTrue(resp.json()['success'])
+        self.assertEqual(Grade.objects.get(
+            student=self.s1, subject=PHYSICS).behavior_score, 2)
+        self.assertEqual(Grade.objects.get(
+            student=self.s1, subject=MATH).behavior_score, 3)
+
+    def test_stored_five_and_default_five_both_display_five(self):
+        self._universe(MATH, PHYSICS)
+        make_grade(self.s1, subject=MATH, behavior=5, date=TODAY)
+        self.assertEqual(self.s1.conduct_map, {MATH: 5, PHYSICS: 5})
+        # only the explicit row exists — the default wrote nothing
+        self.assertEqual(
+            Grade.objects.filter(
+                student=self.s1,
+                behavior_score__isnull=False).count(), 1)
+
+
 class OverallBehaviorTests(GoldenBase):
-    """Student.behavior_status: per-subject mean -> mean across subjects."""
+    """Student.behavior_status: mean of CURRENT per-subject values
+    (latest stored value or default 5). Thresholds unchanged:
+    >=4.5 Намунавӣ, >=3.0 Қаноатбахш."""
+
+    def _universe(self, *subjects):
+        ClassSubject.objects.filter(
+            school=self.school_a,
+            class_name=self.s1.class_name).update(is_active=False)
+        for name in subjects:
+            make_class_subject(self.school_a, self.s1.class_name, name)
+
+    def test_no_data_is_exemplary(self):
+        # No entered conduct: every relevant subject reads as default 5.
+        self.assertEqual(self.s1.behavior_status, 'Намунавӣ')
 
     def test_subject_equal_average(self):
+        self._universe(MATH, PHYSICS, TAJIK, HISTORY)
         make_grade(self.s1, subject=MATH, behavior=5)
         make_grade(self.s1, subject=PHYSICS, behavior=3)
         make_grade(self.s1, subject=TAJIK, behavior=5)
@@ -438,29 +536,68 @@ class OverallBehaviorTests(GoldenBase):
         self.assertEqual(self.s1.behavior_status, 'Намунавӣ')
 
     def test_three_seven_five_average(self):
-        # (3 + 2 + 5 + 5) / 4 = 3.75 -> Қаноатбахш (existing thresholds).
+        self._universe(MATH, PHYSICS, TAJIK, HISTORY)
         make_grade(self.s1, subject=MATH, behavior=3)
         make_grade(self.s1, subject=PHYSICS, behavior=2)
         make_grade(self.s1, subject=TAJIK, behavior=5)
         make_grade(self.s1, subject=HISTORY, behavior=5)
+        # (3 + 2 + 5 + 5) / 4 = 3.75 -> Қаноатбахш
         self.assertEqual(self.s1.behavior_status, 'Қаноатбахш')
 
-    def test_per_subject_mean_then_across_subjects(self):
-        # Physics gets two marks (3 and 5 -> mean 4): the subject still
-        # contributes exactly once — (5 + 4) / 2 = 4.5, not (5+3+5)/3.
-        make_grade(self.s1, subject=MATH, behavior=5)
-        make_grade(self.s1, subject=PHYSICS, behavior=3)
-        make_grade(self.s1, subject=PHYSICS, behavior=5)
+    def test_latest_value_replaces_history_in_average(self):
+        self._universe(MATH, PHYSICS)
+        make_grade(self.s1, subject=PHYSICS, behavior=1, date=YESTERDAY)
+        make_grade(self.s1, subject=PHYSICS, behavior=5, date=TODAY)
+        # current PHYSICS = 5 (not (1+5)/2=3): (5 + 5) / 2 -> Намунавӣ
         self.assertEqual(self.s1.behavior_status, 'Намунавӣ')
 
     def test_low_average_status(self):
-        make_grade(self.s1, subject=MATH, behavior=5)
+        self._universe(MATH, PHYSICS)
+        make_grade(self.s1, subject=MATH, behavior=1)
         make_grade(self.s1, subject=PHYSICS, behavior=1)
-        # (5 + 1) / 2 = 3.0 -> Қаноатбахш
-        self.assertEqual(self.s1.behavior_status, 'Қаноатбахш')
+        # (1 + 1) / 2 = 1 -> Ноқаноатбахш
+        self.assertEqual(self.s1.behavior_status, 'Ноқаноатбахш')
 
-    def test_no_behavior_placeholder(self):
-        self.assertEqual(self.s1.behavior_status, 'Маълумот нест')
+
+class StudentDetailConductTests(GoldenBase):
+    """'Тарбия аз рӯи фанҳо' chart + Тавсия on the student detail page."""
+
+    def _get(self, student=None):
+        return self.client.get(
+            reverse('student_detail', args=[(student or self.s1).id]))
+
+    def test_chart_context_one_value_per_subject(self):
+        make_grade(self.s1, subject=MATH, behavior=3, date=TODAY)
+        ctx = self._get().context
+        pairs = dict(zip(ctx['conduct_subjects'], ctx['conduct_scores']))
+        self.assertEqual(pairs[MATH], 3)
+        self.assertTrue(all(
+            v == 5 for s, v in pairs.items() if s != MATH))
+
+    def test_chart_section_and_axis_rendered(self):
+        html = self._get().content.decode('utf-8')
+        self.assertIn('Тарбия аз рӯи фанҳо', html)
+        self.assertIn('id="conductChart"', html)
+        self.assertIn('max: 5', html)
+
+    def test_advice_rendered_positive_by_default(self):
+        html = self._get().content.decode('utf-8')
+        self.assertIn('Тавсия', html)
+        self.assertIn('намунавӣ', html)
+
+    def test_advice_names_low_subject(self):
+        make_grade(self.s1, subject=MATH, behavior=2, date=TODAY)
+        html = self._get().content.decode('utf-8')
+        self.assertIn(MATH, html)
+
+    def test_default_never_persisted_by_page_view(self):
+        self._get()
+        self.assertFalse(Grade.objects.filter(student=self.s1).exists())
+
+    def test_non_graded_student_no_conduct_chart(self):
+        s = make_student(self.school_a, '1-А', 'Хонандаи Хурд')
+        html = self._get(s).content.decode('utf-8')
+        self.assertNotIn('id="conductChart"', html)
 
 
 # ---------------------------------------------------------------------------

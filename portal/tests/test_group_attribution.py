@@ -6,6 +6,8 @@ Fixture: School A, class 7-А, subject МАТЕМАТИКА grouped into:
     Гурӯҳи 2 -> teacher_a2 (profile_a2) -> s2
 s_extra has no membership. School B (cs_b, teacher_b) stays ungrouped.
 """
+import datetime
+
 from django.conf import settings
 from django.urls import reverse
 
@@ -17,6 +19,9 @@ from portal.tests.helpers import (
     D_Q1, MATH, GoldenBase, make_grade, make_student,
     make_teacher_profile, make_user,
 )
+from portal.views import _norm_fulfillment, _quarter_progress
+
+TODAY = datetime.date.today()
 
 
 class AttributionFixture(GoldenBase):
@@ -97,9 +102,9 @@ class ReadinessAttributionTests(AttributionFixture):
         self.assertIn('Гурӯҳи 2', teachers['Омӯзгор Б']['subjects'][0])
 
     def test_grades_done_scoped_per_group(self):
-        make_grade(self.s1, subject=MATH, score=8)
-        make_grade(self.s1, subject=MATH, score=9)
-        make_grade(self.s2, subject=MATH, score=7)
+        make_grade(self.s1, subject=MATH, score=8, date=TODAY)
+        make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        make_grade(self.s2, subject=MATH, score=7, date=TODAY)
         teachers = self._teachers()
         self.assertEqual(teachers['Омӯзгор А']['grades_done'], 2)
         self.assertEqual(teachers['Омӯзгор Б']['grades_done'], 1)
@@ -112,17 +117,18 @@ class ReadinessAttributionTests(AttributionFixture):
         self.assertEqual(teachers['Омӯзгор Б']['min_grades'], norm * 1)
 
     def test_fulfillment_group_scoped(self):
-        make_grade(self.s1, subject=MATH, score=8)
-        make_grade(self.s2, subject=MATH, score=7)
-        make_grade(self.s2, subject=MATH, score=9)
+        make_grade(self.s1, subject=MATH, score=8, date=TODAY)
+        make_grade(self.s2, subject=MATH, score=7, date=TODAY)
+        make_grade(self.s2, subject=MATH, score=9, date=TODAY)
         norm = quarter_min_norm('7-А', MATH, self.cs)
+        progress = _quarter_progress(TODAY)
         teachers = self._teachers()
         self.assertEqual(
             teachers['Омӯзгор А']['fulfillment'],
-            round(1 / (norm * 1) * 100, 1))
+            _norm_fulfillment(1, norm * 1, progress))
         self.assertEqual(
             teachers['Омӯзгор Б']['fulfillment'],
-            round(2 / (norm * 1) * 100, 1))
+            _norm_fulfillment(2, norm * 1, progress))
 
     def test_each_group_teacher_gets_full_weekly_hours(self):
         self.cs.hours_per_week = 4
@@ -145,7 +151,7 @@ class ReadinessAttributionTests(AttributionFixture):
                 school=self.school_a, class_name='7-А', subject=MATH).count(), 1)
 
     def test_unassigned_student_in_school_totals_but_no_teacher(self):
-        make_grade(self.s_extra, subject=MATH, score=6)
+        make_grade(self.s_extra, subject=MATH, score=6, date=TODAY)
         stats, activity = self._readiness()
         teachers = self._teachers(activity)
         # School-level counts include the unassigned student's grade.
@@ -157,7 +163,7 @@ class ReadinessAttributionTests(AttributionFixture):
     def test_group_without_teacher_no_attribution_row(self):
         self.g2.teacher = None
         self.g2.save()
-        make_grade(self.s2, subject=MATH, score=7)
+        make_grade(self.s2, subject=MATH, score=7, date=TODAY)
         _, activity = self._readiness()
         teachers = self._teachers(activity)
         self.assertNotIn('Омӯзгор Б', teachers)
@@ -178,8 +184,8 @@ class ReadinessAttributionTests(AttributionFixture):
         self.g2.save()
         self.cs.hours_per_week = 4
         self.cs.save()
-        make_grade(self.s1, subject=MATH, score=8)
-        make_grade(self.s2, subject=MATH, score=9)
+        make_grade(self.s1, subject=MATH, score=8, date=TODAY)
+        make_grade(self.s2, subject=MATH, score=9, date=TODAY)
         norm = quarter_min_norm('7-А', MATH, self.cs)
         teachers = self._teachers()
         entry = teachers['Омӯзгор А']
@@ -194,18 +200,18 @@ class ReadinessAttributionTests(AttributionFixture):
         # A grade written on a group-2 lesson credits group 2's teacher
         # even though the student is currently a group-1 member.
         l_g2 = Lesson.objects.create(
-            class_subject=self.cs, date=D_Q1, lesson_number=2, group=self.g2)
+            class_subject=self.cs, date=TODAY, lesson_number=2, group=self.g2)
         Grade.objects.create(
             student=self.s1, subject=MATH, period='Холҳои ҷорӣ (Онлайн)',
-            date=D_Q1, score=9, lesson=l_g2)
+            date=TODAY, score=9, lesson=l_g2)
         teachers = self._teachers()
         self.assertEqual(teachers['Омӯзгор Б']['grades_done'], 1)
         self.assertEqual(teachers['Омӯзгор А']['grades_done'], 0)
 
     def test_legacy_lesson_less_grade_uses_membership(self):
         # Pre-split rows (lesson=NULL) attribute via current membership.
-        make_grade(self.s1, subject=MATH, score=8)
-        make_grade(self.s2, subject=MATH, score=7)
+        make_grade(self.s1, subject=MATH, score=8, date=TODAY)
+        make_grade(self.s2, subject=MATH, score=7, date=TODAY)
         teachers = self._teachers()
         self.assertEqual(teachers['Омӯзгор А']['grades_done'], 1)
         self.assertEqual(teachers['Омӯзгор Б']['grades_done'], 1)
@@ -274,8 +280,8 @@ class UngroupedBaselineTests(GoldenBase):
 
     def test_ungrouped_readiness_unchanged(self):
         make_teacher_profile(self.teacher_a, self.school_a, full_name='Омӯзгор А')
-        make_grade(self.s1, subject=MATH, score=8)
-        make_grade(self.s2, subject=MATH, score=9)
+        make_grade(self.s1, subject=MATH, score=8, date=TODAY)
+        make_grade(self.s2, subject=MATH, score=9, date=TODAY)
         ctx = self._readiness()
         stats = {d['school'].id: d for d in ctx['stats']}
         activity = {a['school'].id: a for a in ctx['activity']}

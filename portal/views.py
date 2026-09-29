@@ -130,6 +130,57 @@ def get_date_quarter(date):
     return None
 
 
+def _current_quarter_bounds(today):
+    """Return (start, end) calendar dates of the quarter containing today.
+
+    Month buckets mirror get_date_quarter: Q1 Sep-Nov, Q2 Dec-Feb,
+    Q3 Mar-May, Q4 Jun-Aug. The end is the first day of the next month
+    minus one day, keeping February leap-safe.
+    """
+    m = today.month
+    if m in (9, 10, 11):
+        start = datetime.date(today.year, 9, 1)
+        end = datetime.date(today.year, 12, 1) - datetime.timedelta(days=1)
+    elif m in (12, 1, 2):
+        y = today.year if m == 12 else today.year - 1
+        start = datetime.date(y, 12, 1)
+        end = datetime.date(y + 1, 3, 1) - datetime.timedelta(days=1)
+    elif m in (3, 4, 5):
+        start = datetime.date(today.year, 3, 1)
+        end = datetime.date(today.year, 6, 1) - datetime.timedelta(days=1)
+    else:
+        start = datetime.date(today.year, 6, 1)
+        end = datetime.date(today.year, 9, 1) - datetime.timedelta(days=1)
+    return start, end
+
+
+def _quarter_progress(today):
+    """Elapsed fraction of today's academic quarter, in (0, 1].
+
+    The first day of a quarter counts as elapsed (1/total), so the
+    fraction is never zero and the fulfillment calculation never
+    divides by zero.
+    """
+    start, end = _current_quarter_bounds(today)
+    total = (end - start).days + 1
+    elapsed = min(max((today - start).days + 1, 1), total)
+    return elapsed / total
+
+
+def _norm_fulfillment(done, expected, progress):
+    """Time-aware norm fulfillment percentage.
+
+    ``expected`` is the full-quarter target (quarter norm x students);
+    only its elapsed share is required by now — ``done`` reaching
+    ``expected * progress`` means the teacher is on pace -> 100%. The
+    cap is a monitoring display limit only; it never restricts grade
+    entry.
+    """
+    if not expected:
+        return 0.0
+    return min(100.0, round(done / (expected * progress) * 100, 1))
+
+
 def grade_component_result(grade):
     """Return the student's single result for a Grade row.
 
@@ -5377,13 +5428,21 @@ def school_readiness_rating(request):
     # "Active students" and norm expectations exclude non-graded class levels ('0' and '1').
     NON_GRADED_RE = r'^(0|1)(-|$|[^0-9])'
     user_school = get_user_school(request.user)
+    # Norm fulfillment is a current-quarter, time-aware metric: only Grade
+    # rows dated inside today's quarter count, and only the elapsed share
+    # of the quarterly minimum is expected. The 100% cap is display-only —
+    # it never limits further grade entry.
+    today = datetime.date.today()
+    q_start, q_end = _current_quarter_bounds(today)
+    q_progress = _quarter_progress(today)
     student_counts = dict(
         Student.objects.filter(school_id__in=school_ids)
         .exclude(class_name__regex=NON_GRADED_RE)
         .values_list('school_id').annotate(n=Count('id'))
     )
     grade_counts = dict(
-        Grade.objects.filter(student__school_id__in=school_ids)
+        Grade.objects.filter(student__school_id__in=school_ids,
+                             date__range=(q_start, q_end))
         .values_list('student__school_id').annotate(n=Count('id'))
     )
     class_student_counts = {
@@ -5394,7 +5453,8 @@ def school_readiness_rating(request):
     }
     pair_grade_counts = {
         (r['student__school_id'], r['student__class_name'], r['subject']): r['n']
-        for r in Grade.objects.filter(student__school_id__in=school_ids)
+        for r in Grade.objects.filter(student__school_id__in=school_ids,
+                                      date__range=(q_start, q_end))
         .values('student__school_id', 'student__class_name', 'subject')
         .annotate(n=Count('id'))
     }
@@ -5414,11 +5474,13 @@ def school_readiness_rating(request):
     for row in Grade.objects.filter(
             student__school_id__in=school_ids,
             lesson__group__is_active=True,
+            date__range=(q_start, q_end),
     ).values('lesson__class_subject_id', 'lesson__group_id').annotate(n=Count('id')):
         group_grade_counts[
             (row['lesson__class_subject_id'], row['lesson__group_id'])] += row['n']
     for row in Grade.objects.filter(
             student__school_id__in=school_ids,
+            date__range=(q_start, q_end),
     ).exclude(lesson__group__is_active=True).values(
             'subject',
             'student__subject_group_memberships__class_subject_id',
@@ -5509,7 +5571,7 @@ def school_readiness_rating(request):
                 if min_norm:
                     min_grades += min_norm * n_students
                     norm_done += entered
-            fulfillment = round(norm_done / min_grades * 100, 1) if min_grades else 0.0
+            fulfillment = _norm_fulfillment(norm_done, min_grades, q_progress)
             teachers.append({
                 'name': profile.full_name,
                 'subjects': [
@@ -5527,7 +5589,7 @@ def school_readiness_rating(request):
             'school': school,
             'students': students_n,
             'total_grades': grades_n,
-            'fulfillment': round(norm_grades_done / expected_min * 100, 1) if expected_min else 0.0,
+            'fulfillment': _norm_fulfillment(norm_grades_done, expected_min, q_progress),
             'gpa': gpa_map.get(school.id, 0.0),
             'teachers': teachers,
             'is_mine': bool(user_school and user_school.id == school.id),

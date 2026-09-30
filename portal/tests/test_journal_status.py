@@ -17,20 +17,27 @@ import datetime
 from django.test import TestCase
 from django.urls import reverse
 
-from portal.models import Grade
+from portal.models import Assessment, Grade
 from portal.tests.helpers import (
     MATH, GoldenBase, make_class_subject, make_grade, make_student,
     make_teacher_profile,
 )
 from portal.views import (
     _current_quarter_bounds, _journal_norm_status, _journal_status,
-    _norm_fulfillment, _quarter_progress,
+    _norm_fulfillment, _quarter_progress, get_date_quarter,
 )
 
 TODAY = datetime.date.today()
 Q_START, Q_END = _current_quarter_bounds(TODAY)
 Q_PROGRESS = _quarter_progress(TODAY)
 PREV_Q = Q_START - datetime.timedelta(days=1)
+
+
+def make_control(cs, date=TODAY):
+    return Assessment.objects.create(
+        class_subject=cs, date=date, quarter=get_date_quarter(date),
+        category='control',
+    )
 
 
 class JournalStatusFormulaTests(TestCase):
@@ -117,6 +124,76 @@ class JournalNormStatusHelperTests(GoldenBase):
             make_grade(self.s1, subject=MATH, score=9, date=TODAY)
         j = self._status()
         self.assertEqual(j['done'], 2)
+        self.assertEqual(j['status'], 'partial')
+
+    # -- scored-only counting (the Grade row is multi-purpose) -------------
+
+    def test_attendance_plus_only_rows_do_not_count(self):
+        # 7 'ғоиб бо сабаб' marks and zero scores -> met=False, Холӣ.
+        for _ in range(7):
+            make_grade(self.s1, subject=MATH, attendance='+', date=TODAY)
+        j = self._status()
+        self.assertEqual(j['done'], 0)
+        self.assertEqual(j['students_met'], 0)
+        self.assertEqual(j['status'], 'empty')
+
+    def test_attendance_minus_only_rows_do_not_count(self):
+        for _ in range(7):
+            make_grade(self.s1, subject=MATH, attendance='-', date=TODAY)
+        j = self._status()
+        self.assertEqual(j['done'], 0)
+        self.assertEqual(j['status'], 'empty')
+
+    def test_behavior_only_rows_do_not_count(self):
+        for _ in range(7):
+            make_grade(self.s1, subject=MATH, behavior=4, date=TODAY)
+        j = self._status()
+        self.assertEqual(j['done'], 0)
+        self.assertEqual(j['status'], 'empty')
+
+    def test_sticker_only_rows_do_not_count(self):
+        for _ in range(7):
+            make_grade(self.s1, subject=MATH, sticker='⭐', date=TODAY)
+        j = self._status()
+        self.assertEqual(j['done'], 0)
+        self.assertEqual(j['status'], 'empty')
+
+    def test_scores_plus_absences_count_scores_only(self):
+        # 3 real scores + 10 absence marks -> done=3, not 13.
+        for _ in range(3):
+            make_grade(self.s1, subject=MATH, score=8, date=TODAY)
+        for _ in range(10):
+            make_grade(self.s1, subject=MATH, attendance='-', date=TODAY)
+        j = self._status()
+        self.assertEqual(j['done'], 3)
+        self.assertEqual(j['students_met'], 0)
+        self.assertEqual(j['status'], 'partial')
+
+    def test_full_norm_scores_with_absences_still_complete(self):
+        # 7 scored rows each, plus many absence marks -> still Пурра.
+        for s in (self.s1, self.s2):
+            for _ in range(7):
+                make_grade(s, subject=MATH, score=9, date=TODAY)
+            for _ in range(10):
+                make_grade(s, subject=MATH, attendance='+', date=TODAY)
+        j = self._status()
+        self.assertEqual(j['done'], 14)
+        self.assertEqual(j['students_met'], 2)
+        self.assertEqual(j['status'], 'complete')
+
+    def test_row_with_score_and_attendance_counts_once(self):
+        make_grade(self.s1, subject=MATH, score=9, attendance='+',
+                   date=TODAY)
+        j = self._status()
+        self.assertEqual(j['done'], 1)
+        self.assertEqual(j['status'], 'partial')
+
+    def test_assessment_linked_score_row_counts(self):
+        a = make_control(self.cs_a)
+        Grade.objects.create(student=self.s1, subject=MATH, score=9,
+                             date=TODAY, assessment=a)
+        j = self._status()
+        self.assertEqual(j['done'], 1)
         self.assertEqual(j['status'], 'partial')
 
 
@@ -318,6 +395,20 @@ class ReadinessJournalStatusTests(GoldenBase):
         self.assertEqual(entry['status'], 'partial')
         self.assertEqual(entry['students_met'], 1)
         self.assertEqual(entry['students_total'], 2)
+
+    def test_absence_only_rows_do_not_satisfy_norm(self):
+        # s1: 7 'н' rows, 0 scores; s2: 3 real scores. The norm numerator
+        # counts academic rows only — 3, not 10.
+        for _ in range(7):
+            make_grade(self.s1, subject=MATH, attendance='-', date=TODAY)
+        for _ in range(3):
+            make_grade(self.s2, subject=MATH, score=8, date=TODAY)
+        _, t = self._teacher()
+        entry = next(j for j in t['journal'] if j['class_name'] == '7-А')
+        self.assertEqual(entry['status'], 'partial')
+        self.assertEqual(entry['students_met'], 0)
+        self.assertEqual(t['fulfillment'],
+                         _norm_fulfillment(3, 14, Q_PROGRESS))
 
     def test_ungraded_subject_has_no_status(self):
         make_class_subject(self.school_a, '7-А', 'СОАТИ ТАРБИЯВӢ',

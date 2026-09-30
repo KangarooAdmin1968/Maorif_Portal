@@ -16,6 +16,11 @@
 .legend .lg-partial::before { background: #fef9c3; border: 1px solid #eab308; }
 .legend .lg-empty::before { background: #f3f4f6; border: 1px solid #d1d5db; }
 .legend .lg-control::before { background: #fee2e2; border: 1px solid #ef4444; }
+.journal-status { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-size: 0.9rem; padding: 0.45rem 0.8rem; border-radius: 0.5rem; margin-bottom: 0.75rem; border: 1px solid #e5e7eb; }
+.journal-status .js-detail { color: inherit; font-size: 0.85rem; }
+.journal-status.js-complete { background: #dcfce7; border-color: #22c55e; color: #166534; }
+.journal-status.js-partial { background: #fef9c3; border-color: #eab308; color: #a16207; }
+.journal-status.js-empty { background: #f3f4f6; border-color: #d1d5db; color: #6b7280; }
 .month-wrap { overflow: auto; max-height: 74vh; }
 .month-table { border-collapse: collapse; font-size: 0.85rem; }
 .month-table th, .month-table td { border: 1px solid #e5e7eb; padding: 0.25rem 0.4rem; text-align: center; min-width: 2.2rem; }
@@ -147,9 +152,15 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
 
 <div class="legend">
   <span class="lg-complete">Пурра</span>
-  <span class="lg-partial">Нимра</span>
+  <span class="lg-partial">Қисман</span>
   <span class="lg-empty">Холӣ</span>
   <span class="lg-control">Назорат</span>
+</div>
+
+<div class="journal-status js-{{ journal.status }}">
+  <strong>Ҳолати ҷурнал (чоряк):</strong>
+  {% if journal.status == 'complete' %}Пурра{% elif journal.status == 'partial' %}Қисман{% else %}Холӣ{% endif %}
+  <span class="js-detail">{{ journal.done }}/{{ journal.required }} хол · Меъори пур: {{ journal.students_met }}/{{ journal.students }} хонанда · Иҷрои меъёр то имрӯз: {{ journal.fulfillment }}%</span>
 </div>
 
 <div class="month-wrap">
@@ -185,7 +196,7 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
   <div class="day-card">
     <div class="d-head">
       <span class="d-date">{{ d.date|date:'d.m' }}</span>
-      <span class="d-status status-{{ d.status }}">{% if d.status == 'complete' %}Пурра{% elif d.status == 'partial' %}Нимра{% else %}Холӣ{% endif %}</span>
+      <span class="d-status status-{{ d.status }}">{% if d.status == 'complete' %}Пурра{% elif d.status == 'partial' %}Қисман{% else %}Холӣ{% endif %}</span>
       {% if d.has_control %}<span class="d-flag">Назорат</span>{% endif %}
       <span class="d-lessons">
         {% if d.lessons %}

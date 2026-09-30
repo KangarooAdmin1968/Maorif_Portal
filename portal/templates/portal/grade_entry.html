@@ -69,6 +69,11 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
   /* Desktop: no floating 1-10 panel — type directly in the input. */
   .quick-pick { display: none !important; }
 }
+.journal-status { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-size: 0.9rem; padding: 0.45rem 0.8rem; border-radius: 0.5rem; margin-bottom: 0.75rem; border: 1px solid #e5e7eb; }
+.journal-status .js-detail { color: inherit; font-size: 0.85rem; }
+.journal-status.js-complete { background: #dcfce7; border-color: #22c55e; color: #166534; }
+.journal-status.js-partial { background: #fef9c3; border-color: #eab308; color: #a16207; }
+.journal-status.js-empty { background: #f3f4f6; border-color: #d1d5db; color: #6b7280; }
 </style>
 
 <form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
@@ -76,6 +81,12 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
 {% if selected_lesson %}<input type="hidden" name="lesson_id" value="{{ selected_lesson.id }}">{% endif %}
 <div id="offline-banner" class="offline-banner">⚠️ Алоқа бо сомона канда шуд. Маълумот дар хотираи телефон ҳифз шуд ва ба таври автоматикӣ ҳангоми пайдо шудани интернет сабт мешавад.</div>
 <div id="sync-toast" class="sync-toast">✅ Маълумоти ҳифзшуда ба таври автоматикӣ бо сомона ҳамоҳанг ва сабт карда шуд!</div>
+<div class="journal-status js-{{ journal.status }}">
+  <strong>Ҳолати ҷурнал (чоряк):</strong>
+  {% if journal.status == 'complete' %}Пурра{% elif journal.status == 'partial' %}Қисман{% else %}Холӣ{% endif %}
+  <span class="js-detail">{{ journal.done }}/{{ journal.required }} хол · Меъори пур: {{ journal.students_met }}/{{ journal.students }} хонанда · Иҷрои меъёр то имрӯз: {{ journal.fulfillment }}%</span>
+</div>
+
 <div class="tabs">
   <button type="button" class="tab-btn active" onclick="openTab('daily', this)">Холҳои ҳаррӯза</button>
   <button type="button" class="tab-btn" onclick="openTab('quarterly', this)">Ҷадвали чорякҳо</button>

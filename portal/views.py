@@ -181,6 +181,60 @@ def _norm_fulfillment(done, expected, progress):
     return min(100.0, round(done / (expected * progress) * 100, 1))
 
 
+def _journal_status(done, met, total):
+    """Quarter-level journal completion status — NOT time-aware.
+
+    ``done`` is the count of current-quarter Grade rows, ``met`` the number
+    of visible students who individually reached the full quarterly norm,
+    ``total`` the number of visible/relevant students. Unlike
+    _norm_fulfillment this never scales by elapsed time, and unlike a raw
+    total it cannot be satisfied by one over-entered student: Пурра means
+    EVERY relevant student is at norm. Reaching 'complete' early never
+    restricts further grade entry.
+    """
+    if done <= 0:
+        return 'empty'
+    if met >= total:
+        return 'complete'
+    return 'partial'
+
+
+def _journal_norm_status(class_name, subject, class_subject, students, today):
+    """Journal status payload for one School + Class + Subject context.
+
+    Counts the exact same current-quarter Grade-row pool the deployed norm
+    metric uses (raw rows dated inside today's quarter — a student may
+    legitimately hold several rows for different lessons/assessments), and
+    scopes completion to the students visible in this journal (a regular
+    teacher's own group on grouped subjects, else the class): Пурра only
+    when EVERY student has >= norm rows this quarter. One grouped aggregate
+    query — no per-student work.
+    """
+    q_start, q_end = _current_quarter_bounds(today)
+    norm = quarter_min_norm(class_name, subject, class_subject)
+    student_ids = [s.id for s in students]
+    per_student = {
+        r['student_id']: r['n']
+        for r in Grade.objects.filter(
+            student_id__in=student_ids,
+            subject=subject,
+            date__range=(q_start, q_end),
+        ).values('student_id').annotate(n=Count('id'))
+    }
+    done = sum(per_student.values())
+    met = sum(1 for sid in student_ids if per_student.get(sid, 0) >= norm)
+    required = norm * len(student_ids)
+    return {
+        'done': done,
+        'required': required,
+        'norm': norm,
+        'students': len(student_ids),
+        'students_met': met,
+        'status': _journal_status(done, met, len(student_ids)),
+        'fulfillment': _norm_fulfillment(done, required, _quarter_progress(today)),
+    }
+
+
 def grade_component_result(grade):
     """Return the student's single result for a Grade row.
 
@@ -2551,6 +2605,10 @@ def grade_entry(request, school_id, class_name, subject):
         'assessment_grade_map': assessment_grade_map,
         'date_is_control': date_is_control,
         'work_type_choices': work_type_choices(),
+        # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
+        # time-aware norm percentage — display-only, never gates grade entry.
+        'journal': _journal_norm_status(
+            class_name, subject, class_subject, students, timezone.localdate()),
     })
 
 
@@ -2785,6 +2843,10 @@ def monthly_journal(request, school_id, class_name, subject):
         'next_month': next_month,
         'month_label': month_start.strftime('%m.%Y'),
         'can_edit': can_edit,
+        # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
+        # time-aware norm percentage — distinct metrics, one aggregate query.
+        'journal': _journal_norm_status(
+            class_name, subject, class_subject, students, timezone.localdate()),
     })
 
 
@@ -5445,44 +5507,58 @@ def school_readiness_rating(request):
                              date__range=(q_start, q_end))
         .values_list('student__school_id').annotate(n=Count('id'))
     )
+    class_student_ids = defaultdict(set)
+    for r in Student.objects.filter(school_id__in=school_ids).exclude(
+            class_name__regex=NON_GRADED_RE).values(
+            'school_id', 'class_name', 'id'):
+        class_student_ids[(r['school_id'], r['class_name'])].add(r['id'])
     class_student_counts = {
-        (r['school_id'], r['class_name']): r['n']
-        for r in Student.objects.filter(school_id__in=school_ids)
-        .exclude(class_name__regex=NON_GRADED_RE)
-        .values('school_id', 'class_name').annotate(n=Count('id'))
+        key: len(ids) for key, ids in class_student_ids.items()
     }
-    pair_grade_counts = {
-        (r['student__school_id'], r['student__class_name'], r['subject']): r['n']
-        for r in Grade.objects.filter(student__school_id__in=school_ids,
-                                      date__range=(q_start, q_end))
-        .values('student__school_id', 'student__class_name', 'subject')
-        .annotate(n=Count('id'))
-    }
+    # Per-student current-quarter rows keyed by the student's own
+    # school+class+subject: one grouped query feeds both the raw pair
+    # totals and the per-student Пурра check.
+    pair_grade_counts = defaultdict(int)
+    pair_student_counts = defaultdict(dict)
+    for r in Grade.objects.filter(
+            student__school_id__in=school_ids,
+            date__range=(q_start, q_end)).values(
+            'student__school_id', 'student__class_name', 'subject',
+            'student_id').annotate(n=Count('id')):
+        key = (r['student__school_id'], r['student__class_name'], r['subject'])
+        pair_grade_counts[key] += r['n']
+        pair_student_counts[key][r['student_id']] = r['n']
     # Group attribution maps. Grade has no teacher FK, so attribution is
     # derived: Grade.lesson.group wins when set (concrete teaching event);
     # legacy lesson-less / group-less rows fall back to the student's
     # current SubjectGroupMembership — an approximation for pre-split
     # history, never fabricated.
-    group_size = defaultdict(int)
+    group_members = defaultdict(set)
     for m in SubjectGroupMembership.objects.filter(
             class_subject__school_id__in=school_ids,
             class_subject__is_active=True,
             group__is_active=True,
-    ).values('class_subject_id', 'group_id'):
-        group_size[(m['class_subject_id'], m['group_id'])] += 1
+    ).values('class_subject_id', 'group_id', 'student_id'):
+        group_members[(m['class_subject_id'], m['group_id'])].add(
+            m['student_id'])
+    group_size = {key: len(ids) for key, ids in group_members.items()}
     group_grade_counts = defaultdict(int)
+    group_student_counts = defaultdict(lambda: defaultdict(int))
     for row in Grade.objects.filter(
             student__school_id__in=school_ids,
             lesson__group__is_active=True,
             date__range=(q_start, q_end),
-    ).values('lesson__class_subject_id', 'lesson__group_id').annotate(n=Count('id')):
-        group_grade_counts[
-            (row['lesson__class_subject_id'], row['lesson__group_id'])] += row['n']
+    ).values('lesson__class_subject_id', 'lesson__group_id', 'student_id'
+             ).annotate(n=Count('id')):
+        gkey = (row['lesson__class_subject_id'], row['lesson__group_id'])
+        group_grade_counts[gkey] += row['n']
+        group_student_counts[gkey][row['student_id']] += row['n']
     for row in Grade.objects.filter(
             student__school_id__in=school_ids,
             date__range=(q_start, q_end),
     ).exclude(lesson__group__is_active=True).values(
             'subject',
+            'student_id',
             'student__subject_group_memberships__class_subject_id',
             'student__subject_group_memberships__class_subject__subject',
             'student__subject_group_memberships__group_id',
@@ -5493,10 +5569,12 @@ def school_readiness_rating(request):
         cs_subject = row['student__subject_group_memberships__class_subject__subject']
         if normalize_subject(row['subject']) != normalize_subject(cs_subject):
             continue
-        group_grade_counts[(
+        gkey = (
             row['student__subject_group_memberships__class_subject_id'],
             row['student__subject_group_memberships__group_id'],
-        )] += row['n']
+        )
+        group_grade_counts[gkey] += row['n']
+        group_student_counts[gkey][row['student_id']] += row['n']
     # Use the exact same school-GPA formula as the academic leaderboard
     # (calculate_school_rankings) so all leaderboards show identical values.
     gpa_map = {
@@ -5553,17 +5631,26 @@ def school_readiness_rating(request):
             min_grades = 0
             grades_done = 0
             norm_done = 0
+            journal = []
             for cs, group in pairs:
                 if group is not None:
                     # Group-scoped: grades only from this group's members,
                     # denominator is the group size, not the class size.
                     subj_classes[f"{cs.subject} — {group.label}"].append(cs.class_name)
-                    n_students = group_size.get((cs.id, group.id), 0)
+                    member_ids = group_members.get((cs.id, group.id), ())
+                    n_students = len(member_ids)
+                    per_student = group_student_counts.get(
+                        (cs.id, group.id), {})
                     entered = group_grade_counts.get((cs.id, group.id), 0)
                 else:
                     subj_classes[cs.subject].append(cs.class_name)
-                    n_students = class_student_counts.get((school.id, cs.class_name), 0)
-                    entered = pair_grade_counts.get((school.id, cs.class_name, cs.subject), 0)
+                    member_ids = class_student_ids.get(
+                        (school.id, cs.class_name), ())
+                    n_students = len(member_ids)
+                    per_student = pair_student_counts.get(
+                        (school.id, cs.class_name, cs.subject), {})
+                    entered = pair_grade_counts.get(
+                        (school.id, cs.class_name, cs.subject), 0)
                 hours += weekly_hours(cs.class_name, cs.subject, cs)
                 grades_done += entered
                 # Exclude un-graded subjects (norm == 0) from required minimum.
@@ -5571,6 +5658,26 @@ def school_readiness_rating(request):
                 if min_norm:
                     min_grades += min_norm * n_students
                     norm_done += entered
+                    # Journal status is per ClassSubject (per group on
+                    # grouped subjects): Пурра only when EVERY relevant
+                    # student reached the FULL-quarter norm — a raw class
+                    # total cannot hide students below the norm, and the
+                    # elapsed share is never consulted.
+                    met = sum(
+                        1 for sid in member_ids
+                        if per_student.get(sid, 0) >= min_norm
+                    )
+                    journal.append({
+                        'class_name': cs.class_name,
+                        'subject': cs.subject,
+                        'group': group.label if group is not None else None,
+                        'students_met': met,
+                        'students_total': n_students,
+                        'status': _journal_status(entered, met, n_students),
+                    })
+            journal.sort(key=lambda j: (
+                class_numeric_part(j['class_name']) or 0,
+                j['class_name'], j['subject'], j['group'] or ''))
             fulfillment = _norm_fulfillment(norm_done, min_grades, q_progress)
             teachers.append({
                 'name': profile.full_name,
@@ -5582,6 +5689,7 @@ def school_readiness_rating(request):
                 'min_grades': min_grades,
                 'grades_done': grades_done,
                 'fulfillment': fulfillment,
+                'journal': journal,
             })
         teachers.sort(key=lambda t: (-t['fulfillment'], -t['grades_done'], t['name']))
 

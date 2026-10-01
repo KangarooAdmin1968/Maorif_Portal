@@ -113,6 +113,55 @@ if DEBUG:
         if o.strip()
     ]
 
+# Server-error visibility: Django's default LOGGING sends 5xx request errors
+# only to AdminEmailHandler (mail_admins), which calls send_mail with
+# fail_silently=True. With no reachable SMTP the traceback is swallowed and
+# nothing reaches the gunicorn error log. Keep those defaults and
+# additionally write ERROR-level django.request records (message + full
+# traceback only — never POST bodies or headers) to a small rotating file.
+# Override the location with DJANGO_ERROR_LOG (e.g. to place it under
+# /var/log/gunicorn/, which deploy/gunicorn-logrotate already rotates).
+DJANGO_ERROR_LOG = os.environ.get(
+    'DJANGO_ERROR_LOG', str(BASE_DIR / 'logs' / 'django_errors.log'))
+try:
+    # RotatingFileHandler does not create missing parent directories.
+    Path(DJANGO_ERROR_LOG).parent.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass  # logging will report the problem on first write instead
+
+LOGGING = {
+    'version': 1,
+    # Merge into Django's DEFAULT_LOGGING (console handler in dev, mail_admins
+    # in prod) rather than replacing it.
+    'disable_existing_loggers': False,
+    'formatters': {
+        'django_error': {
+            'format': '%(asctime)s %(levelname)s %(name)s %(message)s',
+        },
+    },
+    'handlers': {
+        'django_error_file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': DJANGO_ERROR_LOG,
+            'maxBytes': 5 * 1024 * 1024,
+            'backupCount': 5,
+            'encoding': 'utf-8',
+            'formatter': 'django_error',
+            'delay': True,  # create the file only when an error occurs
+        },
+    },
+    'loggers': {
+        # Handler level=ERROR keeps 4xx warnings out of the file;
+        # propagate=True keeps records flowing to 'django' (console +
+        # mail_admins) exactly as before.
+        'django.request': {
+            'handlers': ['django_error_file'],
+            'propagate': True,
+        },
+    },
+}
+
 # Role constants
 ROLE_DIRECTOR = 'director'
 ROLE_PRINCIPAL = 'principal'

@@ -32,6 +32,7 @@
 .lesson-chip.active { background: #003366; color: #fff; border-color: #003366; }
 .lesson-chip.lesson-add { border-style: dashed; color: #003366; }
 .lesson-chip.lesson-del { color: #b91c1c; }
+.lesson-chip .chip-count { display: inline-block; min-width: 1.1em; margin-left: 0.35em; padding: 0 0.4em; border-radius: 999px; background: #e0e7ff; color: #003366; font-size: 0.78rem; font-weight: 600; }
 .lesson-topic { font-size: 0.85rem; color: #6b7280; font-style: italic; }
 .quick-pick { position: fixed; z-index: 1000; background: #fff; border: 1px solid #d1d5db; border-radius: 0.6rem; box-shadow: 0 8px 24px rgba(0,0,0,0.18); padding: 0.5rem; display: none; }
 .quick-pick.show { display: block; }
@@ -104,7 +105,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
     {% if lessons %}
     <button type="button" class="lesson-chip {% if not selected_lesson %}active{% endif %}" onclick="selectLesson('')">Умумӣ</button>
     {% for l in lessons %}
-    <button type="button" class="lesson-chip {% if selected_lesson and selected_lesson.id == l.id %}active{% endif %}" onclick="selectLesson('{{ l.id }}')"{% if l.topic %} title="{{ l.topic }}"{% endif %}>Дарси {{ l.lesson_number }}{% if l.group_label %} · {{ l.group_label }}{% endif %}{% if l.mode == 'control' %} · Назорат{% endif %}</button>
+    <button type="button" class="lesson-chip {% if selected_lesson and selected_lesson.id == l.id %}active{% endif %}" onclick="selectLesson('{{ l.id }}')"{% if l.topic %} title="{{ l.topic }}"{% endif %}>Дарси {{ l.lesson_number }}{% if l.group_label %} · {{ l.group_label }}{% endif %}{% if l.mode == 'control' %} · Назорат{% endif %}{% if l.grade_count %}<span class="chip-count" title="Сабтшуда: {{ l.grade_count }}">{{ l.grade_count }}</span>{% endif %}</button>
     {% endfor %}
     {% endif %}
     {% if not daily_quarter_locked %}

@@ -3,11 +3,17 @@ row/column highlighting, desktop-vs-mobile grade panel, Давомот/Тарт�
 tabs, and navigation. These assert rendered markup/CSS/JS hooks only;
 grading semantics are covered by the existing suites.
 """
-from django.urls import reverse
+import datetime
+from unittest import mock
 
-from portal.models import Lesson, SubjectGroupMembership, TeachingGroup
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
+from django.utils import timezone
+
+from portal.models import Grade, Lesson, SubjectGroupMembership, TeachingGroup
 from portal.tests.helpers import (
-    D_Q1, MATH, GoldenBase, make_teacher_profile,
+    D_Q1, MATH, PERIOD, GoldenBase, make_teacher_profile,
 )
 
 
@@ -187,6 +193,98 @@ class DailyJournalUxTests(GoldenBase):
         html = self._get()
         self.assertIn('.quarter-wrapper { max-height: 75vh; overflow: auto; }',
                       html)
+
+    def _get_daily(self, **params):
+        self.client.force_login(self.teacher_a)
+        return self.client.get(reverse('grade_entry', kwargs={
+            'school_id': self.school_a.id, 'class_name': '7-А',
+            'subject': MATH}), params)
+
+    def test_lesson_slot_grade_flagged_on_umumi_view(self):
+        # A Ҷорӣ row saved under a lesson slot (the monthly journal writes
+        # Grade.lesson whenever a Lesson exists for the day) is correctly
+        # absent from the Умумӣ grid — but its chip must flag the data.
+        lesson = Lesson.objects.create(
+            class_subject=self.cs_a, date=D_Q1, lesson_number=1)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD,
+            score=8, date=D_Q1, lesson=lesson)
+
+        resp = self._get_daily(date=D_Q1.isoformat())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['date'], D_Q1)
+        # Умумӣ keeps its lesson-less semantics — the row must not leak in.
+        self.assertNotIn(self.s1.id, resp.context['daily_grades'])
+        self.assertNotIn(self.s1.id, resp.context['daily_attendance'])
+        # ...while the Дарси 1 chip advertises the waiting row.
+        self.assertContains(resp, 'Сабтшуда: 1')
+
+        # Explicit lesson navigation still resolves the row unchanged.
+        resp = self._get_daily(date=D_Q1.isoformat(), lesson=lesson.id)
+        self.assertEqual(resp.context['daily_grades'].get(self.s1.id), 8)
+
+    def test_lesson_slot_attendance_flagged_without_leaking(self):
+        # Attendance-only lesson rows count toward the badge too, and stay
+        # lesson-scoped in Умумӣ.
+        lesson = Lesson.objects.create(
+            class_subject=self.cs_a, date=D_Q1, lesson_number=1)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD,
+            attendance='-', date=D_Q1, lesson=lesson)
+
+        resp = self._get_daily(date=D_Q1.isoformat())
+        self.assertNotIn(self.s1.id, resp.context['daily_attendance'])
+        self.assertContains(resp, 'class="chip-count"')
+        self.assertContains(resp, 'Сабтшуда: 1')
+
+    def test_no_badge_when_lesson_slot_empty(self):
+        Lesson.objects.create(
+            class_subject=self.cs_a, date=D_Q1, lesson_number=1)
+        resp = self._get_daily(date=D_Q1.isoformat())
+        self.assertNotIn('class="chip-count"', resp.content.decode())
+
+    def test_no_badge_on_selected_lesson_view(self):
+        # The aggregate is gated on the Умумӣ view — a lesson view must not
+        # pay for it, and chips render plain there.
+        lesson = Lesson.objects.create(
+            class_subject=self.cs_a, date=D_Q1, lesson_number=1)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD,
+            score=8, date=D_Q1, lesson=lesson)
+        resp = self._get_daily(date=D_Q1.isoformat(), lesson=lesson.id)
+        self.assertNotIn('class="chip-count"', resp.content.decode())
+
+    def test_umumi_badge_costs_exactly_one_query(self):
+        # Regression guard: the discoverability hint is ONE grouped
+        # aggregate, not per-lesson/per-student work.
+        lesson = Lesson.objects.create(
+            class_subject=self.cs_a, date=D_Q1, lesson_number=1)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD,
+            score=8, date=D_Q1, lesson=lesson)
+        self.client.force_login(self.teacher_a)
+        url = reverse('grade_entry', kwargs={
+            'school_id': self.school_a.id, 'class_name': '7-А',
+            'subject': MATH})
+        # Warm up once — the first request performs one-off middleware
+        # writes (DailyActivity) that would skew the comparison.
+        self.client.get(url, {'date': D_Q1.isoformat()})
+        with CaptureQueriesContext(connection) as umumi:
+            self.client.get(url, {'date': D_Q1.isoformat()})
+        with CaptureQueriesContext(connection) as lesson_view:
+            self.client.get(url, {'date': D_Q1.isoformat(),
+                                  'lesson': lesson.id})
+        self.assertEqual(len(umumi) - len(lesson_view), 1)
+
+    def test_default_date_uses_localdate_not_server_date(self):
+        # TIME_ZONE=Asia/Dushanbe: the default day must follow the project
+        # timezone, not the OS clock — otherwise late-evening opens land
+        # on the wrong date.
+        self.client.force_login(self.teacher_a)
+        fake = datetime.date(2030, 5, 4)
+        with mock.patch.object(timezone, 'localdate', return_value=fake):
+            resp = self._get_daily()
+        self.assertEqual(resp.context['date'], fake)
 
     def test_group_label_on_lesson_chip(self):
         profile = self.teacher_a.teacherprofile

@@ -2346,9 +2346,9 @@ def grade_entry(request, school_id, class_name, subject):
 
     date_str = request.GET.get('date', '')
     try:
-        selected_date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+        selected_date = datetime.date.fromisoformat(date_str) if date_str else timezone.localdate()
     except ValueError:
-        selected_date = datetime.date.today()
+        selected_date = timezone.localdate()
 
     # Lessons for this ClassSubject on the selected date. 'lesson' carries a
     # lesson id; 'ln' carries a lesson number (date navigation keeps the
@@ -2535,6 +2535,24 @@ def grade_entry(request, school_id, class_name, subject):
             ):
                 date_is_control = True
 
+    # Умумӣ only shows lesson-less rows, so Ҷорӣ rows stored under a
+    # lesson slot (e.g. saved through the monthly journal) are invisible
+    # here even though they exist. One grouped count lets each chip flag
+    # the waiting rows without merging the slots or a per-lesson query.
+    lesson_slot_counts = {}
+    if selected_lesson is None and day_lessons:
+        lesson_slot_counts = {
+            row['lesson_id']: row['n']
+            for row in Grade.objects.filter(
+                student__school=school,
+                student__class_name=class_name,
+                subject=subject,
+                period='Холҳои ҷорӣ (Онлайн)',
+                date=selected_date,
+                assessment__isnull=True,
+            ).values('lesson_id').annotate(n=Count('id'))
+        }
+
     # Lesson picker payload: each lesson carries its mode so the UI can mark
     # Ҷорӣ/Назорат per lesson without a second query.
     lessons_payload = []
@@ -2555,6 +2573,7 @@ def grade_entry(request, school_id, class_name, subject):
             'group_label': l.group.label if l.group_id else None,
             'mode': 'control' if has_control else 'current',
             'has_data': has_data,
+            'grade_count': lesson_slot_counts.get(l.id, 0),
         })
 
     # Saved per-student results for each assessment: {assessment_id: {student_id: display}}

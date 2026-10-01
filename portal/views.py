@@ -5482,12 +5482,18 @@ def school_readiness_rating(request):
     for cs_id in set(groups_by_cs) - unstaffed_grouped_ids:
         assigned_grouped[grouped_cs_school[cs_id]] += 1
 
+    zavuch_users = {
+        u.username: u
+        for u in User.objects.filter(
+            username__in=[f'zavuch_{get_school_number(s)}' for s in schools]
+        )
+    }
     data = []
     for school in schools:
         total = totals.get(school.id, 0)
         done = assigned.get(school.id, 0) + assigned_grouped.get(school.id, 0)
         pct = round(done / total * 100, 1) if total else 0.0
-        zavuch_user = User.objects.filter(username=f'zavuch_{get_school_number(school)}').first()
+        zavuch_user = zavuch_users.get(f'zavuch_{get_school_number(school)}')
         data.append({
             'school': school,
             'total': total,

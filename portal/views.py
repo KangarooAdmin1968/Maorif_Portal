@@ -5445,7 +5445,16 @@ def school_readiness_rating(request):
     if not (request.user.is_superuser or request.user.is_staff or is_zavuch):
         return redirect('dashboard')
 
-    schools = [s for s in School.objects.all() if is_academic_school(s)]
+    # Zavuchs get a school-scoped leaderboard: the binding comes from the
+    # profile FK (get_user_school), never from the zavuch_<n> username.
+    # Every downstream query is already driven by school_ids, so scoping
+    # here shrinks all district-wide work to one school server-side.
+    zavuch_scoped = is_zavuch and not (request.user.is_superuser or request.user.is_staff)
+    if zavuch_scoped:
+        user_school = get_user_school(request.user)
+        schools = [user_school] if user_school and is_academic_school(user_school) else []
+    else:
+        schools = [s for s in School.objects.all() if is_academic_school(s)]
     school_ids = [s.id for s in schools]
 
     # Active TeachingGroups per CS — drives both the tab-1 staffing check
@@ -5758,6 +5767,7 @@ def school_readiness_rating(request):
         'stats': data,
         'activity': activity,
         'min_norm_bands': MIN_GRADES_BANDS,
+        'zavuch_scope': zavuch_scoped,
     })
 
 

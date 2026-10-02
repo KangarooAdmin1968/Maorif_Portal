@@ -1,5 +1,5 @@
 {% extends 'portal/base.html' %}
-{% block title %}Рейтинги муассисаҳо{% endblock %}
+{% block title %}{% if zavuch_scope %}Рейтинг{% else %}Рейтинги муассисаҳо{% endif %}{% endblock %}
 {% block extra_head %}
 <style>
   /* Zero horizontal scrolling — everything fits the viewport width */
@@ -229,7 +229,7 @@
 </style>
 {% endblock %}
 {% block content %}
-<h1>🏆 Рейтинги муассисаҳо</h1>
+<h1>{% if zavuch_scope %}🏆 Рейтинг{% else %}🏆 Рейтинги муассисаҳо{% endif %}</h1>
 
 <div class="tab-bar">
     <button type="button" class="tab-btn active" data-tab="readiness">📚 Омодагии дарсҳо (0–100%)</button>

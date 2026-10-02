@@ -1457,24 +1457,6 @@ def dashboard(request):
 
     top_students = calculate_top_students()
 
-    # Grade 1 (non-graded) classes grouped by school for the homepage widget
-    grade1_map = {}
-    for row in Student.objects.values('school_id', 'school__name', 'class_name').distinct():
-        if class_numeric_part(row['class_name']) == 1:
-            sid = row['school_id']
-            if sid not in academic_ids:
-                continue
-            if sid not in grade1_map:
-                grade1_map[sid] = {'school_id': sid, 'school_name': row['school__name'], 'classes': set()}
-            grade1_map[sid]['classes'].add(row['class_name'])
-    grade1_schools = sorted(
-        [
-            {'school_id': sid, 'school_name': data['school_name'], 'classes': sorted(data['classes'])}
-            for sid, data in grade1_map.items()
-        ],
-        key=lambda x: x['school_name']
-    )
-
     total_schools = len(academic_ids)
     total_students = Student.objects.filter(school_id__in=academic_ids).count()
     male_students = Student.objects.filter(school_id__in=academic_ids, gender='M').count()
@@ -1499,7 +1481,6 @@ def dashboard(request):
         'class_ranking': class_ranking,
         'top_students': top_students,
         'subject_ranking': subject_ranking,
-        'grade1_schools': grade1_schools,
         'total_schools': total_schools,
         'total_students': total_students,
         'male_students': male_students,

@@ -1,0 +1,195 @@
+{% extends 'portal/base.html' %}
+{% block title %}Ҷустуҷӯ — Портали маориф{% endblock %}
+{% block extra_head %}
+<style>
+    .search-form {
+        display: grid;
+        grid-template-columns: 1fr 1fr 2fr auto;
+        gap: 0.75rem;
+        align-items: end;
+        margin-bottom: 1.25rem;
+    }
+    .search-field label {
+        display: block;
+        font-weight: 700;
+        color: #1e293b;
+        font-size: 0.95rem;
+        margin-bottom: 0.35rem;
+    }
+    .search-field select,
+    .search-field input[type="text"] {
+        width: 100%;
+        padding: 0.55rem 0.75rem;
+        border: 1px solid #94a3b8;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        color: #0f172a;
+        background: #fff;
+        box-sizing: border-box;
+    }
+    .search-field input[disabled] {
+        background: #f1f5f9;
+        color: #475569;
+    }
+    .search-submit { white-space: nowrap; }
+    .search-notice {
+        padding: 0.9rem 1rem;
+        border-radius: 8px;
+        background: #f0f9ff;
+        border: 1px solid #bae6fd;
+        color: #075985;
+        font-weight: 600;
+        margin-bottom: 1rem;
+    }
+    .search-warning {
+        background: #fef2f2;
+        border-color: #fecaca;
+        color: #b91c1c;
+    }
+    .search-count { color: #64748b; font-size: 0.95rem; margin: 0 0 0.75rem; }
+    .search-name-link { color: #0056b3; font-weight: 700; text-decoration: none; }
+    .search-name-link:hover { text-decoration: underline; }
+    @media (max-width: 768px) {
+        .search-form { grid-template-columns: 1fr; }
+        .search-submit { width: 100%; }
+    }
+</style>
+{% endblock %}
+{% block content %}
+<h1>🔍 Ҷустуҷӯи хонандагон</h1>
+
+<form method="get" action="{% url 'search' %}" class="search-form">
+    <div class="search-field">
+        <label for="search-school">Муассиса:</label>
+        {% if school_fixed %}
+            {% if selected_school %}
+                <input type="text" value="{{ selected_school.name }}" disabled>
+                <input type="hidden" name="school" value="{{ selected_school.id }}">
+            {% else %}
+                <input type="text" value="—" disabled>
+            {% endif %}
+        {% else %}
+            <select name="school" id="search-school">
+                {% if school_required %}
+                    <option value="" disabled {% if not selected_school %}selected{% endif %}>— Интихоб кунед —</option>
+                {% else %}
+                    <option value="" {% if not selected_school %}selected{% endif %}>Ҳама муассисаҳо</option>
+                {% endif %}
+                {% for s in permitted_schools %}
+                    <option value="{{ s.id }}" {% if selected_school and s.id == selected_school.id %}selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        {% endif %}
+    </div>
+    <div class="search-field">
+        <label for="search-class">Синф:</label>
+        <select name="class_name" id="search-class">
+            <option value="">Ҳамаи синфҳо</option>
+            {% for c in class_choices %}
+                <option value="{{ c }}" {% if c == class_selected %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="search-field">
+        <label for="search-q">Номи хонанда:</label>
+        <input type="text" name="q" id="search-q" value="{{ q }}" maxlength="100"
+               placeholder="Масалан: Қодиров" autocomplete="off">
+    </div>
+    <button type="submit" class="btn btn-primary search-submit">Ҷустуҷӯ</button>
+</form>
+
+{% if need_school %}
+    <div class="search-notice">
+        Лутфан, пеш аз ҷустуҷӯ муассисаро интихоб кунед.
+    </div>
+{% elif school_error %}
+    <div class="search-notice search-warning">
+        Муассисаи интихобшуда дастрас нест.
+    </div>
+{% endif %}
+
+{% if searched %}
+    {% if results %}
+        <p class="search-count">
+            Ёфт шуд: {{ results|length }}{% if results|length == result_limit %} (ҳадди ниҳоӣ — барои дақиқтар кардан матни ҷустуҷӯро пурратар нависед){% endif %}
+        </p>
+        <table class="data-table">
+            <thead>
+                <tr><th>№</th><th>Ному насаб</th><th>Синф</th><th>Муассиса</th></tr>
+            </thead>
+            <tbody>
+                {% for s in results %}
+                <tr>
+                    <td data-label="№">{{ forloop.counter }}</td>
+                    <td data-label="Ному насаб">
+                        <a href="{% url 'student_detail' s.id %}" class="search-name-link">{{ s.full_name }}</a>
+                    </td>
+                    <td data-label="Синф">
+                        <a href="{% url 'class_detail' s.school_id s.class_name %}">{{ s.class_name }}</a>
+                    </td>
+                    <td data-label="Муассиса">{{ s.school__name }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="search-notice">Ҳеҷ хонанда ёфт нашуд.</div>
+    {% endif %}
+{% elif not need_school and not school_error %}
+    <p class="search-count">Номи хонандаро нависед ва «Ҷустуҷӯ»-ро пахш кунед.</p>
+{% endif %}
+
+{% if not school_fixed %}
+<script>
+// Repopulate the class dropdown from the already-embedded parent-portal
+// data when the school changes — no extra request needed. Without JS the
+// plain GET form still works; options refresh on submit.
+(function () {
+    var dataEl = document.getElementById('parent-portal-data');
+    var schoolSel = document.getElementById('search-school');
+    var classSel = document.getElementById('search-class');
+    if (!dataEl || !schoolSel || !classSel) return;
+    var DATA = JSON.parse(dataEl.textContent);
+    var current = classSel.value;
+
+    function sortKey(c) {
+        var m = String(c).match(/\d+/);
+        return [m ? parseInt(m[0], 10) : 0, c];
+    }
+    function allClasses() {
+        var seen = {}, out = [];
+        Object.keys(DATA.classes).forEach(function (sid) {
+            DATA.classes[sid].forEach(function (c) {
+                if (!seen[c]) { seen[c] = true; out.push(c); }
+            });
+        });
+        return out;
+    }
+    function rebuild(list) {
+        var keep = classSel.value;
+        classSel.innerHTML = '';
+        var opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Ҳамаи синфҳо';
+        classSel.appendChild(opt);
+        list.forEach(function (c) {
+            var o = document.createElement('option');
+            o.value = c; o.textContent = c;
+            classSel.appendChild(o);
+        });
+        classSel.value = keep;
+        if (classSel.value !== keep) classSel.value = '';
+    }
+    schoolSel.addEventListener('change', function () {
+        var sid = schoolSel.value;
+        var list = sid ? (DATA.classes[String(sid)] || []) : allClasses();
+        list.sort(function (a, b) {
+            var ka = sortKey(a), kb = sortKey(b);
+            return ka[0] - kb[0] || (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
+        });
+        rebuild(list);
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -1520,6 +1520,255 @@ def class_rankings_ajax(request):
     return JsonResponse(data, safe=False)
 
 
+# ---------------------------------------------------------------------------
+# Student search (/search/)
+#
+# One bounded, role-aware GET view. No query runs unless a non-empty `q` is
+# submitted, and every submitted school_id is validated against the caller's
+# permitted scope. Cyrillic-insensitive matching goes through iregex because
+# SQLite's LIKE is not Unicode case-folding; phone-keyboard substitutions
+# (Qodirov -> Қодиров) are handled by expanding each typed character into a
+# small equivalence class instead of rewriting stored names.
+# ---------------------------------------------------------------------------
+
+SEARCH_RESULT_LIMIT = 30
+SEARCH_Q_MAX = 100
+
+# Symmetric equivalence groups: a typed character belonging to a group may
+# match any member of that group in stored names. Covers the six Tajik
+# letters missing from common phone keyboards (қ ғ ҳ ҷ ӯ ӣ), their Latin /
+# Russian-keyboard substitutes, and visually interchangeable Latin/Cyrillic
+# pairs. Case is handled by the case-insensitive regex itself.
+_NAME_EQUIV_GROUPS = (
+    'aа', 'bб', 'vвw', 'gгғ', 'dд', 'eеэ', 'zз',
+    'iиӣ', 'jжҷ', 'kкqқ', 'lл', 'mм', 'nн', 'oо',
+    'pп', 'rр', 'sс', 'tт', 'uуӯ', 'yуӯй', 'fф',
+    'hхҳx', 'cк', "'ъ`’",
+)
+
+# A character may sit in several groups (e.g. 'к' in 'kкqқ' and 'cк');
+# its expansion is the union of every group containing it.
+_NAME_CHAR_GROUP = {}
+for _group in _NAME_EQUIV_GROUPS:
+    for _ch in _group:
+        _NAME_CHAR_GROUP[_ch] = _NAME_CHAR_GROUP.get(_ch, '') + _group
+
+# Two Latin characters that commonly stand for a single Cyrillic letter.
+# The generated regex accepts either the digraph target(s) or the literal
+# two-character sequence, so "Ishoq" matches both "Ишоқ" and "Исҳоқ".
+_NAME_DIGRAPHS = {
+    'sh': 'ш', 'ch': 'ч', 'zh': 'жҷ', 'kh': 'хҳ', 'gh': 'ғ',
+    'yo': 'ё', 'yu': 'ю', 'ya': 'я',
+}
+
+# The Tajik apostrophe (ъ) is frequently omitted on phone keyboards, so an
+# optional apostrophe-class slot is allowed between pattern elements:
+# "Sadullo" still matches "Саъдулло".
+_NAME_OPTIONAL_CHAR_CLASS = ('['
+    + ''.join(re.escape(c) for c in "'ъ`’")
+    + ']?')
+
+
+def _char_class(chars):
+    return '[' + ''.join(re.escape(c) for c in chars) + ']'
+
+
+def _search_name_pattern(q):
+    """Compile `q` into a single bounded case-insensitive regex pattern.
+
+    Every element is either a fixed character class of equivalence-group
+    members or a re.escape'd literal, so user input can never inject regex
+    metacharacters. The result is one pattern (no exponential variant
+    explosion) evaluated as a substring match by SQLite's REGEXP/Python re.
+    """
+    ql = q.lower()
+    parts = []
+    i = 0
+    while i < len(ql):
+        pair = ql[i:i + 2]
+        if pair in _NAME_DIGRAPHS:
+            a = _NAME_CHAR_GROUP.get(ql[i], ql[i])
+            b = _NAME_CHAR_GROUP.get(ql[i + 1], ql[i + 1])
+            parts.append(
+                '(?:' + _char_class(_NAME_DIGRAPHS[pair])
+                + '|' + _char_class(a) + _char_class(b) + ')'
+            )
+            i += 2
+            continue
+        group = _NAME_CHAR_GROUP.get(ql[i])
+        parts.append(_char_class(group) if group else re.escape(ql[i]))
+        i += 1
+    return _NAME_OPTIONAL_CHAR_CLASS.join(parts)
+
+
+def _teacher_permitted_class_names(user, school):
+    """Class names a regular teacher may access at `school`.
+
+    Mirrors the class_list filter exactly — a class is permitted when the
+    teacher is reachable through at least one active ClassSubject (group
+    teachers on grouped subjects, teacher/allocated_teacher on ungrouped
+    ones) — but resolves it with two bounded queries instead of a
+    per-ClassSubject permission loop.
+    """
+    cs_rows = list(
+        ClassSubject.objects
+        .filter(school=school, is_active=True)
+        .select_related('allocated_teacher')
+    )
+    group_teachers = defaultdict(set)
+    for cs_id, teacher_user_id in (
+        TeachingGroup.objects
+        .filter(class_subject__in=cs_rows, is_active=True)
+        .values_list('class_subject_id', 'teacher__user_id')
+    ):
+        group_teachers[cs_id].add(teacher_user_id)
+
+    permitted = set()
+    for cs in cs_rows:
+        if cs.id in group_teachers:
+            if user.id in group_teachers[cs.id]:
+                permitted.add(cs.class_name)
+        elif cs.teacher_id == user.id or (
+            cs.allocated_teacher is not None
+            and cs.allocated_teacher.user_id == user.id
+        ):
+            permitted.add(cs.class_name)
+    return permitted
+
+
+def search(request):
+    """Role-aware student search.
+
+    Scope rules: anonymous visitors must choose a school explicitly;
+    superuser/staff/district director may search all academic schools;
+    zavuch, principal and regular teachers are clamped to their own school,
+    and regular teachers are further limited to classes they are assigned
+    to in "Тақсимоти дарсҳо".
+    """
+    user = request.user
+    q = (request.GET.get('q') or '').strip()[:SEARCH_Q_MAX]
+    school_raw = (request.GET.get('school') or '').strip()
+    class_raw = (request.GET.get('class_name') or '').strip()
+
+    role = get_user_role(user) if user.is_authenticated else ''
+    academic = sorted(academic_schools(), key=_school_sort_key)
+
+    privileged = user.is_authenticated and (
+        user.is_superuser
+        or user.is_staff
+        or role == settings.ROLE_DIRECTOR
+    )
+    school_fixed = user.is_authenticated and not privileged
+    if school_fixed:
+        own = get_user_school(user)
+        permitted_schools = (
+            [own] if own is not None and is_academic_school(own) else []
+        )
+    else:
+        permitted_schools = academic
+
+    # School scope: scoped users are clamped to their own school; anything
+    # they submit is ignored. Others must submit a valid permitted id.
+    school_error = False
+    if school_fixed:
+        selected_school = permitted_schools[0] if permitted_schools else None
+    elif school_raw:
+        selected_school = None
+        try:
+            sid = int(school_raw)
+        except (TypeError, ValueError):
+            sid = None
+        for s in permitted_schools:
+            if s.id == sid:
+                selected_school = s
+                break
+        school_error = selected_school is None
+    else:
+        selected_school = None
+
+    # Regular teachers only reach classes they are assigned to.
+    permitted_classes = None
+    if (
+        selected_school is not None
+        and _is_regular_teacher(user, role)
+    ):
+        permitted_classes = _teacher_permitted_class_names(user, selected_school)
+
+    # Class filter: normalized and validated; an invalid or unauthorized
+    # class simply yields no results instead of widening the scope.
+    class_filter = None
+    class_blocked = False
+    if class_raw:
+        class_filter = _validate_class_name(class_raw)
+        if class_filter is None or (
+            permitted_classes is not None
+            and class_filter not in permitted_classes
+        ):
+            class_filter = None
+            class_blocked = True
+
+    # Class dropdown options come from ClassSubject rows only — every class
+    # that has students also has ClassSubject rows (auto-seeded on Student
+    # save), so no Student query is needed to render the form.
+    if selected_school is not None:
+        cs_scope = ClassSubject.objects.filter(school=selected_school)
+    elif privileged:
+        cs_scope = ClassSubject.objects.filter(
+            school_id__in=[s.id for s in permitted_schools])
+    else:
+        cs_scope = ClassSubject.objects.none()
+    class_choices = sorted(
+        {c for c in cs_scope.values_list('class_name', flat=True).distinct()},
+        key=lambda c: (class_numeric_part(c), c),
+    )
+    if permitted_classes is not None:
+        class_choices = [c for c in class_choices if c in permitted_classes]
+
+    # Anonymous visitors may not run a district-wide name search; a specific
+    # school is mandatory. Scoped users with no school cannot search at all.
+    need_school = (
+        selected_school is None
+        and (not user.is_authenticated or school_fixed)
+    )
+
+    results = []
+    searched = False
+    if q and not (school_error or class_blocked or need_school):
+        searched = True
+        qs = Student.objects.filter(
+            full_name__iregex=_search_name_pattern(q))
+        if selected_school is not None:
+            qs = qs.filter(school_id=selected_school.id)
+        else:
+            qs = qs.filter(school_id__in=[s.id for s in permitted_schools])
+        if permitted_classes is not None:
+            qs = qs.filter(class_name__in=permitted_classes)
+        if class_filter:
+            qs = qs.filter(class_name=class_filter)
+        results = list(
+            qs.values('id', 'full_name', 'class_name',
+                      'school_id', 'school__name')
+            .order_by('school_id', 'class_name', 'full_name')
+            [:SEARCH_RESULT_LIMIT]
+        )
+
+    return render(request, 'portal/search.html', {
+        'q': q,
+        'permitted_schools': permitted_schools,
+        'school_fixed': school_fixed,
+        'school_required': not user.is_authenticated,
+        'selected_school': selected_school,
+        'class_choices': class_choices,
+        'class_selected': class_filter or '',
+        'results': results,
+        'searched': searched,
+        'school_error': school_error,
+        'class_blocked': class_blocked,
+        'need_school': need_school,
+        'result_limit': SEARCH_RESULT_LIMIT,
+    })
+
+
 def _safe_login_next(request, next_url):
     """Normalize the login `next` target for the post-login redirect.
 

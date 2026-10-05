@@ -160,6 +160,7 @@
             <div class="nav-links">
                 {% if user.is_authenticated %}
                     <a href="{% url 'dashboard' %}">Асосӣ</a>
+                    <a href="{% url 'search' %}">🔍 Ҷустуҷӯ</a>
                     {% if user.is_superuser %}
                         <a href="{% url 'school_list' %}">Муассисаҳо</a>
                     {% endif %}
@@ -193,6 +194,9 @@
                 {% else %}
                     <a href="{% url 'dashboard' %}" class="nav-home-link" style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 0.92rem; color: #ffffff; text-decoration: none; padding: 0.42rem 0.85rem; border-radius: 999px; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.3); transition: all 0.2s ease;">
                         <span>🏠</span> <span>Асосӣ</span>
+                    </a>
+                    <a href="{% url 'search' %}" class="nav-home-link" style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 0.92rem; color: #ffffff; text-decoration: none; padding: 0.42rem 0.85rem; border-radius: 999px; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.3); transition: all 0.2s ease;">
+                        <span>🔍</span> <span>Ҷустуҷӯ</span>
                     </a>
                     <button type="button" class="btn parent-portal-btn" onclick="openParentModal()" style="display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9rem; color: #ffffff; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.35); padding: 0.42rem 1rem; border-radius: 999px; cursor: pointer; transition: all 0.2s ease;">
                         <span>👨‍👩‍👧</span>

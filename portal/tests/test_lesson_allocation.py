@@ -190,6 +190,25 @@ class AllocationMarkupTests(GoldenBase):
         # displayed recommendation is accepted as explicit on save.
         self.assertIn('row.dataset.class === currentClass', content)
 
+    def test_dynamic_row_reads_tr_before_button_detach(self):
+        # Regression: the new-request JS must capture closest('tr') BEFORE
+        # replaceWith() detaches the button — a detached node's closest()
+        # returns null, so the inserted request row (and its cancel action)
+        # never appeared until a manual page reload.
+        content = self._page(self.zavuch_a)
+        self.assertIn("btn.closest('tr')", content)
+        self.assertIn('btn.replaceWith(badge)', content)
+        self.assertLess(content.index("btn.closest('tr')"),
+                        content.index('btn.replaceWith(badge)'))
+
+    def test_dynamic_cancel_form_contract_present(self):
+        # The dynamically inserted row needs the cancel URL, next URL and
+        # the AJAX request_id to render a working "Бекор кардан" form.
+        content = self._page(self.zavuch_a)
+        self.assertIn('data-cancel-url', content)
+        self.assertIn('data-next-url', content)
+        self.assertIn('data.request_id', content)
+
     def test_large_page_renders_and_sparse_post_still_saves(self):
         # ~520 ClassSubject rows: the old page posted >1000 fields and hit
         # TooManyFieldsSent. With dirty-only submission a small POST is all
@@ -302,6 +321,17 @@ class DeactivationEndpointTests(GoldenBase):
         self.assertTrue(SubjectDeactivationRequest.objects.filter(
             class_subject=self.cs_a, requested_by=self.zavuch_a,
             status='pending').exists())
+
+    def test_ajax_response_contains_request_id(self):
+        # The dynamic "Бекор кардан" form is built from this id.
+        self.client.force_login(self.zavuch_a)
+        r = self.client.post(
+            reverse('request_deactivation'), {'cs_id': self.cs_a.id},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(r.status_code, 200)
+        req = SubjectDeactivationRequest.objects.get(
+            class_subject=self.cs_a, requested_by=self.zavuch_a)
+        self.assertEqual(r.json()['request_id'], req.id)
 
     def test_superuser_direct_deactivation(self):
         self.client.force_login(self.admin)

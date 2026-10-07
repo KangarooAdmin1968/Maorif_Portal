@@ -5520,14 +5520,15 @@ def request_deactivation(request):
             return JsonResponse({'status': 'exists', 'message': 'Дархости мутаносиб аллакай вуҷуд дорад'})
         messages.warning(request, 'Дархости мутаносиб аллакай вуҷуд дорад.')
         return redirect(f'{reverse("lesson_allocation")}?class={cs.class_name}')
-    SubjectDeactivationRequest.objects.get_or_create(
+    deact_req, _created = SubjectDeactivationRequest.objects.get_or_create(
         class_subject=cs,
         requested_by=request.user,
         status='pending',
         defaults={'notes': reason},
     )
     if wants_json:
-        return JsonResponse({'status': 'ok', 'message': 'Дархост ирсол шуд'})
+        return JsonResponse({'status': 'ok', 'message': 'Дархост ирсол шуд',
+                             'request_id': deact_req.id})
     messages.success(request, f'Дархости хориҷкунии «{cs.subject}» барои {cs.class_name} ирсол шуд.')
     return redirect(f'{reverse("lesson_allocation")}?class={cs.class_name}')
 
@@ -5593,6 +5594,40 @@ def review_deactivation_request(request):
     req.reviewed_at = now
     req.save()
     return redirect('deactivation_requests')
+
+
+@login_required
+@require_POST
+def cancel_deactivation_request(request):
+    """Cancel a still-pending deactivation request (owner only).
+
+    Ownership and pending-state are enforced in one conditional UPDATE: a
+    forged request_id can never touch another user's request, an already
+    reviewed request stays untouched, and a repeated POST is a no-op. The
+    row is kept so the request history stays intact.
+    """
+    try:
+        req_id = int(request.POST.get('request_id', ''))
+    except (TypeError, ValueError):
+        req_id = None
+    req = SubjectDeactivationRequest.objects.filter(
+        pk=req_id, requested_by=request.user,
+    ).select_related('class_subject').first() if req_id is not None else None
+    if req is not None and SubjectDeactivationRequest.objects.filter(
+            pk=req.pk, status='pending').update(status='cancelled'):
+        messages.success(
+            request,
+            f'Дархости хориҷкунии «{req.class_subject.subject}» барои '
+            f'{req.class_subject.class_name} бекор карда шуд.')
+    else:
+        messages.warning(
+            request,
+            'Танҳо дархости худро дар ҳолати интизорӣ бекор кардан мумкин аст.')
+    next_url = request.POST.get('next', '')
+    if next_url not in (reverse('lesson_allocation') + '?tab=requests',
+                        reverse('dashboard')):
+        next_url = reverse('lesson_allocation')
+    return redirect(next_url)
 
 
 def _school_sort_key(school):

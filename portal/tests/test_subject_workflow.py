@@ -6,6 +6,7 @@ scoping, preview + double confirmation, availability save, reopening an
 existing configuration, the deputy removal-request flow and the admin
 approve/reject review.
 """
+from django.test import Client
 from django.urls import reverse
 
 from portal.models import (
@@ -14,7 +15,7 @@ from portal.models import (
 )
 from portal.tests.helpers import (
     CUSTOM_SUBJECT, GoldenBase, MATH, make_grade, make_quarter_grade,
-    make_deactivation_request, make_student,
+    make_deactivation_request, make_student, make_user,
 )
 from portal.utils import ensure_class_subjects, registry_subjects_for
 from portal.views import _can_manage_subjects
@@ -433,6 +434,139 @@ class RemovalRequestTests(GoldenBase):
         self.cs.refresh_from_db()
         self.assertEqual(req.status, 'rejected')
         self.assertTrue(self.cs.is_active)
+
+
+class CancellationTests(GoldenBase):
+    """Zavuch cancels their own still-pending removal request."""
+
+    CANCEL_URL = reverse('cancel_deactivation_request')
+
+    def setUp(self):
+        super().setUp()
+        _seed_registry_subject(self.school_a, '7-А', UZBEK)
+        self.cs = ClassSubject.objects.get(
+            school=self.school_a, class_name='7-А', subject=UZBEK)
+
+    def test_cancel_action_shown_for_own_pending(self):
+        make_deactivation_request(self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(ALLOC_URL)
+        self.assertContains(r, 'Бекор кардан')
+        self.assertContains(r, self.CANCEL_URL)
+
+    def test_cancel_action_shown_on_dashboard(self):
+        make_deactivation_request(self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(reverse('dashboard'))
+        self.assertContains(r, 'Бекор кардан')
+
+    def test_zavuch_cancels_own_pending(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        r = self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        self.assertEqual(r.status_code, 302)
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'cancelled')
+        # The row is kept for history; the subject stays active.
+        self.assertTrue(
+            SubjectDeactivationRequest.objects.filter(pk=req.pk).exists())
+        self.cs.refresh_from_db()
+        self.assertTrue(self.cs.is_active)
+        self.assertTrue(Subject.objects.get(name=UZBEK).is_active)
+
+    def test_cancelled_request_leaves_admin_queue(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        self.client.force_login(self.admin)
+        r = self.client.get(reverse('deactivation_requests'))
+        self.assertEqual(list(r.context['pending_requests']), [])
+        self.assertContains(r, 'Дархостҳои дар интизорӣ нестанд.')
+
+    def test_cancelled_request_visible_in_my_requests(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        r = self.client.get(ALLOC_URL)
+        self.assertContains(r, 'Бекор шуд')
+        # No live cancel form is rendered for a finished request.
+        self.assertNotContains(
+            r, f'name="request_id" value="{req.id}"')
+
+    def test_cannot_cancel_other_zavuchs_request(self):
+        zavuch_b = make_user('zavuch_2', role='teacher',
+                             school=self.school_b)
+        req = make_deactivation_request(
+            self.cs_b, zavuch_b, status='pending')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'pending')
+
+    def test_cannot_cancel_approved_request(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='approved')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'approved')
+
+    def test_cannot_cancel_rejected_request(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='rejected')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'rejected')
+
+    def test_double_cancel_is_noop(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'cancelled')
+
+    def test_cancel_requires_post(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.CANCEL_URL, {'request_id': req.id})
+        self.assertEqual(r.status_code, 405)
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'pending')
+
+    def test_cancel_csrf_enforced(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.zavuch_a)
+        r = client.post(self.CANCEL_URL, {'request_id': req.id})
+        self.assertEqual(r.status_code, 403)
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'pending')
+
+    def test_anonymous_cannot_cancel(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        r = self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        self.assertEqual(r.status_code, 302)
+        req.refresh_from_db()
+        self.assertEqual(req.status, 'pending')
+
+    def test_cancelled_request_does_not_block_new_request(self):
+        req = make_deactivation_request(
+            self.cs, self.zavuch_a, status='pending')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.CANCEL_URL, {'request_id': req.id})
+        self.client.post(reverse('request_deactivation'), {
+            'subject': UZBEK, 'classes': ['7-А']})
+        self.assertTrue(SubjectDeactivationRequest.objects.filter(
+            class_subject=self.cs, status='pending').exists())
 
 
 class LanguageAuditTests(GoldenBase):

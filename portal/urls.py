@@ -48,6 +48,7 @@ urlpatterns = [
     path('schools/allocation/request-deactivation/', views.request_deactivation, name='request_deactivation'),
     path('schools/deactivation-requests/', views.deactivation_requests, name='deactivation_requests'),
     path('schools/deactivation-requests/review/', views.review_deactivation_request, name='review_deactivation_request'),
+    path('schools/deactivation-requests/cancel/', views.cancel_deactivation_request, name='cancel_deactivation_request'),
     path('search/', views.search, name='search'),
     path('student/<str:student_id>/', views.student_detail, name='student_detail'),
     path('google3c6e6431fb434e83.html', views.google_verification, name='google_verification'),

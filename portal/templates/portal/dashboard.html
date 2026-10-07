@@ -358,7 +358,7 @@
                 <div class="table-scroll">
                     <table class="data-table">
                         <thead>
-                            <tr><th>Фан</th><th>Синф</th><th>Ҳолат</th></tr>
+                            <tr><th>Фан</th><th>Синф</th><th>Ҳолат</th><th>Амал</th></tr>
                         </thead>
                         <tbody>
                             {% for req in my_requests %}
@@ -366,7 +366,17 @@
                                 <td>{{ req.class_subject.subject }}</td>
                                 <td>{{ req.class_subject.class_name }}</td>
                                 <td>
-                                    {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b;">Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981;">Тасдиқшуда</span>{% else %}<span class="badge" style="background:#ef4444;">Радшуда</span>{% endif %}
+                                    {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b;">Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981;">Тасдиқшуда</span>{% elif req.status == 'cancelled' %}<span class="badge" style="background:#6b7280;">Бекор шуд</span>{% else %}<span class="badge" style="background:#ef4444;">Радшуда</span>{% endif %}
+                                </td>
+                                <td>
+                                    {% if req.status == 'pending' %}
+                                    <form action="{% url 'cancel_deactivation_request' %}" method="post" style="display:inline;" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед ин дархостро бекор кунед?');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="request_id" value="{{ req.id }}">
+                                        <input type="hidden" name="next" value="{% url 'dashboard' %}">
+                                        <button type="submit" class="btn btn-danger btn-sm">Бекор кардан</button>
+                                    </form>
+                                    {% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -518,7 +528,17 @@
                     <div class="mobile-card-body">
                         <div class="mobile-card-row"><span>Фан:</span> <strong>{{ req.class_subject.subject }}</strong></div>
                         <div class="mobile-card-row"><span>Синф:</span> <strong>{{ req.class_subject.class_name }}</strong></div>
-                        <div class="mobile-card-row"><span>Ҳолат:</span> <strong>{% if req.status == 'pending' %}Дар интизорӣ{% elif req.status == 'approved' %}Тасдиқшуда{% else %}Радшуда{% endif %}</strong></div>
+                        <div class="mobile-card-row"><span>Ҳолат:</span> <strong>{% if req.status == 'pending' %}Дар интизорӣ{% elif req.status == 'approved' %}Тасдиқшуда{% elif req.status == 'cancelled' %}Бекор шуд{% else %}Радшуда{% endif %}</strong></div>
+                        {% if req.status == 'pending' %}
+                        <div class="mobile-card-row">
+                            <form action="{% url 'cancel_deactivation_request' %}" method="post" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед ин дархостро бекор кунед?');">
+                                {% csrf_token %}
+                                <input type="hidden" name="request_id" value="{{ req.id }}">
+                                <input type="hidden" name="next" value="{% url 'dashboard' %}">
+                                <button type="submit" class="btn btn-danger btn-sm">Бекор кардан</button>
+                            </form>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}

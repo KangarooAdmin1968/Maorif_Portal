@@ -245,12 +245,12 @@
 </div>
 
 {% if is_zavuch %}
-<div id="pane-requests" hidden>
+<div id="pane-requests" hidden data-cancel-url="{% url 'cancel_deactivation_request' %}" data-next-url="{% url 'lesson_allocation' %}?tab=requests">
     <h2>📨 Дархостҳои ман</h2>
     <div class="table-scroll">
         <table class="data-table">
             <thead>
-                <tr><th>Фан</th><th>Синф</th><th>Ҳолат</th><th>Сана</th></tr>
+                <tr><th>Фан</th><th>Синф</th><th>Ҳолат</th><th>Сана</th><th>Амал</th></tr>
             </thead>
             <tbody>
                 {% for req in my_requests %}
@@ -258,12 +258,22 @@
                     <td>{{ req.class_subject.subject }}</td>
                     <td>{{ req.class_subject.class_name }}</td>
                     <td>
-                        {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟢 Тасдиқ шуд</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🔴 Рад шуд</span>{% endif %}
+                        {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟢 Тасдиқ шуд</span>{% elif req.status == 'cancelled' %}<span class="badge" style="background:#6b7280; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">⚪ Бекор шуд</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🔴 Рад шуд</span>{% endif %}
                     </td>
                     <td>{{ req.requested_at|date:"d.m.Y H:i" }}</td>
+                    <td>
+                        {% if req.status == 'pending' %}
+                        <form action="{% url 'cancel_deactivation_request' %}" method="post" style="display:inline;" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед ин дархостро бекор кунед?');">
+                            {% csrf_token %}
+                            <input type="hidden" name="request_id" value="{{ req.id }}">
+                            <input type="hidden" name="next" value="{% url 'lesson_allocation' %}?tab=requests">
+                            <button type="submit" class="btn btn-danger btn-sm">Бекор кардан</button>
+                        </form>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="4">Дархостҳо ёфт нашуданд.</td></tr>
+                <tr><td colspan="5">Дархостҳо ёфт нашуданд.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -531,6 +541,21 @@
                             }
                             const tr = document.createElement('tr');
                             tr.innerHTML = '<td>' + subject + '</td><td>' + className + '</td><td><span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span></td><td>' + dateStr + '</td>';
+                            const paneRequests = document.getElementById('pane-requests');
+                            const tdAction = document.createElement('td');
+                            if (paneRequests && paneRequests.dataset.cancelUrl && data.request_id) {
+                                const form = document.createElement('form');
+                                form.method = 'post';
+                                form.action = paneRequests.dataset.cancelUrl;
+                                form.style.display = 'inline';
+                                form.setAttribute('onsubmit', "return confirm('Оё шумо дар ҳақиқат мехоҳед ин дархостро бекор кунед?');");
+                                form.innerHTML = '<input type="hidden" name="csrfmiddlewaretoken" value="' + csrf + '">' +
+                                    '<input type="hidden" name="request_id" value="' + data.request_id + '">' +
+                                    '<input type="hidden" name="next" value="' + (paneRequests.dataset.nextUrl || '') + '">' +
+                                    '<button type="submit" class="btn btn-danger btn-sm">Бекор кардан</button>';
+                                tdAction.appendChild(form);
+                            }
+                            tr.appendChild(tdAction);
                             reqTbody.appendChild(tr);
                         }
                     }
@@ -559,6 +584,9 @@
 
     // Initial state: pick class from URL or first
     const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('tab') === 'requests' && document.getElementById('pane-requests')) {
+        switchTab('requests');
+    }
     const preselect = urlParams.get('class');
     if (preselect && classBtns.some(b => b.dataset.class === preselect)) {
         switchTab('classes');

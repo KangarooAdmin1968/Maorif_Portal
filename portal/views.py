@@ -4842,6 +4842,7 @@ def edit_teacher(request, school_id):
         return redirect('teacher_list', school_id=school.id)
 
     old_name = teacher.name
+    list_url = f"{reverse('teacher_list', args=[school.id])}#teacher-{teacher.id}"
     profiles = list(
         TeacherProfile.objects
         .filter(school=school, full_name=old_name)
@@ -4854,12 +4855,12 @@ def edit_teacher(request, school_id):
             request,
             'Барои ин омӯзгор чанд ҳисоби такрорӣ ёфт шуд. '
             'Ҳеҷ тағйир сабт нашуд; ба маъмури система муроҷиат кунед.')
-        return redirect('teacher_list', school_id=school.id)
+        return redirect(list_url)
     if not profiles:
         messages.warning(
             request,
             'Ҳисоби воридшавии омӯзгор ёфт нашуд. Ҳеҷ тағйир сабт нашуд.')
-        return redirect('teacher_list', school_id=school.id)
+        return redirect(list_url)
 
     teacher.name = full_name
     teacher.phone = phone
@@ -4880,7 +4881,7 @@ def edit_teacher(request, school_id):
         teacher_profile.user.save()
 
     messages.success(request, f'Омӯзгор {full_name} таҳрир шуд.')
-    return redirect('teacher_list', school_id=school.id)
+    return redirect(list_url)
 
 
 @login_required

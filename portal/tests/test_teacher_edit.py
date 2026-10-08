@@ -179,6 +179,54 @@ class BadgeFlag(TeacherEditBase):
         self.assertEqual(t.password_display, 'Teacher_1_1@2026')
 
 
+class ScrollAnchor(TeacherEditBase):
+    """After an edit POST the redirect must carry #teacher-<id> so the
+    browser lands on the edited row instead of the top of the list."""
+
+    def _list_url(self):
+        return reverse('teacher_list', args=[self.school.id])
+
+    def test_successful_edit_redirects_to_row_anchor(self):
+        r = self._edit()
+        self.assertEqual(
+            r['Location'], f'{self._list_url()}#teacher-{self.teacher.id}')
+
+    def test_zero_profile_abort_keeps_row_anchor(self):
+        self.profile.delete()
+        r = self._edit()
+        self.assertEqual(
+            r['Location'], f'{self._list_url()}#teacher-{self.teacher.id}')
+
+    def test_duplicate_abort_keeps_row_anchor(self):
+        other = User.objects.create_user(username='teacher_1_9')
+        TeacherProfile.objects.create(
+            user=other, school=self.school, full_name='Раҳимов Али')
+        r = self._edit()
+        self.assertEqual(
+            r['Location'], f'{self._list_url()}#teacher-{self.teacher.id}')
+
+    def test_teacher_not_found_redirects_plain(self):
+        self.client.force_login(self.admin)
+        r = self.client.post(
+            reverse('edit_teacher', args=[self.school.id]),
+            {'teacher_id': '999999', 'full_name': 'Номи нав',
+             'phone': '', 'subject': '', 'new_password': ''})
+        self.assertEqual(r['Location'], self._list_url())
+        self.assertNotIn('#', r['Location'])
+
+    def test_list_rows_carry_anchor_ids(self):
+        Teacher.objects.create(
+            school=self.school, name='Дӯстов Баҳром', subject='Физика')
+        self.client.force_login(self.admin)
+        r = self.client.get(self._list_url())
+        ids = {
+            f'id="teacher-{t.id}"'
+            for t in Teacher.objects.filter(school=self.school)
+        }
+        for fragment in ids:
+            self.assertContains(r, fragment)
+
+
 class GradingSafety(TeacherEditBase):
 
     def test_edit_does_not_touch_grade_data(self):

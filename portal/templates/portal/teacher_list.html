@@ -123,7 +123,7 @@ window.onclick = function(e) {
     </thead>
     <tbody>
         {% for t in teachers %}
-        <tr>
+        <tr id="teacher-{{ t.id }}">
             <td>{{ forloop.counter }}</td>
             <td>{{ t.name }}</td>
             <td>{{ t.subject }}</td>

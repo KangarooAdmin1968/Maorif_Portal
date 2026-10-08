@@ -3212,7 +3212,10 @@ def export_journal_excel(request, school_id, class_name, subject):
     return response
 
 
-def _save_journal_cell(user, item):
+_MEMO_MISS = object()
+
+
+def _save_journal_cell(user, item, ctx=None):
     """Apply one staged journal cell edit; returns (ok, message).
 
     Shared write pipeline for monthly_save and daily_save — identical
@@ -3221,27 +3224,89 @@ def _save_journal_cell(user, item):
     rule. Only the daily field whitelist (score/attendance/behavior_score/
     sticker) is writable; assessment-linked and quarterly cells keep their
     dedicated endpoints.
+
+    `ctx` is an optional per-request memo dict shared across one batch.
+    Permission, ClassSubject, group-membership, lesson-scope and
+    quarter-lock lookups depend only on (user, school, class, subject,
+    date, lesson) — fixed inputs within a single request — so each
+    distinct combination is resolved once and reused. Grade rows are
+    never cached: every item performs its own fetch-modify-write exactly
+    as before. When ctx is omitted each item gets a fresh dict, which is
+    identical to the old per-item lookups.
     """
+    ctx = {} if ctx is None else ctx
     try:
-        student = Student.objects.get(pk=item.get('student_id'))
+        skey = ('student', item.get('student_id'))
+        student = ctx.get(skey)
+        if student is None:
+            student = Student.objects.select_related('school').get(
+                pk=item.get('student_id'))
+            ctx[skey] = student
     except (Student.DoesNotExist, AttributeError, ValueError, TypeError):
         return False, 'Хонанда ёфт нашуд.'
     subject = normalize_subject(str(item.get('subject', '')))
     class_name = normalize_class_name(student.class_name)
-    if not can_edit_grade_journal(user, student.school, class_name, subject):
+    pkey = ('can_edit', student.school_id, class_name, subject)
+    allowed = ctx.get(pkey, _MEMO_MISS)
+    if allowed is _MEMO_MISS:
+        allowed = can_edit_grade_journal(
+            user, student.school, class_name, subject)
+        ctx[pkey] = allowed
+    if not allowed:
         return False, 'Дастрасӣ манъ аст.'
-    cs = _class_subject_for(student.school, class_name, subject)
-    if not _teacher_can_write_student(user, student, cs):
-        return False, 'Дастрасӣ манъ аст.'
+    ckey = ('cs', student.school_id, class_name, subject)
+    cs = ctx.get(ckey, _MEMO_MISS)
+    if cs is _MEMO_MISS:
+        cs = _class_subject_for(student.school, class_name, subject)
+        ctx[ckey] = cs
+    if cs is not None:
+        wkey = ('write_scope', cs.pk)
+        writable = ctx.get(wkey, _MEMO_MISS)
+        if writable is _MEMO_MISS:
+            # Mirrors _teacher_can_write_student: privileged roles and
+            # ungrouped CS may write anyone; a grouped CS limits a regular
+            # teacher to students of their own active group.
+            if _is_regular_teacher(user) and cs.groups.filter(
+                    is_active=True).exists():
+                writable = frozenset(
+                    SubjectGroupMembership.objects.filter(
+                        class_subject=cs,
+                        group__is_active=True,
+                        group__teacher__user=user,
+                    ).values_list('student_id', flat=True)
+                )
+            else:
+                writable = True
+            ctx[wkey] = writable
+        if writable is not True and student.pk not in writable:
+            return False, 'Дастрасӣ манъ аст.'
     try:
         date = datetime.date.fromisoformat(str(item.get('date', '')))
-        lesson = _resolve_daily_scope(
-            student, subject, date, item.get('lesson_id') or '',
-            user=user,
+        scope_key = (
+            'scope', student.school_id, class_name, subject,
+            date.isoformat(), str(item.get('lesson_id') or ''),
         )
-        if is_quarter_locked(
-            student.school, class_name, subject, get_date_quarter(date)
-        ):
+        outcome = ctx.get(scope_key, _MEMO_MISS)
+        if outcome is _MEMO_MISS:
+            try:
+                outcome = (True, _resolve_daily_scope(
+                    student, subject, date, item.get('lesson_id') or '',
+                    user=user,
+                ))
+            except ValueError as e:
+                outcome = (False, str(e))
+            ctx[scope_key] = outcome
+        if not outcome[0]:
+            raise ValueError(outcome[1])
+        lesson = outcome[1]
+        qkey = ('qlock', student.school_id, class_name, subject,
+                get_date_quarter(date))
+        locked = ctx.get(qkey, _MEMO_MISS)
+        if locked is _MEMO_MISS:
+            locked = is_quarter_locked(
+                student.school, class_name, subject, get_date_quarter(date))
+            ctx[qkey] = locked
+        if locked:
             raise ValueError('Ин чоряк баста шудааст.')
         grade, _ = get_or_create_grade(
             student=student,
@@ -3328,6 +3393,11 @@ def daily_save(request):
 
     results = []
     saved = 0
+    # Per-batch memo: invariant lookups (permission, ClassSubject, scope,
+    # lock) are resolved once per distinct key inside this transaction
+    # instead of once per item. Request-scoped only — nothing crosses
+    # requests, and Grade writes are never cached.
+    ctx = {}
     try:
         with transaction.atomic():
             for item in payload:
@@ -3337,7 +3407,7 @@ def daily_save(request):
                         'message': 'Формати нодуруст.',
                     })
                     continue
-                ok, message = _save_journal_cell(request.user, item)
+                ok, message = _save_journal_cell(request.user, item, ctx)
                 if ok:
                     saved += 1
                     results.append({'key': item.get('key'), 'ok': True})

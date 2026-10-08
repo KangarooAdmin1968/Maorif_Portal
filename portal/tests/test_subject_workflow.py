@@ -6,7 +6,9 @@ scoping, preview + double confirmation, availability save, reopening an
 existing configuration, the deputy removal-request flow and the admin
 approve/reject review.
 """
+from django.db import connection
 from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal.models import (
@@ -695,3 +697,38 @@ class LanguageAuditTests(GoldenBase):
         for s in ('Пешнамоиш', 'Фан:', 'Муассиса:', 'Синфҳо:',
                   '↩ Баргаштан', '✅ Тасдиқ кардан'):
             self.assertContains(r, s)
+
+
+class EnsureClassSubjectsQueryTests(GoldenBase):
+    """Perf regression: approved-deactivation preservation is one lookup
+    per class, not one .exists() per subject."""
+
+    def test_approved_deactivation_resolved_in_one_query(self):
+        # Warm the class so the get_or_create loop performs no INSERTs —
+        # what remains must include exactly ONE request-table query.
+        # ('Алгебра' is a grade-7 TJC_SUBJECTS entry, so its ClassSubject
+        # row reaches the deactivation check inside the curriculum loop.)
+        ensure_class_subjects(self.school_a, '7-А')
+        cs = ClassSubject.objects.get(
+            school=self.school_a, class_name='7-А', subject='АЛГЕБРА')
+        cs.teacher = self.teacher_a
+        cs.save()
+        make_deactivation_request(cs, self.zavuch_a)
+        with CaptureQueriesContext(connection) as ctx:
+            ensure_class_subjects(self.school_a, '7-А')
+        n = sum(1 for q in ctx
+                if 'subjectdeactivationrequest' in q['sql'].lower())
+        self.assertEqual(n, 1)
+        # Semantics preserved: the approved row still wins — the CS stays
+        # inactive with teachers cleared.
+        cs.refresh_from_db()
+        self.assertFalse(cs.is_active)
+        self.assertIsNone(cs.teacher_id)
+
+    def test_no_approved_request_still_single_lookup(self):
+        ensure_class_subjects(self.school_a, '7-А')
+        with CaptureQueriesContext(connection) as ctx:
+            ensure_class_subjects(self.school_a, '7-А')
+        n = sum(1 for q in ctx
+                if 'subjectdeactivationrequest' in q['sql'].lower())
+        self.assertEqual(n, 1)

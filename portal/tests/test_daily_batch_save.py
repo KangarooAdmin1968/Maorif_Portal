@@ -11,13 +11,15 @@ endpoints and are never sent here.
 import json
 from unittest import mock
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal import views
-from portal.models import Grade
+from portal.models import Grade, SubjectGroupMembership, TeachingGroup
 from portal.tests.helpers import (
     D_Q1, D_Q1_B, MATH, TAJIK, GoldenBase, lock_quarter, make_grade,
-    make_student,
+    make_student, make_teacher_profile,
 )
 from portal.tests.test_phase4_lessons import make_control, make_lesson
 
@@ -310,11 +312,11 @@ class DailyBatchSaveTests(GoldenBase):
         orig = views._save_journal_cell
         calls = [0]
 
-        def flaky(user, item):
+        def flaky(user, item, ctx=None):
             calls[0] += 1
             if calls[0] == 2:
                 raise RuntimeError('boom')
-            return orig(user, item)
+            return orig(user, item, ctx)
 
         with mock.patch.object(
             views, '_save_journal_cell', side_effect=flaky
@@ -461,3 +463,129 @@ class DailyBatchWiringTests(GoldenBase):
         self.assertIn('this.dataset.assessmentId', html[fn:body])
         self.assertIn('moveFocus(this, e.shiftKey ? -1 : 1)',
                       html[fn:body])
+
+
+# ---------------------------------------------------------------------------
+# Per-batch memoization — invariant lookups are resolved once per request.
+# These tests lock the boundary: faster, never different.
+# ---------------------------------------------------------------------------
+
+class DailyBatchMemoizationTests(GoldenBase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.teacher_a)
+        # Warm the request pipeline once: the first authenticated POST of
+        # the day performs one-off session/DailyActivity writes that would
+        # skew a query-count comparison.
+        self.client.post(DAILY_SAVE_URL, {'payload': '[]'})
+
+    def _post(self, items):
+        return self.client.post(
+            DAILY_SAVE_URL, {'payload': json.dumps(items)}
+        )
+
+    def _item(self, student, field='score', value='8', subject=MATH,
+              date=D, lesson=None):
+        item = {
+            'key': f'{field}_{student.id}',
+            'student_id': student.id,
+            'subject': subject,
+            'date': date.isoformat(),
+            'lesson_id': str(lesson) if lesson else '',
+        }
+        item[field] = value
+        return item
+
+    def test_invariant_lookups_do_not_scale_with_items(self):
+        # Six cells of one column share (school, class, subject, date):
+        # permission, ClassSubject, scope and lock checks must be resolved
+        # once, while per-item work (student fetch, grade read/write) keeps
+        # running for every item.
+        students = [self.s1, self.s2] + [
+            make_student(self.school_a, '7-А', f'Хонандаи {i}')
+            for i in range(4)
+        ]
+        with CaptureQueriesContext(connection) as one:
+            resp = self._post([self._item(students[0])])
+        self.assertTrue(resp.json()['success'])
+        with CaptureQueriesContext(connection) as many:
+            resp = self._post([self._item(s) for s in students])
+        data = resp.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['saved'], len(students))
+        # Sub-linear total: one-item request does ~the same per-cell work.
+        self.assertLess(len(many), len(one) * len(students) // 2)
+        hits = lambda table: sum(
+            1 for q in many if table in q['sql'].lower())
+        # Each invariant lookup runs once per batch, not once per item —
+        # permission CS filter + CS lookup, and the lesson-less Assessment
+        # scope check JOINs classsubject (all resolved once):
+        self.assertLessEqual(hits('portal_classsubject'), 3)
+        self.assertLessEqual(hits('portal_quarterlock'), 1)
+        self.assertLessEqual(hits('portal_assessment'), 1)
+        # Per-item work still happens per item: 6 student fetches.
+        self.assertGreaterEqual(
+            hits('portal_student'), len(students))
+
+    def test_memoization_does_not_leak_permission_across_subjects(self):
+        # An allowed item must not make a denied subject's lookup succeed:
+        # the memo is keyed per (school, class, subject).
+        resp = self._post([
+            self._item(self.s1, subject=MATH),
+            self._item(self.s1, subject=TAJIK),   # teacher_a not allocated
+            self._item(self.s2, subject=MATH),
+        ])
+        data = resp.json()
+        self.assertEqual(data['saved'], 2)
+        denied = next(r for r in data['results'] if not r['ok'])
+        self.assertIn('Дастрасӣ', denied['message'])
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, subject=TAJIK).exists())
+
+    def test_memoization_enforces_group_membership_per_student(self):
+        # Grouped CS: teacher's own group contains only s1 — the per-CS
+        # writable set must still reject s2 inside the same batch.
+        profile = make_teacher_profile(self.teacher_a, self.school_a)
+        group = TeachingGroup.objects.create(
+            class_subject=self.cs_a, label='Гурӯҳи 1', teacher=profile)
+        SubjectGroupMembership.objects.create(
+            class_subject=self.cs_a, group=group, student=self.s1)
+        resp = self._post([
+            self._item(self.s1, 'score', '8'),
+            self._item(self.s2, 'score', '9'),
+        ])
+        data = resp.json()
+        self.assertEqual(data['saved'], 1)
+        self.assertTrue(
+            Grade.objects.filter(student=self.s1, date=D).exists())
+        self.assertFalse(
+            Grade.objects.filter(student=self.s2, date=D).exists())
+
+    def test_scope_error_memoized_with_identical_message(self):
+        # Same forged lesson for two students: one resolved (rejected)
+        # outcome, identical per-item message — no cross-item leakage.
+        lesson = make_lesson(self.cs_a, D_Q1_B, 1)  # wrong date for D
+        resp = self._post([
+            self._item(self.s1, lesson=lesson.id),
+            self._item(self.s2, lesson=lesson.id),
+        ])
+        data = resp.json()
+        self.assertEqual(data['saved'], 0)
+        self.assertFalse(data['results'][0]['ok'])
+        self.assertFalse(data['results'][1]['ok'])
+        self.assertEqual(
+            data['results'][0]['message'], data['results'][1]['message'])
+
+    def test_monthly_save_unchanged_uses_fresh_per_item_context(self):
+        # monthly_save intentionally does not share a memo across items.
+        from portal.tests.helpers import make_grade as _mk  # noqa
+        resp = self.client.post(
+            reverse('monthly_save'),
+            {'payload': json.dumps([
+                {'key': 'a', 'student_id': self.s1.id, 'subject': MATH,
+                 'date': D.isoformat(), 'lesson_id': '', 'score': '8'},
+            ])},
+        )
+        self.assertTrue(resp.json()['success'])
+        self.assertEqual(
+            Grade.objects.get(student=self.s1, date=D).score, 8)

@@ -236,6 +236,16 @@ def ensure_class_subjects(school, class_name):
         | set(preserved_subjects_for(school, class_name))
         | registry
     )
+    # One lookup for the whole class: every ClassSubject of this
+    # school/class that carries an approved deactivation request.
+    # (Replaces a per-subject .exists() in each loop below.)
+    approved_deactivated = set(
+        SubjectDeactivationRequest.objects.filter(
+            class_subject__school=school,
+            class_subject__class_name=class_name,
+            status='approved',
+        ).values_list('class_subject_id', flat=True)
+    )
     created = 0
     for subj in subjects:
         subj = normalize_subject(subj)
@@ -252,7 +262,7 @@ def ensure_class_subjects(school, class_name):
                 obj.is_default = True
                 obj.save()
         # Preserve any approved deactivation: do not reactivate and clear assigned teacher.
-        if obj.is_active and SubjectDeactivationRequest.objects.filter(class_subject=obj, status='approved').exists():
+        if obj.is_active and obj.pk in approved_deactivated:
             obj.is_active = False
             obj.teacher = None
             obj.allocated_teacher = None
@@ -274,7 +284,7 @@ def ensure_class_subjects(school, class_name):
         elif not obj.is_active:
             obj.is_active = True
             obj.save()
-        if obj.is_active and SubjectDeactivationRequest.objects.filter(class_subject=obj, status='approved').exists():
+        if obj.is_active and obj.pk in approved_deactivated:
             obj.is_active = False
             obj.teacher = None
             obj.allocated_teacher = None

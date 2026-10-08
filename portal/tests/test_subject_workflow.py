@@ -436,6 +436,105 @@ class RemovalRequestTests(GoldenBase):
         self.assertTrue(self.cs.is_active)
 
 
+class AdminQueueOrderAndAnchorTests(GoldenBase):
+    """Admin queue is grouped by school; review redirects keep scroll position."""
+
+    REVIEW_URL = reverse('review_deactivation_request')
+    LIST_URL = reverse('deactivation_requests')
+
+    def setUp(self):
+        super().setUp()
+        _seed_registry_subject(self.school_a, '7-А', UZBEK)
+        _seed_registry_subject(self.school_a, '8-А', UZBEK)
+        self.cs_a1 = ClassSubject.objects.get(
+            school=self.school_a, class_name='7-А', subject=UZBEK)
+        self.cs_a2 = ClassSubject.objects.get(
+            school=self.school_a, class_name='8-А', subject=UZBEK)
+        self.client.force_login(self.admin)
+
+    def _pending_pks(self):
+        r = self.client.get(self.LIST_URL)
+        return [q.pk for q in r.context['pending_requests']]
+
+    def test_pending_requests_grouped_by_school(self):
+        # Interleaved creation order must not interleave display order.
+        req_a_old = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        req_b = make_deactivation_request(
+            self.cs_b, self.teacher_b, status='pending')
+        req_a_new = make_deactivation_request(
+            self.cs_a2, self.zavuch_a, status='pending')
+        self.assertEqual(self._pending_pks(),
+                         [req_a_new.pk, req_a_old.pk, req_b.pk])
+
+    def test_newest_first_within_school(self):
+        req_old = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        req_new = make_deactivation_request(
+            self.cs_a2, self.zavuch_a, status='pending')
+        self.assertEqual(self._pending_pks(), [req_new.pk, req_old.pk])
+
+    def test_pk_tiebreaks_equal_requested_at(self):
+        req1 = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        req2 = make_deactivation_request(
+            self.cs_a2, self.zavuch_a, status='pending')
+        SubjectDeactivationRequest.objects.filter(pk=req2.pk).update(
+            requested_at=req1.requested_at)
+        self.assertEqual(self._pending_pks(), [req2.pk, req1.pk])
+
+    def test_row_has_stable_request_id(self):
+        req = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        r = self.client.get(self.LIST_URL)
+        self.assertContains(r, f'id="request-{req.pk}"')
+
+    def test_approve_redirect_anchors_to_next_surviving_row(self):
+        req = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        nxt = make_deactivation_request(
+            self.cs_b, self.teacher_b, status='pending')
+        r = self.client.post(self.REVIEW_URL, {
+            'request_id': req.pk, 'action': 'approve'})
+        self.assertEqual(r['Location'], f'{self.LIST_URL}#request-{nxt.pk}')
+
+    def test_reject_redirect_anchors_to_next_surviving_row(self):
+        req = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        nxt = make_deactivation_request(
+            self.cs_b, self.teacher_b, status='pending')
+        r = self.client.post(self.REVIEW_URL, {
+            'request_id': req.pk, 'action': 'reject'})
+        self.assertEqual(r['Location'], f'{self.LIST_URL}#request-{nxt.pk}')
+
+    def test_reviewing_last_row_anchors_to_previous_row(self):
+        prev = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        last = make_deactivation_request(
+            self.cs_b, self.teacher_b, status='pending')
+        r = self.client.post(self.REVIEW_URL, {
+            'request_id': last.pk, 'action': 'reject'})
+        self.assertEqual(r['Location'], f'{self.LIST_URL}#request-{prev.pk}')
+
+    def test_no_fragment_when_queue_empties(self):
+        req = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        r = self.client.post(self.REVIEW_URL, {
+            'request_id': req.pk, 'action': 'approve'})
+        self.assertEqual(r['Location'], self.LIST_URL)
+
+    def test_approve_duplicate_requests_anchor_skips_removed_rows(self):
+        dup1 = make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        make_deactivation_request(
+            self.cs_a1, self.zavuch_a, status='pending')
+        nxt = make_deactivation_request(
+            self.cs_b, self.teacher_b, status='pending')
+        r = self.client.post(self.REVIEW_URL, {
+            'request_id': dup1.pk, 'action': 'approve'})
+        self.assertEqual(r['Location'], f'{self.LIST_URL}#request-{nxt.pk}')
+
+
 class CancellationTests(GoldenBase):
     """Zavuch cancels their own still-pending removal request."""
 

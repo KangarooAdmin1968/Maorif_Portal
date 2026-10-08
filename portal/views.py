@@ -5633,7 +5633,8 @@ def request_deactivation(request):
 def deactivation_requests(request):
     pending = SubjectDeactivationRequest.objects.filter(
         status='pending'
-    ).select_related('class_subject', 'class_subject__school', 'requested_by').order_by('-requested_at')
+    ).select_related('class_subject', 'class_subject__school', 'requested_by').order_by(
+        'class_subject__school_id', '-requested_at', '-pk')
     return render(request, 'portal/deactivation_requests.html', {
         'pending_requests': pending,
     })
@@ -5689,7 +5690,24 @@ def review_deactivation_request(request):
     req.reviewed_by = request.user
     req.reviewed_at = now
     req.save()
-    return redirect('deactivation_requests')
+    # The reviewed row leaves the pending list; anchor to the request that
+    # takes its position (next in display order, else the last remaining).
+    pending_qs = SubjectDeactivationRequest.objects.filter(
+        status='pending'
+    ).order_by('class_subject__school_id', '-requested_at', '-pk')
+    anchor_pk = pending_qs.filter(
+        Q(class_subject__school_id__gt=cs.school_id)
+        | Q(class_subject__school_id=cs.school_id,
+            requested_at__lt=req.requested_at)
+        | Q(class_subject__school_id=cs.school_id,
+            requested_at=req.requested_at, pk__lt=req.pk)
+    ).values_list('pk', flat=True).first()
+    if anchor_pk is None:
+        anchor_pk = pending_qs.values_list('pk', flat=True).last()
+    target = reverse('deactivation_requests')
+    if anchor_pk is not None:
+        target += f'#request-{anchor_pk}'
+    return redirect(target)
 
 
 @login_required

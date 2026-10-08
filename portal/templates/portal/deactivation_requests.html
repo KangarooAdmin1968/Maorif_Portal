@@ -27,7 +27,7 @@
         </thead>
         <tbody>
             {% for req in pending_requests %}
-            <tr>
+            <tr id="request-{{ req.id }}">
                 <td>{{ req.class_subject.school.name }}</td>
                 <td>{{ req.class_subject.class_name }}</td>
                 <td>{{ req.class_subject.subject }}</td>

@@ -978,6 +978,21 @@ function onGradeKeydown(e) {
   e.preventDefault();
   moveFocus(this, e.shiftKey ? -1 : 1);
 }
+// Score-column-only mover: Enter walks the "Хол" column vertically
+// (next/previous student), not horizontally across the row.
+function moveFocusVertical(input, direction) {
+  const inputs = Array.from(document.querySelectorAll('.daily-input')).filter(el => !el.disabled);
+  const idx = inputs.indexOf(input);
+  const next = inputs[idx + direction];
+  if (next) next.focus();
+}
+function onScoreKeydown(e) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  // Assessment-linked cells (ascore_*) keep the pre-existing flat mover.
+  if (this.dataset.assessmentId) { moveFocus(this, e.shiftKey ? -1 : 1); return; }
+  moveFocusVertical(this, e.shiftKey ? -1 : 1);
+}
 document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
   el.addEventListener('focus', () => {
     if (el.tagName === 'INPUT' && el.value && Number.isInteger(Number(el.value))) {
@@ -993,7 +1008,10 @@ document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, 
     if (tr) tr.classList.remove('drow-active');
   });
 });
-document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
+document.querySelectorAll('.daily-input').forEach(el => {
+  el.addEventListener('keydown', onScoreKeydown);
+});
+document.querySelectorAll('.daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
   el.addEventListener('keydown', onGradeKeydown);
 });
 document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => {

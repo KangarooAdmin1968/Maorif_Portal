@@ -410,3 +410,54 @@ class DailyBatchWiringTests(GoldenBase):
             'if (!navigator.onLine) showOfflineBanner();', branch
         )
         self.assertLess(pending, offline)
+
+    # -- keyboard navigation wiring -------------------------------------------
+
+    def test_score_enter_uses_vertical_mover(self):
+        # Enter on a "Хол" cell moves down the score column, not across
+        # the row: .daily-input is bound to a column-scoped mover.
+        html = self.client.get(self.url).content.decode()
+        self.assertIn('function onScoreKeydown', html)
+        self.assertIn('function moveFocusVertical', html)
+        self.assertIn("querySelectorAll('.daily-input')", html)
+        self.assertIn("'keydown', onScoreKeydown", html)
+
+    def test_shift_enter_direction_and_prevent_default(self):
+        # Shift+Enter steps up (-1) vs Enter down (+1), and Enter still
+        # suppresses the implicit grade-form submission.
+        html = self.client.get(self.url).content.decode()
+        fn = html.index('function onScoreKeydown')
+        body = html.index('moveFocusVertical(this', fn)
+        self.assertIn('e.preventDefault()', html[fn:body])
+        self.assertIn('e.shiftKey ? -1 : 1', html[fn:body])
+
+    def test_arrows_and_tab_not_intercepted(self):
+        # ArrowUp/ArrowDown keep their native number-input stepping;
+        # Tab is never intercepted anywhere in this page.
+        html = self.client.get(self.url).content.decode()
+        script = html[html.index('<script>'):html.rindex('</script>')]
+        self.assertNotIn('ArrowUp', script)
+        self.assertNotIn('ArrowDown', script)
+        self.assertNotIn("'Tab'", script)
+        self.assertNotIn('"Tab"', script)
+
+    def test_other_fields_keep_horizontal_enter(self):
+        # Attendance/behavior/quarterly keep the existing flat mover.
+        html = self.client.get(self.url).content.decode()
+        self.assertIn('function onGradeKeydown', html)
+        self.assertIn('function moveFocus(', html)
+        self.assertIn(
+            "querySelectorAll('.daily-att, .daily-behavior, "
+            ".q-input, .att-input')",
+            html,
+        )
+
+    def test_assessment_cells_keep_flat_mover(self):
+        # ascore_* cells reuse .daily-input; the score handler must fall
+        # back to moveFocus for them.
+        html = self.client.get(self.url).content.decode()
+        fn = html.index('function onScoreKeydown')
+        body = html.index('moveFocusVertical(this', fn)
+        self.assertIn('this.dataset.assessmentId', html[fn:body])
+        self.assertIn('moveFocus(this, e.shiftKey ? -1 : 1)',
+                      html[fn:body])

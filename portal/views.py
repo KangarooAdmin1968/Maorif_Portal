@@ -4721,7 +4721,9 @@ def teacher_list(request, school_id=None):
         tp = TeacherProfile.objects.filter(school=school, full_name=teacher.name).select_related('user').first()
         if tp and tp.user:
             teacher.username = tp.user.username
-            teacher.is_password_private = tp.user.last_login is not None
+            teacher.is_password_private = (
+                getattr(tp, 'custom_password_set', False)
+                or tp.user.last_login is not None)
             if teacher.is_password_private:
                 teacher.password_display = 'Рамзи шахсӣ 🔒'
             else:
@@ -4840,22 +4842,42 @@ def edit_teacher(request, school_id):
         return redirect('teacher_list', school_id=school.id)
 
     old_name = teacher.name
+    profiles = list(
+        TeacherProfile.objects
+        .filter(school=school, full_name=old_name)
+        .select_related('user'))
+
+    # Ambiguous or missing account identity: abort the entire edit so a
+    # partial save can never leave Teacher/profile/user out of sync.
+    if len(profiles) > 1:
+        messages.warning(
+            request,
+            'Барои ин омӯзгор чанд ҳисоби такрорӣ ёфт шуд. '
+            'Ҳеҷ тағйир сабт нашуд; ба маъмури система муроҷиат кунед.')
+        return redirect('teacher_list', school_id=school.id)
+    if not profiles:
+        messages.warning(
+            request,
+            'Ҳисоби воридшавии омӯзгор ёфт нашуд. Ҳеҷ тағйир сабт нашуд.')
+        return redirect('teacher_list', school_id=school.id)
+
     teacher.name = full_name
     teacher.phone = phone
     teacher.subject = subject
     teacher.save()
 
-    teacher_profile = TeacherProfile.objects.filter(school=school, full_name=old_name).first()
-    if teacher_profile:
-        teacher_profile.full_name = full_name
-        teacher_profile.phone = phone
-        teacher_profile.specialty = subject
-        teacher_profile.save()
-        if teacher_profile.user:
-            teacher_profile.user.first_name = full_name
-            if new_password:
-                teacher_profile.user.set_password(new_password)
-            teacher_profile.user.save()
+    teacher_profile = profiles[0]
+    teacher_profile.full_name = full_name
+    teacher_profile.phone = phone
+    teacher_profile.specialty = subject
+    if new_password:
+        teacher_profile.custom_password_set = True
+    teacher_profile.save()
+    if teacher_profile.user:
+        teacher_profile.user.first_name = full_name
+        if new_password:
+            teacher_profile.user.set_password(new_password)
+        teacher_profile.user.save()
 
     messages.success(request, f'Омӯзгор {full_name} таҳрир шуд.')
     return redirect('teacher_list', school_id=school.id)

@@ -567,6 +567,7 @@ class TeacherProfile(models.Model):
     phone = models.CharField('Телефон', max_length=50, blank=True, null=True)
     education = models.CharField('Маълумот', max_length=255, blank=True, null=True)
     specialty = models.CharField('Ихтисос', max_length=255, blank=True, null=True)
+    custom_password_set = models.BooleanField('Рамзи шахсӣ таъин шуд', default=False)
 
     class Meta:
         verbose_name = 'Профили омӯзгор'

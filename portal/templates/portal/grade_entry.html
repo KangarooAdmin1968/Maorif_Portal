@@ -75,6 +75,16 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
 .journal-status.js-complete { background: #dcfce7; border-color: #22c55e; color: #166534; }
 .journal-status.js-partial { background: #fef9c3; border-color: #eab308; color: #a16207; }
 .journal-status.js-empty { background: #f3f4f6; border-color: #d1d5db; color: #6b7280; }
+/* --- Batched daily save: pending-state bar + dirty/rejected markers ------
+   Same visual pattern as the monthly journal save-bar. */
+.save-bar { display: none; position: sticky; bottom: 0.5rem; margin: 0.75rem 0; padding: 0.6rem 1rem; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 0.5rem; align-items: center; gap: 0.75rem; z-index: 50; }
+.save-bar.show { display: flex; flex-wrap: wrap; }
+.save-bar .count { font-weight: 600; color: #92400e; }
+.field-pending { border-color: #f59e0b !important; background: #fffbeb !important; }
+.field-error { border-color: #dc2626 !important; background: #fee2e2 !important; }
+.leave-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1100; display: none; align-items: center; justify-content: center; }
+.leave-modal.show { display: flex; }
+.leave-box { background: #fff; border-radius: 0.75rem; padding: 1.25rem; max-width: 22rem; width: 90%; display: flex; flex-direction: column; gap: 0.6rem; }
 </style>
 
 <form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
@@ -201,6 +211,10 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
     </tbody>
   </table>
   </div>
+  <div id="save-bar" class="save-bar">
+    <span class="count" id="save-count"></span>
+    <button type="button" class="btn btn-primary" onclick="savePendingNow()">Сабт кардан</button>
+  </div>
 </div>
 
 <div id="quarterly" class="tab-content">
@@ -289,6 +303,17 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
 </div>
 </form>
 
+<div id="save-toast" class="sync-toast" style="display:none"></div>
+
+<div id="leave-modal" class="leave-modal">
+  <div class="leave-box">
+    <p><strong>Шумо баҳоҳои сабтнашуда доред. Мехоҳед онҳоро сабт кунед?</strong></p>
+    <button type="button" class="btn btn-primary" id="lv-save">Сабт ва гузаштан</button>
+    <button type="button" class="btn btn-secondary" id="lv-stay">Дар саҳифа мондан</button>
+    <button type="button" class="btn btn-secondary" id="lv-leave">Бе сабт баромадан</button>
+  </div>
+</div>
+
 {{ control_assessments|json_script:"assessments-data" }}
 {{ assessment_grade_map|json_script:"assessment-grades-data" }}
 
@@ -307,6 +332,7 @@ function getCsrfToken() {
 }
 const csrfToken = getCsrfToken();
 const saveUrl = "{% url 'save_grade_ajax' %}";
+const dailySaveBatchUrl = "{% url 'daily_save' %}";
 const assessmentSaveUrl = "{% url 'assessment_save' %}";
 const assessmentDeleteUrl = "{% url 'assessment_delete' %}";
 const lessonSaveUrl = "{% url 'lesson_save' %}";
@@ -314,6 +340,10 @@ const lessonDeleteUrl = "{% url 'lesson_delete' %}";
 const classSubjectId = "{{ class_subject_id|default:'' }}";
 const selectedLessonId = "{{ selected_lesson.id|default:'' }}";
 const selectedLessonNumber = "{{ selected_lesson.lesson_number|default:'' }}";
+// The journal's rendered date — immutable. The #daily-date picker is only a
+// navigation control: if a date change is canceled in the leave-modal the
+// input is restored to this value, so saves/queue keys can never desync.
+const pageDate = "{{ date|date:'Y-m-d' }}";
 const dateIsControl = {{ date_is_control|yesno:"true,false" }};
 const schoolId = "{{ school.id }}";
 const className = "{{ class_name|escapejs }}";
@@ -327,7 +357,7 @@ try {
 function getStorageKey() {
     // Lesson-aware key: lesson 1 and lesson 2 drafts/pending queues are
     // fully independent; the legacy key (no _l suffix) is untouched.
-    let k = `maorif_grade_${schoolId}_${className}_${subjectName}_${document.getElementById('daily-date').value}`;
+    let k = `maorif_grade_${schoolId}_${className}_${subjectName}_${pageDate}`;
     if (selectedLessonId) k += `_l${selectedLessonId}`;
     return k;
 }
@@ -335,18 +365,16 @@ function navToDate(value) {
     if (!value) return;
     let url = '?date=' + value;
     if (selectedLessonNumber) url += '&ln=' + selectedLessonNumber;
-    window.location.href = url;
+    requestNav(url);
 }
 function navDate(offset) {
-    const el = document.getElementById('daily-date');
-    const d = new Date(el.value + 'T00:00:00');
+    const d = new Date(pageDate + 'T00:00:00');
     if (isNaN(d)) return;
     d.setDate(d.getDate() + offset);
     navToDate(d.toISOString().slice(0, 10));
 }
 function selectLesson(id) {
-    const d = document.getElementById('daily-date').value;
-    window.location.href = '?date=' + d + (id ? '&lesson=' + id : '');
+    requestNav('?date=' + pageDate + (id ? '&lesson=' + id : ''));
 }
 function createLesson() {
     if (!navigator.onLine) { showOfflineBanner(); return; }
@@ -355,7 +383,7 @@ function createLesson() {
     if (topic === null) return;
     const params = new URLSearchParams({
         class_subject_id: classSubjectId,
-        date: document.getElementById('daily-date').value,
+        date: pageDate,
         topic: topic,
     });
     fetch(lessonSaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
@@ -456,11 +484,24 @@ function updateQuarterCell(studentId, quarter, value, isLive) {
     td.appendChild(sup);
   }
 }
+let syncRunning = false;
+function isDailyBatchItem(item) {
+    // Batched daily fields are regular (non-assessment) daily writes only;
+    // quarterly cells and assessment-linked ascore_* items keep the
+    // existing one-request-per-field replay below.
+    return !!(item && item.params && item.params.type === 'daily' && !item.params.assessment_id);
+}
 async function syncPending() {
-    if (!state.pending.length) return;
+    if (syncRunning || !state.pending.length) return;
+    syncRunning = true;
     hideOfflineBanner();
-    let networkError = false;
-    for (const item of state.pending) {
+    try {
+        // Phase 1: every staged daily field goes out in ONE batched POST —
+        // the durability queue is unchanged, only the transport is batched.
+        await new Promise(res => flushDailyBatch(res));
+        let networkError = false;
+        for (const item of state.pending) {
+        if (isDailyBatchItem(item)) continue;   // handled by the batch above
         const data = new URLSearchParams(item.params);
         try {
             const r = await fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data});
@@ -508,10 +549,14 @@ async function syncPending() {
             }
             removePending(item.name);
         } catch (err) { console.error(err); networkError = true; break; }
+        }
+        if (!state.pending.length) { hideOfflineBanner(); showSyncToast(); }
+        else if (networkError) { showOfflineBanner(); }
+        saveState();
+    } finally {
+        syncRunning = false;
     }
-    if (!state.pending.length) { hideOfflineBanner(); showSyncToast(); }
-    else if (networkError) { showOfflineBanner(); }
-    saveState();
+    updateSaveBar();
 }
 let gradeKind = 'current';
 let currentAssessmentId = null;
@@ -545,8 +590,7 @@ function renderAssessmentPicker() {
 // Mode exclusivity: a control assessment locks only its own slot —
 // the selected lesson, or the legacy lesson-less date.
 function controlDateLocked() {
-  const d = document.getElementById('daily-date').value;
-  return assessments.some(a => a.date === d && String(a.lesson_id || '') === selectedLessonId);
+  return assessments.some(a => a.date === pageDate && String(a.lesson_id || '') === selectedLessonId);
 }
 function updateModeHint() {
   const locked = controlDateLocked();
@@ -659,7 +703,7 @@ function deleteSelectedAssessment() {
         }
       } else {
         const scoped = scopedAssessments();
-        const onDate = scoped.find(x => x.date === document.getElementById('daily-date').value);
+        const onDate = scoped.find(x => x.date === pageDate);
         currentAssessmentId = onDate ? onDate.id : (scoped.length ? scoped[0].id : null);
         document.getElementById('assessment-select').value = currentAssessmentId || '';
         loadAssessmentValues();
@@ -676,7 +720,7 @@ function saveAssessment() {
   const params = new URLSearchParams({
     class_subject_id: classSubjectId,
     assessment_id: document.getElementById('af-id').value,
-    date: document.getElementById('daily-date').value,
+    date: pageDate,
     title: document.getElementById('af-title').value,
     number: document.getElementById('af-number').value,
     is_ajm: document.getElementById('af-ajm').checked ? '1' : '0',
@@ -752,7 +796,7 @@ function saveDaily(input) {
   // second copy could create a duplicate Grade row server-side.
   if (!points && input.dataset.inflight === value) return;
   const status = document.getElementById('daily-status-' + input.dataset.rowId);
-  const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: document.getElementById('daily-date').value, type: 'daily'};
+  const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, date: pageDate, type: 'daily'};
   if (assessmentId) params.assessment_id = assessmentId;
   if (selectedLessonId) params.lesson_id = selectedLessonId;
   if (points) {
@@ -763,7 +807,19 @@ function saveDaily(input) {
   }
   pushPending({name: input.name, value: value, rowId: input.dataset.rowId, params: params});
   backupDrafts();
-  if (!navigator.onLine) { showOfflineBanner(); return; }
+  if (!assessmentId) {
+    // Normal daily fields (score/attendance/behavior) are staged into the
+    // pending queue only — one batched POST on Сабт, nothing per-cell here.
+    // The pending visual state is applied even while offline so an unsaved
+    // edit is always visible; no request is attempted without connectivity.
+    input.classList.add('field-pending');
+    updateSaveBar();
+    if (!navigator.onLine) showOfflineBanner();
+    return;
+  }
+  if (!navigator.onLine) { updateSaveBar(); showOfflineBanner(); return; }
+  // Assessment-linked ascore_* cells keep the existing immediate per-cell
+  // save (they need the live quarter recalculation in the response).
   input.dataset.inflight = value;
   const data = new URLSearchParams(params);
   fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
@@ -825,7 +881,7 @@ function saveQuarter(input) {
   const params = {student_id: input.dataset.studentId, subject: input.dataset.subject, quarter: input.dataset.quarter, score: scoreVal, type: 'quarterly'};
   pushPending({name: input.name, value: scoreVal, rowId: rowId, params: params});
   backupDrafts();
-  if (!navigator.onLine) { showOfflineBanner(); return; }
+  if (!navigator.onLine) { updateSaveBar(); showOfflineBanner(); return; }
   const qstatus = document.getElementById('daily-status-' + rowId);
   const data = new URLSearchParams(params);
   fetch(saveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: data})
@@ -874,14 +930,35 @@ function saveAll() {
     else saveDaily(el);
   });
 }
-function handleFormSubmit(e) {
+function disableUntouchedBehavior() {
   // Untouched behavior selects are excluded from the full-form POST — their
   // value is only the carry-over/default prefill, not an explicit edit.
   // (Score/attendance inputs always re-post their shown value harmlessly.)
-  const untouchedBehavior = [];
+  const untouched = [];
   document.querySelectorAll('.daily-behavior:not(:disabled)').forEach(el => {
-    if (!el.dataset.touched) { untouchedBehavior.push(el); el.disabled = true; }
+    if (!el.dataset.touched) { untouched.push(el); el.disabled = true; }
   });
+  return untouched;
+}
+function handleFormSubmit(e) {
+  if (hasPending() || flushInFlight) {
+    // Staged daily edits go out as ONE batched POST first; the page does not
+    // navigate or post the legacy full form until the batch result is known.
+    e.preventDefault();
+    const frm = e.target;
+    const submitter = e.submitter || null;
+    const forward = submitter && submitter.hasAttribute && submitter.hasAttribute('formaction');
+    savePendingNow(ok => {
+      if (!ok) return;
+      if (!forward) { showToastMsg('✔ Сабт шуд!', false); return; }
+      // formaction buttons (e.g. Ҳисобкунӣ аз холҳои ҷорӣ) still post the
+      // form to their own endpoint once nothing is pending.
+      if (typeof frm.requestSubmit === 'function') frm.requestSubmit(submitter);
+      else { disableUntouchedBehavior(); frm.action = submitter.formAction; frm.submit(); }
+    });
+    return;
+  }
+  const untouchedBehavior = disableUntouchedBehavior();
   if (!navigator.onLine) {
     e.preventDefault();
     // The page stays put on the offline path — restore the fields.
@@ -935,11 +1012,12 @@ document.querySelectorAll('.q-input, .att-input').forEach(el => {
 document.getElementById('grade-form').addEventListener('submit', handleFormSubmit);
 restoreDrafts();
 backupDrafts();
+updateSaveBar();
 window.addEventListener('online', syncPending);
 // A date that already has a control assessment reopens in Назорат mode;
 // the Ҷорӣ radio is locked out with an explanatory hint.
 if (dateIsControl) {
-  const onDate = scopedAssessments().find(a => a.date === document.getElementById('daily-date').value);
+  const onDate = scopedAssessments().find(a => a.date === pageDate);
   if (onDate) currentAssessmentId = onDate.id;
   setGradeKind('control');
   const rc = document.querySelector('input[name="grade_kind"][value="control"]');
@@ -995,6 +1073,178 @@ document.querySelectorAll('.daily-input').forEach(el => {
   if (el.tagName === 'INPUT' && el.dataset.field === 'score') {
     el.addEventListener('focus', () => showQuickPick(el));
   }
+});
+
+// --- Batched daily save + unsaved-changes protection ----------------------
+// Normal daily fields (score/attendance/behavior) are staged into the
+// existing localStorage pending queue and flushed to daily_save in ONE
+// request. Assessment-linked and quarterly cells are untouched and keep
+// their per-cell endpoint. Nothing entered is ever silently dropped.
+function hasPending() { return state.pending.length > 0; }
+
+function updateSaveBar() {
+  const bar = document.getElementById('save-bar');
+  if (bar) {
+    bar.classList.toggle('show', hasPending());
+    document.getElementById('save-count').textContent =
+      state.pending.length + ' тағйироти сабтнашуда';
+  }
+  const names = {};
+  state.pending.forEach(p => { names[p.name] = 1; });
+  document.querySelectorAll('.daily-input, .daily-att, .daily-behavior, .q-input, .att-input')
+    .forEach(el => { el.classList.toggle('field-pending', !!names[el.name]); });
+}
+
+function showToastMsg(text, isError) {
+  const t = document.getElementById('save-toast');
+  if (!t) return;
+  t.textContent = text;
+  t.style.display = 'block';
+  t.style.background = isError ? '#fee2e2' : '#f0fdf4';
+  t.style.borderColor = isError ? '#ef4444' : '#22c55e';
+  t.style.color = isError ? '#991b1b' : '#166534';
+  setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+function flushDailyBatch(onDone) {
+  const items = state.pending.filter(isDailyBatchItem);
+  if (!items.length) { if (onDone) onDone(true); return; }
+  if (!navigator.onLine) { showOfflineBanner(); if (onDone) onDone(false); return; }
+  const sent = {};   // input name -> params snapshot for in-flight dedup
+  const payload = items.map(it => {
+    const p = it.params || {};
+    sent[it.name] = p;
+    const out = {
+      key: it.name, student_id: p.student_id, subject: p.subject,
+      date: p.date, lesson_id: p.lesson_id || '',
+    };
+    ['score', 'attendance', 'behavior_score', 'sticker'].forEach(f => {
+      if (Object.prototype.hasOwnProperty.call(p, f)) out[f] = p[f];
+    });
+    return out;
+  });
+  const body = new URLSearchParams({payload: JSON.stringify(payload)});
+  fetch(dailySaveBatchUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body})
+  .then(r => {
+    if (r.status >= 500) { const e = new Error('server'); e.serverDown = true; throw e; }
+    if (!r.ok) throw new Error('http');
+    return r.json();
+  })
+  .then(resp => {
+    if (!resp || !resp.success) {
+      // Batch-level failure — the server committed nothing, so every item
+      // stays pending and is retried on the next flush.
+      showToastMsg((resp && resp.message) || 'Сабт нашуд. Такрор кунед.', true);
+      if (onDone) onDone(false);
+      return;
+    }
+    let failed = 0;
+    (resp.results || []).forEach(res => {
+      const name = res.key;
+      const cur = state.pending.find(p => p.name === name);
+      const el = document.querySelector('[name="' + name + '"]');
+      const st = el && document.getElementById('daily-status-' + el.dataset.rowId);
+      if (res.ok) {
+        // Drop the pending item only when it is still the same edit that was
+        // sent — a re-edit while the batch was in flight must stay queued.
+        if (cur && JSON.stringify(cur.params) === JSON.stringify(sent[name])) {
+          removePending(name);
+          if (el) {
+            const f = ['score', 'attendance', 'behavior_score', 'sticker']
+              .find(k => Object.prototype.hasOwnProperty.call(sent[name], k));
+            if (f !== undefined) { el.value = sent[name][f]; el.dataset.origValue = String(sent[name][f]); }
+            el.classList.remove('field-error');
+          }
+          if (st) showStatus(st, '✔ Сабт шуд!');
+        }
+      } else {
+        // Per-item rejection — the entered value is KEPT pending (never
+        // silently lost); the field is marked and the message surfaced.
+        failed++;
+        if (el) el.classList.add('field-error');
+        if (st) showStatus(st, res.message || 'Сабт нашуд');
+      }
+    });
+    updateSaveBar();
+    if (failed) {
+      showToastMsg('Баъзе баҳоҳо сабт нашуданд.', true);
+      if (onDone) onDone(false);
+    } else {
+      showToastMsg('✔ ' + (resp.saved || 0) + ' тағйирот сабт шуд!', false);
+      if (onDone) onDone(true);
+    }
+  })
+  .catch(err => {
+    // Network failure / 5xx — pending items stay queued for retry.
+    if (err && err.serverDown) showToastMsg('Сервер дастрас нест — баъдтар такрор мешавад.', true);
+    else { showOfflineBanner(); }
+    if (onDone) onDone(false);
+  });
+}
+
+let flushInFlight = false;
+const flushWaiters = [];
+function savePendingNow(onDone) {
+  if (onDone) flushWaiters.push(onDone);
+  if (flushInFlight) return;
+  flushInFlight = true;
+  Promise.resolve()
+    .then(() => syncPending())
+    .catch(err => {
+      // Unexpected failure inside the replay (e.g. localStorage quota) — the
+      // queue is untouched, so everything stays pending and retryable.
+      console.error(err);
+      showToastMsg('Сабт нашуд. Такрор кунед.', true);
+    })
+    .finally(() => {
+      // Always release the in-flight flag and drain waiters; pending state is
+      // never cleared here, so a real unsaved state can never be hidden.
+      flushInFlight = false;
+      const ok = !hasPending();
+      flushWaiters.splice(0).forEach(cb => cb(ok));
+    });
+}
+
+// --- Navigation guard: warn before leaving with unsaved changes -----------
+let pendingNav = null;
+function requestNav(url) {
+  if (!hasPending()) { window.location.href = url; return; }
+  pendingNav = url;
+  document.getElementById('leave-modal').classList.add('show');
+}
+window.addEventListener('beforeunload', e => {
+  if (hasPending() || flushInFlight) { e.preventDefault(); e.returnValue = ''; }
+});
+document.getElementById('lv-stay').addEventListener('click', () => {
+  pendingNav = null;
+  document.getElementById('leave-modal').classList.remove('show');
+  // Canceling a date change leaves the picker showing the un-navigated date —
+  // restore it so it always displays the journal's actual rendered date.
+  const dd = document.getElementById('daily-date');
+  if (dd) dd.value = pageDate;
+});
+document.getElementById('lv-leave').addEventListener('click', () => {
+  // Explicit teacher choice — drop this page's staged edits and draft copy
+  // so a later visit cannot resurrect them (pending replay + draft restore
+  // both read this storage key).
+  const url = pendingNav;
+  state.pending = [];
+  state.draft = {};
+  saveState();
+  if (url) window.location.href = url;
+  else document.getElementById('leave-modal').classList.remove('show');
+});
+document.getElementById('lv-save').addEventListener('click', () => {
+  savePendingNow(ok => { if (ok && pendingNav) window.location.href = pendingNav; });
+});
+document.querySelectorAll('a[href]').forEach(a => {
+  a.addEventListener('click', e => {
+    if (!hasPending()) return;
+    const href = a.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
+    e.preventDefault();
+    requestNav(href);
+  });
 });
 </script>
 {% endblock %}

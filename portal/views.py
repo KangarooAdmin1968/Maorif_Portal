@@ -3212,6 +3212,58 @@ def export_journal_excel(request, school_id, class_name, subject):
     return response
 
 
+def _save_journal_cell(user, item):
+    """Apply one staged journal cell edit; returns (ok, message).
+
+    Shared write pipeline for monthly_save and daily_save — identical
+    permission, lesson-scope, control-mode and quarter-lock checks as the
+    per-cell save_grade_ajax path, so batching adds no second business
+    rule. Only the daily field whitelist (score/attendance/behavior_score/
+    sticker) is writable; assessment-linked and quarterly cells keep their
+    dedicated endpoints.
+    """
+    try:
+        student = Student.objects.get(pk=item.get('student_id'))
+    except (Student.DoesNotExist, AttributeError, ValueError, TypeError):
+        return False, 'Хонанда ёфт нашуд.'
+    subject = normalize_subject(str(item.get('subject', '')))
+    class_name = normalize_class_name(student.class_name)
+    if not can_edit_grade_journal(user, student.school, class_name, subject):
+        return False, 'Дастрасӣ манъ аст.'
+    cs = _class_subject_for(student.school, class_name, subject)
+    if not _teacher_can_write_student(user, student, cs):
+        return False, 'Дастрасӣ манъ аст.'
+    try:
+        date = datetime.date.fromisoformat(str(item.get('date', '')))
+        lesson = _resolve_daily_scope(
+            student, subject, date, item.get('lesson_id') or '',
+            user=user,
+        )
+        if is_quarter_locked(
+            student.school, class_name, subject, get_date_quarter(date)
+        ):
+            raise ValueError('Ин чоряк баста шудааст.')
+        grade, _ = get_or_create_grade(
+            student=student,
+            subject=subject,
+            period='Холҳои ҷорӣ (Онлайн)',
+            date=date,
+            assessment=None,
+            lesson=lesson,
+            defaults={'score': None, 'attendance': None,
+                      'behavior_score': None, 'sticker': None},
+        )
+        values = {
+            k: item[k]
+            for k in ('score', 'attendance', 'behavior_score', 'sticker')
+            if k in item
+        }
+        _apply_grade_fields(grade, values)
+    except (ValueError, TypeError) as e:
+        return False, str(e)
+    return True, ''
+
+
 @login_required
 @require_POST
 def monthly_save(request):
@@ -3236,50 +3288,71 @@ def monthly_save(request):
     saved = 0
     for item in payload:
         key = item.get('key') if isinstance(item, dict) else None
-        try:
-            student = Student.objects.get(pk=item.get('student_id'))
-        except (Student.DoesNotExist, AttributeError, ValueError, TypeError):
-            results.append({'key': key, 'ok': False, 'message': 'Хонанда ёфт нашуд.'})
-            continue
-        subject = normalize_subject(str(item.get('subject', '')))
-        class_name = normalize_class_name(student.class_name)
-        if not can_edit_grade_journal(request.user, student.school, class_name, subject):
-            results.append({'key': key, 'ok': False, 'message': 'Дастрасӣ манъ аст.'})
-            continue
-        cs = _class_subject_for(student.school, class_name, subject)
-        if not _teacher_can_write_student(request.user, student, cs):
-            results.append({'key': key, 'ok': False, 'message': 'Дастрасӣ манъ аст.'})
-            continue
-        try:
-            date = datetime.date.fromisoformat(str(item.get('date', '')))
-            lesson = _resolve_daily_scope(
-                student, subject, date, item.get('lesson_id') or '',
-                user=request.user,
-            )
-            if is_quarter_locked(
-                student.school, class_name, subject, get_date_quarter(date)
-            ):
-                raise ValueError('Ин чоряк баста шудааст.')
-            grade, _ = get_or_create_grade(
-                student=student,
-                subject=subject,
-                period='Холҳои ҷорӣ (Онлайн)',
-                date=date,
-                assessment=None,
-                lesson=lesson,
-                defaults={'score': None, 'attendance': None,
-                          'behavior_score': None, 'sticker': None},
-            )
-            values = {
-                k: item[k] for k in ('score', 'attendance', 'behavior_score')
-                if k in item
-            }
-            _apply_grade_fields(grade, values)
-        except (ValueError, TypeError) as e:
-            results.append({'key': key, 'ok': False, 'message': str(e)})
-            continue
-        saved += 1
-        results.append({'key': key, 'ok': True})
+        ok, message = _save_journal_cell(request.user, item)
+        if ok:
+            saved += 1
+            results.append({'key': key, 'ok': True})
+        else:
+            results.append({'key': key, 'ok': False, 'message': message})
+    return JsonResponse(
+        {'success': True, 'saved': saved, 'results': results}, status=200
+    )
+
+
+@login_required
+@require_POST
+def daily_save(request):
+    """Batched daily-journal write — one POST for many changed fields.
+
+    Transport-level batching of the save_grade_ajax daily path: each item
+    is keyed by the input's stable name (e.g. 'score_42') so the page can
+    map per-item results back to the exact field, and routed through the
+    same _save_journal_cell pipeline as monthly_save. Assessment-linked
+    (ascore_) and quarterly cells are never sent here by the client.
+
+    Atomicity: the whole batch commits in a single transaction instead of
+    ~one autocommit per cell — on SQLite that is one write-lock window per
+    batch rather than N interleaved ones. Per-item business rejections
+    (validation, permission, scope, lock) are caught inside the helper and
+    reported per item without aborting the batch; any unexpected failure
+    rolls the transaction back and returns success=False, and because no
+    item is reported saved in that case the client keeps the entire batch
+    pending for retry — a committed-never-reported state is impossible.
+    """
+    try:
+        payload = json.loads(request.POST.get('payload', '[]'))
+    except (json.JSONDecodeError, TypeError):
+        return JsonResponse({'success': False, 'message': 'Формати нодуруст.'}, status=200)
+    if not isinstance(payload, list):
+        return JsonResponse({'success': False, 'message': 'Формати нодуруст.'}, status=200)
+
+    results = []
+    saved = 0
+    try:
+        with transaction.atomic():
+            for item in payload:
+                if not isinstance(item, dict):
+                    results.append({
+                        'key': None, 'ok': False,
+                        'message': 'Формати нодуруст.',
+                    })
+                    continue
+                ok, message = _save_journal_cell(request.user, item)
+                if ok:
+                    saved += 1
+                    results.append({'key': item.get('key'), 'ok': True})
+                else:
+                    results.append({
+                        'key': item.get('key'), 'ok': False,
+                        'message': message,
+                    })
+    except Exception:
+        # The transaction rolled back — nothing was written, so nothing may
+        # be reported as saved; the client keeps all items pending.
+        return JsonResponse(
+            {'success': False, 'message': 'Сабт нашуд. Такрор кунед.'},
+            status=200,
+        )
     return JsonResponse(
         {'success': True, 'saved': saved, 'results': results}, status=200
     )

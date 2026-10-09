@@ -1,9 +1,10 @@
 import logging
+import time
 
 from django.conf import settings
 from django.contrib.auth.signals import user_logged_in
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
@@ -105,16 +106,39 @@ def on_user_logged_in(sender, request, user, **kwargs):
 def invalidate_ranking_caches(sender, **kwargs):
     """Drop the global ranking-result cache keys when ranking inputs change.
 
-    Deliberately cheap: deletes cache keys only — no ranking computation,
-    no model writes, no queries. A failure to invalidate must never break
-    the model save/delete that triggered it; the 60s TTL is the backstop.
+    Deliberately cheap: cache deletes plus one dirty-timestamp write — no
+    ranking computation, no model writes, no queries. Shadow copies stay
+    so rate-limited readers still have data; the dirty stamp catches a
+    save that lands while a refresh is mid-flight. A failure to
+    invalidate must never break the save/delete that triggered it; the
+    60s TTL is the backstop.
     """
-    from .views import RANKING_CACHE_KEYS  # local import avoids cycles
+    from .views import (  # local import avoids cycles
+        RANKING_CACHE_KEYS, RANKING_DIRTY_KEY, RANKING_DIRTY_TTL,
+    )
 
     try:
         cache.delete_many(RANKING_CACHE_KEYS)
+        cache.set(RANKING_DIRTY_KEY, time.time(), timeout=RANKING_DIRTY_TTL)
     except Exception:
         logger.exception('Failed to invalidate ranking caches')
+
+    # post_save fires inside the writer's transaction: a refresh that
+    # starts between this stamp and the commit can still read pre-commit
+    # data and mark its result fresh. Re-stamping on commit marks that
+    # entry stale so the change lands within the refresh window. Runs
+    # immediately when no transaction is open; rollback queues nothing.
+    transaction.on_commit(_restamp_ranking_dirty)
+
+
+def _restamp_ranking_dirty():
+    """Refresh the ranking dirty marker at transaction commit time."""
+    from .views import RANKING_DIRTY_KEY, RANKING_DIRTY_TTL
+
+    try:
+        cache.set(RANKING_DIRTY_KEY, time.time(), timeout=RANKING_DIRTY_TTL)
+    except Exception:
+        logger.exception('Failed to re-stamp ranking dirty marker')
 
 
 for _model in (Grade, QuarterGrade, Student, School, ClassSubject):

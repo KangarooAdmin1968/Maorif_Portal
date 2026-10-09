@@ -156,7 +156,8 @@ class GoldenBase(TestCase):
 
     def setUp(self):
         # Ranking-result caches live outside the test transaction — clear
-        # them so a result computed on rolled-back fixtures cannot leak
+        # every derived key (main, shadow, single-flight lock, dirty
+        # stamp) so a result computed on rolled-back fixtures cannot leak
         # into the next test.
-        from portal.views import RANKING_CACHE_KEYS
-        cache.delete_many(RANKING_CACHE_KEYS)
+        from portal.views import RANKING_ALL_CACHE_KEYS
+        cache.delete_many(RANKING_ALL_CACHE_KEYS)

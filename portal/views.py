@@ -10,6 +10,7 @@ import io
 import json
 import re
 import threading
+import time
 import urllib.parse
 import datetime
 from collections import defaultdict
@@ -1081,6 +1082,32 @@ RANKING_CACHE_KEYS = (
     'rank:v1:subject',
     'rank:v1:top:prelimit',
 )
+# Bounded refresh (Oct 2026 504 mitigation): invalidation still deletes
+# the main keys on every ranking-input save, but readers recompute at
+# most once per RANKING_REFRESH_INTERVAL per key and otherwise serve the
+# shadow copy kept under key+':stale'. During a burst of grade saves the
+# full aggregation set therefore runs once per interval per worker
+# instead of once per read after each save. Every signal-visible change
+# is reflected within RANKING_REFRESH_INTERVAL; the TTL above remains
+# the backstop for writes that never fire signals.
+RANKING_REFRESH_INTERVAL = 30
+RANKING_STALE_TTL = 600
+RANKING_STALE_SUFFIX = ':stale'
+# Single-flight: readers that lose the add() keep serving the shadow
+# while one thread refreshes, instead of stampeding the same query set.
+RANKING_LOCK_SUFFIX = ':computing'
+# Timestamp of the latest invalidation. Entries are stamped at refresh
+# START, so a save that commits while a refresh is mid-flight still
+# invalidates its result — only entries post-dating this stamp are fresh.
+RANKING_DIRTY_KEY = 'rank:v1:dirty'
+RANKING_DIRTY_TTL = RANKING_STALE_TTL
+# Every cache key the ranking cache can touch (used to fully reset it).
+RANKING_ALL_CACHE_KEYS = (
+    RANKING_CACHE_KEYS
+    + tuple(k + RANKING_STALE_SUFFIX for k in RANKING_CACHE_KEYS)
+    + tuple(k + RANKING_LOCK_SUFFIX for k in RANKING_CACHE_KEYS)
+    + (RANKING_DIRTY_KEY,)
+)
 
 
 def _ranking_cache_get(key):
@@ -1090,20 +1117,79 @@ def _ranking_cache_get(key):
         return None
 
 
-def _ranking_cache_set(key, value):
+def _ranking_cache_set(key, value, timeout=RANKING_CACHE_TTL):
     try:
-        cache.set(key, value, RANKING_CACHE_TTL)
+        cache.set(key, value, timeout=timeout)
     except Exception:
         pass
 
 
+def _ranking_cache_delete(key):
+    try:
+        cache.delete(key)
+    except Exception:
+        pass
+
+
+def _ranking_lock_acquire(key):
+    try:
+        return cache.add(key + RANKING_LOCK_SUFFIX, 1, RANKING_CACHE_TTL)
+    except Exception:
+        return False
+
+
+def _ranking_cached(key, compute):
+    """Return ``compute()`` output through the bounded-refresh cache.
+
+    Entries are ``(computed_at, data)`` tuples stamped at refresh start,
+    so a save landing mid-refresh still invalidates the result via
+    RANKING_DIRTY_KEY. Resolution order: fresh main entry; shadow entry
+    inside the refresh interval (the rate limit); recompute under the
+    single-flight lock; shadow entry while a sibling thread refreshes;
+    then a brief cold-start wait before computing directly.
+    """
+    now = time.time()
+    entry = _ranking_cache_get(key)
+    dirty = _ranking_cache_get(RANKING_DIRTY_KEY) or 0.0
+    if (isinstance(entry, tuple) and entry[0] > dirty
+            and now - entry[0] < RANKING_CACHE_TTL):
+        return entry[1]
+    stale = _ranking_cache_get(key + RANKING_STALE_SUFFIX)
+    if (isinstance(stale, tuple)
+            and now - stale[0] < RANKING_REFRESH_INTERVAL):
+        return stale[1]
+    if _ranking_lock_acquire(key):
+        try:
+            started = time.time()
+            data = compute()
+        except Exception:
+            if isinstance(stale, tuple):
+                # Back off: the held lock delays the next retry, and
+                # readers keep the last good result.
+                return stale[1]
+            raise
+        _ranking_cache_set(key, (started, data))
+        _ranking_cache_set(
+            key + RANKING_STALE_SUFFIX, (started, data),
+            timeout=RANKING_STALE_TTL)
+        _ranking_cache_delete(key + RANKING_LOCK_SUFFIX)
+        return data
+    if isinstance(stale, tuple):
+        return stale[1]
+    # Cold start while a sibling thread is already computing: wait
+    # briefly for its entry instead of duplicating the aggregation set.
+    for _ in range(40):
+        time.sleep(0.05)
+        entry = _ranking_cache_get(key)
+        if isinstance(entry, tuple):
+            return entry[1]
+    return compute()
+
+
 def calculate_school_rankings():
     """Return all schools ranked by average GPA from daily and quarterly grades (excluding non-graded classes)."""
-    data = _ranking_cache_get(RANKING_CACHE_KEYS[0])
-    if data is None:
-        data = _calculate_school_rankings_uncached()
-        _ranking_cache_set(RANKING_CACHE_KEYS[0], data)
-    return data
+    return _ranking_cached(
+        RANKING_CACHE_KEYS[0], _calculate_school_rankings_uncached)
 
 
 def _calculate_school_rankings_uncached():
@@ -1149,10 +1235,8 @@ def _calculate_school_rankings_uncached():
 
 def calculate_class_rankings(school_filter=None):
     """Return class rankings with district and school ranks from all grade records."""
-    data = _ranking_cache_get(RANKING_CACHE_KEYS[1])
-    if data is None:
-        data = _calculate_class_rankings_uncached()
-        _ranking_cache_set(RANKING_CACHE_KEYS[1], data)
+    data = _ranking_cached(
+        RANKING_CACHE_KEYS[1], _calculate_class_rankings_uncached)
 
     if school_filter:
         try:
@@ -1271,10 +1355,8 @@ def _calculate_class_rankings_uncached():
 
 def calculate_top_students(school_filter=None, limit=100):
     """Return top-performing graded students (2-11) with dense school/district ranks."""
-    data = _ranking_cache_get(RANKING_CACHE_KEYS[3])
-    if data is None:
-        data = _calculate_top_students_uncached()
-        _ranking_cache_set(RANKING_CACHE_KEYS[3], data)
+    data = _ranking_cached(
+        RANKING_CACHE_KEYS[3], _calculate_top_students_uncached)
 
     if school_filter:
         try:
@@ -1372,11 +1454,8 @@ def _calculate_top_students_uncached():
 
 def calculate_subject_rankings():
     """Return subject rankings including all default subjects with 0.0 GPA if no grades exist."""
-    data = _ranking_cache_get(RANKING_CACHE_KEYS[2])
-    if data is None:
-        data = _calculate_subject_rankings_uncached()
-        _ranking_cache_set(RANKING_CACHE_KEYS[2], data)
-    return data
+    return _ranking_cached(
+        RANKING_CACHE_KEYS[2], _calculate_subject_rankings_uncached)
 
 
 def _calculate_subject_rankings_uncached():

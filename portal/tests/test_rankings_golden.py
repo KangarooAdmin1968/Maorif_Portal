@@ -239,3 +239,24 @@ class SubjectRankingGoldenTests(RankingBase):
         data = calculate_subject_rankings()
         math_rows = [d for d in data if d['subject'] == MATH]
         self.assertEqual(len(math_rows), 1)
+
+    def test_homeroom_subject_excluded_from_ranking(self):
+        # 'Соати тарбиявӣ' is in TJC_SUBJECTS for every grade and is seeded
+        # as a ClassSubject for 7-А/7-Б, but as an un-graded curriculum
+        # subject (UNGRADED_SUBJECTS) it must never appear ranked.
+        data = self._by_subject(calculate_subject_rankings())
+        self.assertNotIn('СОАТИ ТАРБИЯВӢ', data)
+        self.assertIn(MATH, data)
+
+    def test_homeroom_scores_do_not_leak_into_ranking(self):
+        # Real scores stored under a mixed-case spelling still normalize to
+        # the excluded canonical subject: no ranking row, and other
+        # subjects' GPA/rank stay untouched.
+        make_grade(self.s1, 'Соати тарбиявӣ', 10, D_Q1)
+        make_quarter_grade(self.s1, '7-А', 'Соати тарбиявӣ', 1, grade=10)
+        make_quarter_grade(self.s1, '7-А', 'Соати тарбиявӣ', 0, att=10)
+        data = self._by_subject(calculate_subject_rankings())
+        self.assertNotIn('СОАТИ ТАРБИЯВӢ', data)
+        self.assertAlmostEqual(data[MATH]['gpa'], 8.14)
+        self.assertEqual(data[MATH]['rank'], 1)
+        self.assertEqual(data['АЛГЕБРА']['rank'], 2)

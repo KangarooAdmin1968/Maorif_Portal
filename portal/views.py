@@ -1399,7 +1399,9 @@ def _calculate_subject_rankings_uncached():
         for subj in subject_list:
             all_subjects.add(normalize_subject(subj))
 
-    official = official_subjects()
+    # Un-graded curriculum subjects (e.g. СОАТИ ТАРБИЯВӢ homeroom hour)
+    # are official but are never ranked.
+    official = official_subjects() - UNGRADED_SUBJECTS
     data = []
     for subj in all_subjects:
         if subj not in official:

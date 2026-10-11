@@ -12,6 +12,7 @@ import json
 from unittest import mock
 
 from django.db import connection
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
@@ -330,6 +331,72 @@ class DailyBatchSaveTests(GoldenBase):
         # Nothing committed — the client keeps every item pending.
         self.assertFalse(Grade.objects.filter(
             student__in=[self.s1, self.s2], subject=MATH).exists())
+
+    # -- WAL write-reservation (B3) -------------------------------------------
+
+    @staticmethod
+    def _lock_stmt_index(sqls):
+        """Index of the lock-acquisition zero-row UPDATE in a query log."""
+        return next(
+            i for i, s in enumerate(sqls)
+            if s.lstrip().upper().startswith('UPDATE')
+            and Grade._meta.db_table in s
+            and 'id = -1' in s
+        )
+
+    def test_lock_update_is_first_statement_inside_atomic(self):
+        # B3: the zero-row UPDATE must run immediately after the
+        # transaction opens — a SAVEPOINT under TestCase's outer atomic
+        # (BEGIN on production autocommit) — so the SQLite write
+        # reservation is taken before any read can pin a WAL snapshot.
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self._post([self._item(self.s1, 'score', '8')])
+        self.assertTrue(resp.json()['success'])
+        self.assertEqual(
+            Grade.objects.get(student=self.s1, date=D, subject=MATH)
+            .score, 8)
+        sqls = [q['sql'] for q in ctx.captured_queries]
+        upd = self._lock_stmt_index(sqls)
+        # The closest transaction opener must be the UPDATE's immediate
+        # predecessor: no statement — in particular no SELECT — may run
+        # inside the atomic block before the reservation is taken.
+        opener = max(
+            i for i, s in enumerate(sqls[:upd])
+            if s.lstrip().upper().startswith(('SAVEPOINT', 'BEGIN'))
+        )
+        self.assertEqual(opener, upd - 1)
+
+    def test_lock_update_writes_nothing_and_fires_no_signals(self):
+        # With a payload that yields no grade save, the lock UPDATE is
+        # the only write inside the transaction; raw SQL must not invoke
+        # model signals (Grade carries the ranking-cache invalidation
+        # receivers) and must leave the table untouched.
+        fired = []
+
+        def receiver(sender, **kwargs):
+            fired.append(sender)
+
+        sigs = {'pre_save': pre_save, 'post_save': post_save,
+                'post_delete': post_delete}
+        for name, sig in sigs.items():
+            sig.connect(receiver, sender=Grade, weak=False,
+                        dispatch_uid=f'b3-{name}')
+        try:
+            with CaptureQueriesContext(connection) as ctx:
+                # Unknown student: reads run inside the transaction but
+                # no grade row is ever saved.
+                resp = self._post([
+                    self._item(self.s1, 'score', '8')
+                    | {'student_id': 'no-such-student'}
+                ])
+        finally:
+            for name, sig in sigs.items():
+                sig.disconnect(dispatch_uid=f'b3-{name}')
+        self.assertTrue(resp.json()['success'])
+        sqls = [q['sql'] for q in ctx.captured_queries]
+        self._lock_stmt_index(sqls)  # reservation statement still ran
+        self.assertFalse(Grade.objects.filter(student=self.s1).exists())
+        self.assertEqual(fired, [])
 
 
 # ---------------------------------------------------------------------------

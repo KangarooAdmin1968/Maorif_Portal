@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Avg, Count, Sum, Q, Max
 from django.core.cache import cache
 import calendar
@@ -3481,6 +3481,19 @@ def daily_save(request):
     ctx = {}
     try:
         with transaction.atomic():
+            # SQLite WAL reservation (B3): a deferred transaction upgrades
+            # to the write lock on its first statement. If that statement
+            # were a read, a WAL snapshot would be pinned first and the
+            # later write could fail with SQLITE_BUSY_SNAPSHOT once a
+            # concurrent writer commits. This zero-row UPDATE must run
+            # before every ORM query below so the reservation is taken
+            # while no snapshot exists; it matches no rows, writes
+            # nothing, and bypasses model signals (a no-op needs no
+            # cache invalidation).
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    'UPDATE portal_grade SET score = score WHERE id = -1'
+                )
             for item in payload:
                 if not isinstance(item, dict):
                     results.append({

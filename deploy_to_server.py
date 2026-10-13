@@ -64,13 +64,54 @@ def main():
             repo_url = input('Git repository URL: ').strip()
         run(client, f'cd {PROJECT_DIR} && git init && git remote add origin {repo_url}')
 
-    # Backup local data files before a hard reset
+    # Backup local data files before a hard reset. SQLite's online backup
+    # API is WAL-safe (a plain cp can capture a torn copy while gunicorn
+    # writes). Each backup is validated with quick_check; any failure aborts
+    # the deploy before code changes. mkdir (no -p) aborts rather than reuse
+    # an existing backup dir; backups are never deleted automatically.
     print('\n--- Backing up local data files ---', flush=True)
     backup_dir = f'/root/maorif_backups_{int(time.time())}'
-    run(client, f'mkdir -p {backup_dir}')
+    exit_code, _, _ = run(client, f'mkdir {backup_dir}')
+    if exit_code != 0:
+        print('Could not create unique backup directory. Aborting.', file=sys.stderr)
+        client.close()
+        return 1
     for f in DATA_FILES:
         src = f'{PROJECT_DIR}/{f}'
-        run(client, f'test -f {src} && cp -p {src} {backup_dir}/ || echo "not found: {f}"')
+        dst = f'{backup_dir}/{os.path.basename(f)}'
+        bk = (
+            f'test ! -f {src} || {VENV_PYTHON} -c "'
+            f"import sqlite3; s = sqlite3.connect('{src}'); "
+            f"d = sqlite3.connect('{dst}'); s.backup(d); d.close(); s.close()\""
+        )
+        qc = (
+            f'test ! -f {dst} || {VENV_PYTHON} -c "'
+            f"import sqlite3; c = sqlite3.connect('{dst}'); "
+            f"ok = c.execute('PRAGMA quick_check').fetchone()[0]; c.close(); "
+            f"print(ok); raise SystemExit(0 if ok == 'ok' else 1)\""
+        )
+        exit_code, _, _ = run(client, bk)
+        if exit_code != 0:
+            print(f'Backup failed for {f}. Aborting.', file=sys.stderr)
+            client.close()
+            return 1
+        exit_code, _, _ = run(client, qc)
+        if exit_code != 0:
+            print(f'Backup validation failed for {f}. Aborting.', file=sys.stderr)
+            client.close()
+            return 1
+    run(client, f'cd {backup_dir} && for f in *.sqlite3 *.db; do test -f "$f" && sha256sum "$f" | tee -a sha256sums.txt; done 2>/dev/null || true')
+
+    # Capture the pre-deploy revision for code-only rollback. Rolling back
+    # code never restores the database and never affects the running
+    # gunicorn process until a restart; old-code/schema compatibility is
+    # proven only for the additive migrations reviewed in this release.
+    _, old_sha, _ = run(client, f'cd {PROJECT_DIR} && git rev-parse HEAD')
+    old_sha = old_sha.strip()
+    if not old_sha:
+        print('Could not read pre-deploy revision. Aborting.', file=sys.stderr)
+        client.close()
+        return 1
 
     # Hard reset to origin/main to ensure all latest templates/views are applied
     print('\n--- Pulling latest code from origin/main ---', flush=True)
@@ -94,24 +135,50 @@ def main():
     run(client, f'python3 --version')
     run(client, f'cat > {pyvenv_cfg} <<EOF\nhome = /usr/bin\ninclude-system-site-packages = false\nversion = 3.12.3\nEOF')
     run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} -m pip --version 2>/dev/null || {VENV_PYTHON} -m ensurepip && {VENV_PYTHON} -m pip install --upgrade pip')
-    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} -m pip install -r {PROJECT_DIR}/requirements.txt')
+    exit_code, _, _ = run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} -m pip install -r {PROJECT_DIR}/requirements.txt')
+    if exit_code != 0:
+        print('Dependency install failed. Aborting.', file=sys.stderr)
+        client.close()
+        return 1
 
-    # Apply any new Django migrations
+    # Apply any new Django migrations. On failure, roll code back to the
+    # pre-deploy revision so disk matches the running process; the database
+    # is left at its last applied migration and is never auto-restored.
     print('\n--- Applying Django migrations ---', flush=True)
-    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py migrate')
+    exit_code, _, _ = run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py migrate')
+    if exit_code != 0:
+        print('Migration failed — rolling code back to previous revision.',
+              file=sys.stderr)
+        exit_code, _, _ = run(
+            client, f'cd {PROJECT_DIR} && git checkout -f -B main {old_sha}')
+        if exit_code != 0:
+            print('ROLLBACK FAILED — MANUAL INTERVENTION REQUIRED.',
+                  file=sys.stderr)
+            client.close()
+            return 2
+        client.close()
+        return 1
 
     # SQLite WAL: lets readers proceed while a grade write holds the single
     # writer lock — safe here (single host, local disk, short atomic
     # transactions). Idempotent; persists in the DB file header once set.
     print('\n--- Enabling SQLite WAL mode (idempotent) ---', flush=True)
-    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} -c "import sqlite3; '
+    exit_code, _, _ = run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} -c "import sqlite3; '
                 f'c = sqlite3.connect(\'db.sqlite3\'); '
                 f'print(\'journal_mode:\', c.execute(\'PRAGMA journal_mode=WAL\').fetchone()[0]); '
                 f'c.close()"')
+    if exit_code != 0:
+        print('WAL pragma failed. Aborting.', file=sys.stderr)
+        client.close()
+        return 1
 
     # Static assets (needed by nginx: /sw.js is served from staticfiles now)
     print('\n--- Collecting static ---', flush=True)
-    run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py collectstatic --noinput')
+    exit_code, _, _ = run(client, f'cd {PROJECT_DIR} && {VENV_PYTHON} manage.py collectstatic --noinput')
+    if exit_code != 0:
+        print('collectstatic failed. Aborting.', file=sys.stderr)
+        client.close()
+        return 1
 
     # Gunicorn logs + logrotate + nginx site config (timed log format,
     # /sw.js served statically). Installed before the service restart below.
@@ -125,7 +192,11 @@ def main():
     sftp.put(f'{os.path.dirname(os.path.abspath(__file__))}/deploy/nginx-maorif_zafarobod.conf',
              '/etc/nginx/sites-available/maorif_zafarobod')
     sftp.close()
-    run(client, 'nginx -t')
+    exit_code, _, _ = run(client, 'nginx -t')
+    if exit_code != 0:
+        print('nginx config test failed. Aborting before any restart.', file=sys.stderr)
+        client.close()
+        return 1
 
     # Align director/zavuch usernames if explicitly requested
     if os.environ.get('UPDATE_USERNAMES'):

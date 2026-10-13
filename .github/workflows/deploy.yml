@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -15,11 +19,34 @@ jobs:
           host: 169.58.154.191
           username: root
           key: ${{ secrets.SSH_KEY }}
+          script_stop: true
           script: |
+            set -e
             cd /var/www/maorif_zafarobod
+            # Verified SQLite backup BEFORE any code or schema change.
+            # Online backup API is WAL-safe; quick_check validates the copy;
+            # mkdir (no -p) aborts rather than overwrite an existing backup.
+            # Backups are never deleted automatically.
+            BK="/root/maorif_backups_$(date +%Y%m%d_%H%M%S)"
+            mkdir "$BK"
+            /var/www/maorif_zafarobod/venv/bin/python -c "import sqlite3; s = sqlite3.connect('db.sqlite3'); d = sqlite3.connect('$BK/db.sqlite3'); s.backup(d); d.close(); s.close()"
+            QC=$(/var/www/maorif_zafarobod/venv/bin/python -c "import sqlite3; c = sqlite3.connect('$BK/db.sqlite3'); print(c.execute('PRAGMA quick_check').fetchone()[0]); c.close()")
+            test "$QC" = "ok"
+            sha256sum "$BK/db.sqlite3" > "$BK/db.sha256"
+            echo "Verified backup at $BK/db.sqlite3"
+            # Pre-deploy revision for code-only rollback. NOTE: rolling back
+            # code never restores the database and never affects the running
+            # gunicorn process until a restart. Old-code compatibility with a
+            # migrated schema is proven ONLY for the additive migrations
+            # reviewed in this release (0021-0024) — re-verify every release.
+            OLD_SHA=$(git rev-parse HEAD)
             git fetch origin main
             git reset --hard origin/main
-            /var/www/maorif_zafarobod/venv/bin/python manage.py migrate
+            /var/www/maorif_zafarobod/venv/bin/python manage.py migrate || {
+              echo "DEPLOY FAILED at migrate — rolling code back to $OLD_SHA; database left at last applied migration; NOT auto-restored."
+              git reset --hard "$OLD_SHA" || { echo "ROLLBACK FAILED — MANUAL INTERVENTION REQUIRED"; exit 2; }
+              exit 1
+            }
             /var/www/maorif_zafarobod/venv/bin/python -c "import sqlite3; c = sqlite3.connect('db.sqlite3'); print('journal_mode:', c.execute('PRAGMA journal_mode=WAL').fetchone()[0]); c.close()"
             /var/www/maorif_zafarobod/venv/bin/python manage.py collectstatic --noinput
             mkdir -p /var/log/gunicorn
@@ -32,3 +59,33 @@ jobs:
             systemctl daemon-reload
             systemctl enable gunicorn
             systemctl restart gunicorn
+            sleep 2
+            # Read-only smoke checks: no login, no writes, no sessions.
+            # Default urlopen follows redirects — the tabel check uses a
+            # NoRedirect opener so the original 302 surfaces via HTTPError.
+            # Any network error yields 0 and reaches the deliberate fail path.
+            SMOKE_LOGIN=$(/var/www/maorif_zafarobod/venv/bin/python -c "import urllib.request, urllib.error
+            try:
+                print(urllib.request.urlopen('http://127.0.0.1:8000/login/', timeout=10).status)
+            except urllib.error.HTTPError as e:
+                print(e.code)
+            except Exception:
+                print(0)" || echo 0)
+            SMOKE_TABEL=$(/var/www/maorif_zafarobod/venv/bin/python -c "import urllib.request, urllib.error
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, *args, **kwargs):
+                    return None
+            try:
+                print(urllib.request.build_opener(NoRedirect).open('http://127.0.0.1:8000/schools/documents/tabel/', timeout=10).status)
+            except urllib.error.HTTPError as e:
+                print(e.code)
+            except Exception:
+                print(0)" || echo 0)
+            if [ "$SMOKE_LOGIN" != "200" ] || [ "$SMOKE_TABEL" != "302" ]; then
+              echo "DEPLOY FAILED smoke check (login=$SMOKE_LOGIN expected 200; tabel=$SMOKE_TABEL expected 302) — rolling code back to $OLD_SHA; database NOT restored."
+              git reset --hard "$OLD_SHA" || { echo "ROLLBACK FAILED — MANUAL INTERVENTION REQUIRED"; exit 2; }
+              systemctl restart gunicorn || { echo "ROLLBACK RESTART FAILED — MANUAL INTERVENTION REQUIRED"; exit 2; }
+              echo "Rolled back to $OLD_SHA and restarted; old code serves on the migrated (additive) schema."
+              exit 1
+            fi
+            echo "Deployment completed successfully at $(git rev-parse --short HEAD)."

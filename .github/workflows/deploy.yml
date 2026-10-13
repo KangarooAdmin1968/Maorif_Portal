@@ -42,11 +42,15 @@ jobs:
             OLD_SHA=$(git rev-parse HEAD)
             git fetch origin main
             git reset --hard origin/main
-            /var/www/maorif_zafarobod/venv/bin/python manage.py migrate || {
+            # `if ! cmd; then` — NOT `cmd || {`: script_stop injects a
+            # guard line inside a multi-line `{ }` group, which would exit
+            # with migrate's status before the rollback runs. Inside `then`
+            # the injected guard sees $? = 0 and harmlessly continues.
+            if ! /var/www/maorif_zafarobod/venv/bin/python manage.py migrate; then
               echo "DEPLOY FAILED at migrate — rolling code back to $OLD_SHA; database left at last applied migration; NOT auto-restored."
               git reset --hard "$OLD_SHA" || { echo "ROLLBACK FAILED — MANUAL INTERVENTION REQUIRED"; exit 2; }
               exit 1
-            }
+            fi
             /var/www/maorif_zafarobod/venv/bin/python -c "import sqlite3; c = sqlite3.connect('db.sqlite3'); print('journal_mode:', c.execute('PRAGMA journal_mode=WAL').fetchone()[0]); c.close()"
             /var/www/maorif_zafarobod/venv/bin/python manage.py collectstatic --noinput
             mkdir -p /var/log/gunicorn
@@ -61,26 +65,17 @@ jobs:
             systemctl restart gunicorn
             sleep 2
             # Read-only smoke checks: no login, no writes, no sessions.
-            # Default urlopen follows redirects — the tabel check uses a
-            # NoRedirect opener so the original 302 surfaces via HTTPError.
-            # Any network error yields 0 and reaches the deliberate fail path.
-            SMOKE_LOGIN=$(/var/www/maorif_zafarobod/venv/bin/python -c "import urllib.request, urllib.error
-            try:
-                print(urllib.request.urlopen('http://127.0.0.1:8000/login/', timeout=10).status)
-            except urllib.error.HTTPError as e:
-                print(e.code)
-            except Exception:
-                print(0)" || echo 0)
-            SMOKE_TABEL=$(/var/www/maorif_zafarobod/venv/bin/python -c "import urllib.request, urllib.error
-            class NoRedirect(urllib.request.HTTPRedirectHandler):
-                def redirect_request(self, *args, **kwargs):
-                    return None
-            try:
-                print(urllib.request.build_opener(NoRedirect).open('http://127.0.0.1:8000/schools/documents/tabel/', timeout=10).status)
-            except urllib.error.HTTPError as e:
-                print(e.code)
-            except Exception:
-                print(0)" || echo 0)
+            # http.client never follows redirects, so the unauthenticated
+            # tabel check observes the original 302, not the login page it
+            # points at. Each check MUST stay a single physical line:
+            # script_stop makes drone-ssh inject an exit-code guard line
+            # after every script line, and a multi-line python -c places
+            # that shell guard inside the Python source (the previous
+            # deployment failure). A network or interpreter error exits
+            # nonzero; `|| echo 0` converts it to the 0 fail marker so
+            # `set -e` cannot kill the script before the rollback below.
+            SMOKE_LOGIN=$(/var/www/maorif_zafarobod/venv/bin/python -c "import http.client; c = http.client.HTTPConnection('127.0.0.1', 8000, timeout=10); c.request('GET', '/login/', headers={'Connection': 'close'}); r = c.getresponse(); r.read(); print(r.status)" || echo 0)
+            SMOKE_TABEL=$(/var/www/maorif_zafarobod/venv/bin/python -c "import http.client; c = http.client.HTTPConnection('127.0.0.1', 8000, timeout=10); c.request('GET', '/schools/documents/tabel/', headers={'Connection': 'close'}); r = c.getresponse(); r.read(); print(r.status)" || echo 0)
             if [ "$SMOKE_LOGIN" != "200" ] || [ "$SMOKE_TABEL" != "302" ]; then
               echo "DEPLOY FAILED smoke check (login=$SMOKE_LOGIN expected 200; tabel=$SMOKE_TABEL expected 302) — rolling code back to $OLD_SHA; database NOT restored."
               git reset --hard "$OLD_SHA" || { echo "ROLLBACK FAILED — MANUAL INTERVENTION REQUIRED"; exit 2; }

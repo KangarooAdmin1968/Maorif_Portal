@@ -1,0 +1,200 @@
+{% extends 'portal/base.html' %}
+{% load portal_extras %}
+{% block title %}Табели сарбории омӯзгорон{% endblock %}
+{% block extra_head %}
+<style>
+  .tabel-wrap { overflow-x: auto; }
+  table.tabel-table { border-collapse: collapse; min-width: 1500px; width: 100%; font-size: .82rem; }
+  table.tabel-table th, table.tabel-table td { border: 1px solid #9ca3af; padding: 3px 5px; text-align: center; vertical-align: middle; }
+  table.tabel-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
+  table.tabel-table td.subj-cell { text-align: left; }
+  table.tabel-table .subj-list { margin: 0; padding-left: 1rem; line-height: 1.4; }
+  table.tabel-table input[type="number"], table.tabel-table input[type="text"] {
+    width: 3.6rem; padding: 2px 3px; font-size: .82rem; text-align: center;
+    border: 1px solid #d1d5db; border-radius: .25rem;
+  }
+  table.tabel-table input.rate-input { width: 4.6rem; }
+  .frozen-badge { display: inline-block; font-size: .68rem; color: #065f46; background: #d1fae5; border-radius: .3rem; padding: 0 .35rem; }
+  .tabel-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+  .tabel-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .unassigned-box { border: 1px solid #f59e0b; background: #fffbeb; border-radius: .5rem; padding: .6rem .9rem; margin-bottom: 1rem; }
+  .unassigned-box h3 { margin: 0 0 .35rem; font-size: .95rem; color: #92400e; }
+  .unassigned-box ul { margin: 0; padding-left: 1.2rem; font-size: .82rem; color: #78350f; }
+  .payroll-note { font-size: .78rem; color: #6b7280; margin-top: .6rem; }
+  @media print {
+    .navbar, .site-footer, .tabel-toolbar, .messages, nav, header, footer { display: none !important; }
+    .container { max-width: 100%; padding: 0; margin: 0; }
+    table.tabel-table { font-size: 7.5pt; min-width: 100%; }
+    input { border: none !important; }
+    @page { size: A4 landscape; margin: 8mm; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>📋 Табели сарбории омӯзгорон</h1>
+
+{% if school %}
+<p style="color:#4b5563; margin:.25rem 0;">
+    <strong>{{ school.name }}</strong> — табели мохи <strong>{{ month_name }} соли {{ year }}</strong>
+</p>
+
+<div class="tabel-toolbar no-print">
+    <form method="get" action="{% url 'workload_tabel' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        {% if request.user.is_superuser and request.GET.school_id %}
+        <input type="hidden" name="school_id" value="{{ request.GET.school_id }}">
+        {% endif %}
+        <label>Моҳ
+            <input type="month" name="month" value="{{ month_value }}" min="2000-01" max="2100-12">
+        </label>
+        <button type="submit" class="btn">Нишон додан</button>
+    </form>
+    <a href="{% url 'workload_tabel_export' %}?month={{ month_value }}{% if request.user.is_superuser and request.GET.school_id %}&school_id={{ request.GET.school_id }}{% endif %}" class="btn btn-success">⬇️ Excel</a>
+    <a href="{% url 'school_documents' %}" class="btn">Ҳуҷҷатнигорӣ</a>
+    <button type="button" class="btn" onclick="window.print()">🖨️ Чоп</button>
+</div>
+
+{% if unassigned_count %}
+<div class="unassigned-box">
+    <h3>⚠️ {{ unassigned_count }} сарбории таъйинногарда</h3>
+    <p style="margin:0 0 .35rem; font-size:.82rem; color:#78350f;">
+        Ин фанҳо омӯзгор надоранд — дар «Тақсимоти дарсҳо» таъйин кунед, то онҳо ба табел ворид шаванд:
+    </p>
+    <ul>
+        {% for u in unassigned %}
+        <li>{{ u.class_name }} — {{ u.subject }} ({{ u.hours }} соат/ҳафта){% if u.note %} — <em>{{ u.note }}</em>{% endif %}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if unbanded_count %}
+<div class="unassigned-box">
+    <h3>⚠️ {{ unbanded_count }} сарборӣ берун аз синфҳои 1–11</h3>
+    <p style="margin:0 0 .35rem; font-size:.82rem; color:#78350f;">
+        Синфҳои зерин ба дастаҳои 1–4 / 5–9 / 10–11 ворид намешаванд — соатҳо дар ҷамъи табел ҳисоб нашудаанд, вале маълумот гумнамоӣ намешавад:
+    </p>
+    <ul>
+        {% for u in unbanded %}
+        <li>{{ u.teacher }} — {{ u.class_name }} — {{ u.subject }} ({{ u.hours }} соат/ҳафта)</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<form method="post" action="{% url 'workload_tabel_save' %}">
+    {% csrf_token %}
+    <input type="hidden" name="month" value="{{ month_value }}">
+    {% if request.user.is_superuser and request.GET.school_id %}
+    <input type="hidden" name="school_id" value="{{ request.GET.school_id }}">
+    {% endif %}
+
+<div class="tabel-wrap">
+<table class="tabel-table">
+    <thead>
+        <tr>
+            <th rowspan="2">№</th>
+            <th rowspan="2">Ному насаб</th>
+            <th rowspan="2">Фаннӣ таълимие, ки аз он дарс медиҳад</th>
+            <th rowspan="2">Музди меҳнати моҳона (1 ставка)</th>
+            <th colspan="3">Соатҳои ҳафта</th>
+            <th rowspan="2">Ҳамагӣ соат</th>
+            <th colspan="3">Соатҳои нагузашта</th>
+            <th colspan="3">Ивазкунии дарсҳо</th>
+            <th colspan="3">Тафтиши дафтар</th>
+            <th colspan="4">Иловапулиҳо (маблағ)</th>
+        </tr>
+        <tr>
+            <th>1–4</th><th>5–9</th><th>10–11</th>
+            <th>1–4</th><th>5–9</th><th>10–11</th>
+            <th>1–4</th><th>5–9</th><th>10–11</th>
+            <th>1–4</th><th>5–9</th><th>10–11</th>
+            <th>Роҳбари синф</th>
+            <th>Сарбории маъмурият</th>
+            <th>Иттиҳоди методӣ</th>
+            <th>Забони русӣ/англисӣ</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td style="text-align:left;">
+                {{ row.display_name }}
+                {% if row.frozen %}<span class="frozen-badge" title="Сарборӣ ҳангоми сабт сабит шудааст">сабтшуда</span>{% endif %}
+            </td>
+            <td class="subj-cell">
+                <ul class="subj-list">
+                    {% for it in row.items %}
+                    <li>{{ it.subject }} <em>({{ it.classes|join:', ' }})</em></li>
+                    {% empty %}
+                    <li>—</li>
+                    {% endfor %}
+                </ul>
+            </td>
+            <td>
+                {% if can_edit and row.teacher.school_id == school.id and not row.teacher.is_archived and not row.frozen %}
+                <input type="text" class="rate-input" inputmode="decimal" name="rate_{{ row.teacher.id }}" value="{{ row.display_rate|floatformat:'-2' }}">
+                {% else %}
+                {{ row.display_rate|floatformat:'-2'|default:'—' }}
+                {% endif %}
+            </td>
+            <td>{{ row.hours|dict_key:'1-4'|default:'' }}</td>
+            <td>{{ row.hours|dict_key:'5-9'|default:'' }}</td>
+            <td>{{ row.hours|dict_key:'10-11'|default:'' }}</td>
+            <td><strong>{{ row.total_hours|default:'' }}</strong></td>
+            {% if can_edit and row.teacher.school_id == school.id and not row.teacher.is_archived %}
+            <td><input type="text" inputmode="decimal" name="missed_1_4_{{ row.teacher.id }}" value="{{ row.monthly.missed_1_4|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="missed_5_9_{{ row.teacher.id }}" value="{{ row.monthly.missed_5_9|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="missed_10_11_{{ row.teacher.id }}" value="{{ row.monthly.missed_10_11|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="substitution_1_4_{{ row.teacher.id }}" value="{{ row.monthly.substitution_1_4|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="substitution_5_9_{{ row.teacher.id }}" value="{{ row.monthly.substitution_5_9|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="substitution_10_11_{{ row.teacher.id }}" value="{{ row.monthly.substitution_10_11|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="notebook_1_4_{{ row.teacher.id }}" value="{{ row.monthly.notebook_1_4|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="notebook_5_9_{{ row.teacher.id }}" value="{{ row.monthly.notebook_5_9|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="notebook_10_11_{{ row.teacher.id }}" value="{{ row.monthly.notebook_10_11|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="allowance_class_head_{{ row.teacher.id }}" value="{{ row.monthly.allowance_class_head|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="allowance_admin_{{ row.teacher.id }}" value="{{ row.monthly.allowance_admin|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="allowance_methodical_{{ row.teacher.id }}" value="{{ row.monthly.allowance_methodical|floatformat:'-2' }}"></td>
+            <td><input type="text" inputmode="decimal" name="allowance_language_{{ row.teacher.id }}" value="{{ row.monthly.allowance_language|floatformat:'-2' }}"></td>
+            {% else %}
+            <td>{{ row.monthly.missed_1_4|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.missed_5_9|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.missed_10_11|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.substitution_1_4|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.substitution_5_9|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.substitution_10_11|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.notebook_1_4|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.notebook_5_9|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.notebook_10_11|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.allowance_class_head|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.allowance_admin|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.allowance_methodical|floatformat:'-2'|default:'—' }}</td>
+            <td>{{ row.monthly.allowance_language|floatformat:'-2'|default:'—' }}</td>
+            {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="21">Ягон омӯзгори таъйиншуда ёфт нашуд. Аввал дар «Тақсимоти дарсҳо» омӯзгоронро таъйин кунед.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+{% if can_edit %}
+<div style="margin-top:.9rem;" class="no-print">
+    <button type="submit" class="btn btn-success">💾 Сабт кардан</button>
+</div>
+{% endif %}
+</form>
+
+<p class="payroll-note">
+    Соатҳои ҳафта аз «Тақсимоти дарсҳо» ва меъёри миллии таълимӣ ҳисоб мешаванд;
+    «Соати тарбиявӣ» низ дар сарбории омӯзгори таъйиншуда ҳисоб мешавад.
+    Устунҳои муҳоҷиратии музди меҳнат (ҳамагӣ, тарҳи маош) то тасдиқи қоидаҳои ҳисоббарӣ холӣ мемонанд.
+</p>
+
+{% else %}
+<div class="doc-card">
+    <p>Барои дидани табел бояд ба муассиса вобаста бошед.</p>
+</div>
+{% endif %}
+{% endblock %}

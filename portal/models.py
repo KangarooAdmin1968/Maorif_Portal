@@ -568,6 +568,16 @@ class TeacherProfile(models.Model):
     education = models.CharField('Маълумот', max_length=255, blank=True, null=True)
     specialty = models.CharField('Ихтисос', max_length=255, blank=True, null=True)
     custom_password_set = models.BooleanField('Рамзи шахсӣ таъин шуд', default=False)
+    # Stable payroll datum for the Ҳуҷҷатнигорӣ workload tabel (column D).
+    # Entered by the deputy principal; NULL renders blank, never zero.
+    monthly_rate = models.DecimalField(
+        'Музди меҳнати моҳона (1 ставка)', max_digits=10, decimal_places=2,
+        blank=True, null=True)
+    # Archived instead of deleted when TeacherTabelMonth history exists:
+    # the profile (and its months) survive; the login is deactivated and
+    # all live allocations are cleared. Archived profiles can never
+    # receive new allocations or new tabel entries.
+    is_archived = models.BooleanField('Бойгонӣ шуд', default=False)
 
     class Meta:
         verbose_name = 'Профили омӯзгор'
@@ -575,6 +585,81 @@ class TeacherProfile(models.Model):
 
     def __str__(self):
         return f"{self.full_name} — {self.school}"
+
+
+class TeacherTabelMonth(models.Model):
+    """Month-scoped tabel data for one teacher (Ҳуҷҷатнигорӣ → Табел).
+
+    Only data that has no other source of truth lives here: missed lessons,
+    substitutions, notebook-check hours and the payroll supplements the
+    deputy principal enters by hand. Weekly workload itself is computed
+    from ClassSubject allocations; ``workload_snapshot`` freezes a copy of
+    it the first time a month is recorded so that later re-allocation does
+    not silently rewrite a recorded month. NULLs mean "not entered" and
+    render as blank — never as zero.
+
+    ``school`` records which school owned the month at capture time, so a
+    teacher who transfers keeps their historical rows under the original
+    school instead of leaking them into the new school's tabel.
+    """
+    school = models.ForeignKey(
+        School, on_delete=models.CASCADE,
+        related_name='tabel_months', verbose_name='Мактаб')
+    # PROTECT: no deletion path (view, admin, shell) may silently destroy
+    # recorded payroll history — removal must archive the profile instead.
+    teacher = models.ForeignKey(
+        TeacherProfile, on_delete=models.PROTECT,
+        related_name='tabel_months', verbose_name='Омӯзгор')
+    year = models.PositiveSmallIntegerField('Сол')
+    month = models.PositiveSmallIntegerField('Моҳ')
+    # Identity frozen at first save so a recorded month keeps its name and
+    # rate after live profile edits. rates_snapshot is a list of rate-line
+    # dicts ({'line_no', 'title', 'rate'}; rate stored as a Decimal-safe
+    # string) — forward-compatible with the upcoming multi-rate design.
+    # NULL on legacy rows means "no snapshot": display falls back to live
+    # values rather than inventing history.
+    teacher_name = models.CharField(
+        'Ному насаб (акси сабт)', max_length=255, blank=True, null=True)
+    rates_snapshot = models.JSONField(
+        'Акси ставкаҳо', blank=True, null=True)
+    # Миқдори соатҳои нагузашта (missed lessons), per grade band
+    missed_1_4 = models.DecimalField('Нагузашта 1–4', max_digits=6, decimal_places=2, blank=True, null=True)
+    missed_5_9 = models.DecimalField('Нагузашта 5–9', max_digits=6, decimal_places=2, blank=True, null=True)
+    missed_10_11 = models.DecimalField('Нагузашта 10–11', max_digits=6, decimal_places=2, blank=True, null=True)
+    # Ивазкунии дарсҳо (substitutions), per grade band
+    substitution_1_4 = models.DecimalField('Ивазкунӣ 1–4', max_digits=6, decimal_places=2, blank=True, null=True)
+    substitution_5_9 = models.DecimalField('Ивазкунӣ 5–9', max_digits=6, decimal_places=2, blank=True, null=True)
+    substitution_10_11 = models.DecimalField('Ивазкунӣ 10–11', max_digits=6, decimal_places=2, blank=True, null=True)
+    # Тафтиши дафтар (notebook check), per grade band
+    notebook_1_4 = models.DecimalField('Тафтиши дафтар 1–4', max_digits=6, decimal_places=2, blank=True, null=True)
+    notebook_5_9 = models.DecimalField('Тафтиши дафтар 5–9', max_digits=6, decimal_places=2, blank=True, null=True)
+    notebook_10_11 = models.DecimalField('Тафтиши дафтар 10–11', max_digits=6, decimal_places=2, blank=True, null=True)
+    # Иловапулиҳо — entered amounts; the portal does not compute payroll.
+    allowance_class_head = models.DecimalField('Иловапулӣ роҳбари синф', max_digits=10, decimal_places=2, blank=True, null=True)
+    allowance_admin = models.DecimalField('Сарбории маъмурият', max_digits=10, decimal_places=2, blank=True, null=True)
+    allowance_methodical = models.DecimalField('Иловапулӣ роҳбари иттиҳоди методӣ', max_digits=10, decimal_places=2, blank=True, null=True)
+    allowance_language = models.DecimalField('Иловапулӣ забони русӣ/англисӣ', max_digits=10, decimal_places=2, blank=True, null=True)
+    workload_snapshot = models.JSONField('Акси сарборӣ', blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['school', 'teacher', 'year', 'month'],
+                name='unique_tabel_month_per_teacher_school',
+            ),
+        ]
+        verbose_name = 'Табели моҳонаи омӯзгор'
+        verbose_name_plural = 'Табелҳои моҳонаи омӯзгорон'
+        ordering = ['year', 'month', 'teacher']
+
+    def __str__(self):
+        return f"{self.teacher} — {self.year}-{self.month:02d}"
+
+    def clean(self):
+        if not self.month or not 1 <= self.month <= 12:
+            raise ValidationError('Моҳ бояд аз 1 то 12 бошад.')
 
 
 class SubjectDeactivationRequest(models.Model):

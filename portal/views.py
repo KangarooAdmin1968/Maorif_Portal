@@ -3,7 +3,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
 from django.db import connection, transaction
-from django.db.models import Avg, Count, Sum, Q, Max
+from django.db.models import Avg, Count, Sum, Q, Max, ProtectedError
 from django.core.cache import cache
 import calendar
 import io
@@ -14,6 +14,7 @@ import time
 import urllib.parse
 import datetime
 from collections import defaultdict
+from decimal import InvalidOperation
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Side
@@ -25,7 +26,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, CLASS_LETTERS
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, CLASS_LETTERS
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -38,6 +39,15 @@ from .utils import (
 from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
     weekly_hours, quarter_min_norm,
+)
+from .tabel import (
+    BAND_KEYS, MONTH_NAMES_TJ,
+    MONTHLY_BAND_FIELDS, MONTHLY_ALLOWANCE_FIELDS,
+    MAX_MONTHLY_HOURS, MAX_MONEY_VALUE,
+    _user_to_profile_map,
+    build_tabel_workbook, merge_workload_and_monthly,
+    parse_decimal, parse_month_param, teacher_workload,
+    workload_snapshot,
 )
 from .monitoring import (
     can_access_monitoring, get_activity_summary, scope_monitoring_stats,
@@ -5046,12 +5056,45 @@ def remove_teacher(request, school_id):
         return redirect('teacher_list', school_id=school.id)
 
     full_name = teacher.name
-    teacher_profile = TeacherProfile.objects.filter(school=school, full_name=full_name).first()
-    if teacher_profile:
-        teacher_profile.user.delete()
+    teacher_profile = TeacherProfile.objects.filter(
+        school=school, full_name=full_name).first()
+    archived = False
+    if teacher_profile and not teacher_profile.is_archived:
+        has_history = teacher_profile.tabel_months.exists()
+        if not has_history:
+            try:
+                # No recorded months — legacy hard-delete is still safe.
+                teacher_profile.user.delete()
+            except ProtectedError:
+                # A tabel month was recorded between the exists() check and
+                # the delete — fall back to the archive path rather than
+                # returning a 500 for this expected race.
+                has_history = True
+        if has_history:
+            # Historical tabel records must survive: archive the profile,
+            # deactivate the login, and clear live allocations — the same
+            # attribution cleanup the old cascade performed via SET_NULL.
+            with transaction.atomic():
+                teacher_profile.is_archived = True
+                teacher_profile.save(update_fields=['is_archived'])
+                user = teacher_profile.user
+                user.is_active = False
+                user.save(update_fields=['is_active'])
+                ClassSubject.objects.filter(teacher=user).update(teacher=None)
+                ClassSubject.objects.filter(
+                    allocated_teacher=teacher_profile).update(
+                    allocated_teacher=None)
+                TeachingGroup.objects.filter(
+                    teacher=teacher_profile).update(teacher=None)
+            archived = True
     teacher.delete()
 
-    messages.success(request, f'Омӯзгор {full_name} хориҷ карда шуд.')
+    if archived:
+        messages.success(
+            request,
+            f'Омӯзгор {full_name} бойгонӣ шуд — таърихи табел ҳифз шуд.')
+    else:
+        messages.success(request, f'Омӯзгор {full_name} хориҷ карда шуд.')
     return redirect('teacher_list', school_id=school.id)
 
 
@@ -5082,7 +5125,7 @@ def edit_teacher(request, school_id):
     list_url = f"{reverse('teacher_list', args=[school.id])}#teacher-{teacher.id}"
     profiles = list(
         TeacherProfile.objects
-        .filter(school=school, full_name=old_name)
+        .filter(school=school, full_name=old_name, is_archived=False)
         .select_related('user'))
 
     # Ambiguous or missing account identity: abort the entire edit so a
@@ -5319,9 +5362,11 @@ def lesson_allocation(request):
     class_subjects = ClassSubject.objects.filter(
         school=school, is_active=True
     ).select_related('allocated_teacher', 'teacher').prefetch_related('groups').order_by('class_name', 'subject')
-    teachers = TeacherProfile.objects.filter(school=school).select_related('user').order_by('full_name')
+    teachers = TeacherProfile.objects.filter(school=school, is_archived=False).select_related('user').order_by('full_name')
 
-    user_to_profile = {tp.user_id: tp.id for tp in teachers}
+    user_to_profile = {
+        tp.user_id: tp.id for tp in teachers if tp.user_id is not None
+    }
     for cs in class_subjects:
         cs.selected_profile_id = cs.allocated_teacher_id or user_to_profile.get(cs.teacher_id)
         # Explicitly saved weekly hours win; otherwise show the national
@@ -5380,7 +5425,8 @@ def save_lesson_allocation(request):
         cs.id: cs for cs in ClassSubject.objects.filter(id__in=cs_ids, school=school, is_active=True)
     }
     teacher_map = {
-        tp.id: tp for tp in TeacherProfile.objects.filter(school=school)
+        tp.id: tp for tp in TeacherProfile.objects.filter(
+            school=school, is_archived=False)
     }
 
     updated = []
@@ -5510,7 +5556,8 @@ def class_groups(request, cs_id):
         {'id': s.id, 'name': s.full_name, 'gender': s.gender or ''}
         for s in students
     ]
-    teachers = TeacherProfile.objects.filter(school=school).order_by('full_name')
+    teachers = TeacherProfile.objects.filter(
+        school=school, is_archived=False).order_by('full_name')
 
     groups = sorted(
         (g for g in cs.groups.filter(is_active=True).prefetch_related('memberships')),
@@ -5581,7 +5628,8 @@ def save_class_groups(request, cs_id):
 
     teacher_map = {
         str(tp.id): tp
-        for tp in TeacherProfile.objects.filter(school=school)
+        for tp in TeacherProfile.objects.filter(
+            school=school, is_archived=False)
     }
     teachers = []
     for i, tid in enumerate(teacher_ids):
@@ -6180,8 +6228,10 @@ def school_readiness_rating(request):
     for cs in class_subjects:
         school_cs[cs.school_id].append(cs)
     profiles_by_school = defaultdict(dict)
-    for tp in TeacherProfile.objects.filter(school_id__in=school_ids):
-        profiles_by_school[tp.school_id][tp.user_id] = tp
+    for tp in TeacherProfile.objects.filter(
+            school_id__in=school_ids, is_archived=False):
+        if tp.user_id is not None:
+            profiles_by_school[tp.school_id][tp.user_id] = tp
 
     def class_sort(cn):
         return (class_numeric_part(cn) or 0, cn)
@@ -6337,9 +6387,8 @@ def school_documents(request):
         ).select_related('allocated_teacher', 'teacher').prefetch_related(
             'groups__teacher'
         ).order_by('class_name', 'subject')
-        user_to_profile = {
-            tp.user_id: tp for tp in TeacherProfile.objects.filter(school=school)
-        }
+        user_to_profile = _user_to_profile_map(
+            TeacherProfile.objects.filter(school=school, is_archived=False))
 
         hours_map = getattr(settings, 'TJC_SUBJECT_HOURS', {})
         default_hours = getattr(settings, 'TJC_SUBJECT_HOURS_DEFAULT', 2)
@@ -6412,6 +6461,239 @@ def school_documents(request):
         'school': school,
         'workload': workload,
     })
+
+
+# ---------------------------------------------------------------------------
+# Табел — automated teacher workload tabel (monthly).
+#
+# Reuses the Ҳуҷҷатнигорӣ gate and school isolation; weekly hours come from
+# portal.tabel.teacher_workload (curriculum_hours resolver), and the deputy
+# principal's manual monthly data lives in TeacherTabelMonth.
+# ---------------------------------------------------------------------------
+
+def _tabel_access(user):
+    """Same audience as school_documents: superuser, staff, or school zavuch."""
+    role = get_user_role(user)
+    return user.is_superuser or user.is_staff or _is_zavuch(user, role)
+
+
+def _tabel_school(request):
+    """User's own school; a superuser may inspect another school via id."""
+    school = get_user_school(request.user)
+    if request.user.is_superuser:
+        school_id = request.GET.get('school_id') or request.POST.get('school_id')
+        if school_id:
+            try:
+                school = School.objects.get(pk=int(school_id))
+            except (ValueError, School.DoesNotExist):
+                pass
+    return school
+
+
+def _tabel_month(request):
+    """(year, month, invalid) from ?month=YYYY-MM; defaults to current month."""
+    raw = request.GET.get('month') or request.POST.get('month') or ''
+    parsed = parse_month_param(raw)
+    if parsed:
+        return parsed[0], parsed[1], False
+    today = timezone.localdate()
+    return today.year, today.month, bool(raw)
+
+
+def _tabel_redirect(school, year, month):
+    url = f"{reverse('workload_tabel')}?month={year}-{month:02d}"
+    if school:
+        url += f"&school_id={school.id}"
+    return redirect(url)
+
+
+def _tabel_display_data(school, year, month):
+    """Display rows + warnings + saved-month map for one school/month."""
+    workload_rows, unassigned, unbanded = teacher_workload(school)
+    # Month rows are owned by the school that recorded them: a transferred
+    # teacher's historical rows stay under the original school.
+    monthly_map = {
+        m.teacher_id: m for m in TeacherTabelMonth.objects.filter(
+            school=school, year=year, month=month)
+    }
+    return (
+        merge_workload_and_monthly(workload_rows, monthly_map),
+        unassigned,
+        unbanded,
+        monthly_map,
+    )
+
+
+@login_required
+def workload_tabel(request):
+    """Ҳуҷҷатнигорӣ → Табел: monthly workload grid with manual entries."""
+    if not _tabel_access(request.user):
+        return redirect('dashboard')
+    school = _tabel_school(request)
+    if school and not has_school_access(request.user, school):
+        return redirect('dashboard')
+    year, month, invalid_month = _tabel_month(request)
+    if invalid_month:
+        messages.warning(request, 'Моҳи нодуруст — моҳи ҷорӣ нишон дода шуд.')
+
+    display_rows, unassigned, unbanded = [], [], []
+    if school:
+        display_rows, unassigned, unbanded, _ = _tabel_display_data(
+            school, year, month)
+
+    role = get_user_role(request.user)
+    can_edit = bool(school) and (
+        request.user.is_superuser
+        or (_is_zavuch(request.user, role) and get_user_school(request.user) == school)
+    )
+    return render(request, 'portal/workload_tabel.html', {
+        'school': school,
+        'rows': display_rows,
+        'unassigned': unassigned,
+        'unassigned_count': len(unassigned),
+        'unbanded': unbanded,
+        'unbanded_count': len(unbanded),
+        'year': year,
+        'month': month,
+        'month_name': MONTH_NAMES_TJ[month],
+        'month_value': f'{year}-{month:02d}',
+        'can_edit': can_edit,
+    })
+
+
+@login_required
+@require_POST
+def workload_tabel_save(request):
+    """Persist deputy-entered tabel data for one school+month.
+
+    TeacherProfile.monthly_rate (stable) and TeacherTabelMonth rows
+    (month-scoped, owned by this school) are the only writes; the workload
+    snapshot is frozen once — when the month row is first created — so
+    later re-allocation or follow-up edits cannot silently rewrite a
+    recorded month.
+    """
+    role = get_user_role(request.user)
+    if not (request.user.is_superuser or _is_zavuch(request.user, role)):
+        messages.error(request, 'Дастрасӣ маҳдуд аст.')
+        return redirect('dashboard')
+    school = _tabel_school(request)
+    if not school or not has_school_access(request.user, school):
+        return redirect('dashboard')
+    parsed_month = parse_month_param(request.POST.get('month'))
+    if not parsed_month:
+        messages.error(request, 'Моҳи нодуруст.')
+        return redirect('workload_tabel')
+    year, month = parsed_month
+
+    profiles = {
+        tp.id: tp for tp in TeacherProfile.objects.filter(
+            school=school, is_archived=False)
+    }
+    workload_rows, _, _ = teacher_workload(school)
+    workload_by_teacher = {r['teacher'].id: r for r in workload_rows}
+    monthly_map = {
+        m.teacher_id: m for m in TeacherTabelMonth.objects.filter(
+            school=school, year=year, month=month)
+    }
+
+    hourly_fields = [f for fields in MONTHLY_BAND_FIELDS.values() for f in fields]
+    money_fields = list(MONTHLY_ALLOWANCE_FIELDS)
+    invalid = []
+    saved_teachers = 0
+    for tp in profiles.values():
+        raw_rate = request.POST.get(f'rate_{tp.id}')
+        if raw_rate is not None:
+            try:
+                rate = parse_decimal(raw_rate, max_value=MAX_MONEY_VALUE)
+                if tp.monthly_rate != rate:
+                    tp.monthly_rate = rate
+                    tp.save(update_fields=['monthly_rate'])
+            except (InvalidOperation, ValueError):
+                invalid.append(tp.full_name)
+
+        updates = {}
+        has_value = False
+        for field in hourly_fields + money_fields:
+            raw = request.POST.get(f'{field}_{tp.id}')
+            if raw is None:
+                continue
+            limit = MAX_MONTHLY_HOURS if field in hourly_fields else MAX_MONEY_VALUE
+            try:
+                value = parse_decimal(raw, max_value=limit)
+            except (InvalidOperation, ValueError):
+                invalid.append(tp.full_name)
+                continue
+            updates[field] = value
+            if value is not None:
+                has_value = True
+        if not updates:
+            continue
+
+        row = monthly_map.get(tp.id)
+        if row is None and not has_value:
+            continue  # nothing entered — do not create an empty month row
+        with transaction.atomic():
+            if row is None:
+                # get_or_create is race-safe under the uniqueness
+                # constraint; the snapshot is frozen only on first save
+                # and is never refreshed by later edits.
+                row, created = TeacherTabelMonth.objects.get_or_create(
+                    school=school, teacher=tp, year=year, month=month)
+                if created:
+                    workload_row = workload_by_teacher.get(tp.id)
+                    row.workload_snapshot = (
+                        workload_snapshot(workload_row) if workload_row else {
+                            'items': [], 'hours': {b: 0 for b in BAND_KEYS},
+                            'total_hours': 0, 'subjects': '',
+                        })
+                    # Identity + rate freeze, same once-only contract as
+                    # workload_snapshot — later profile edits and later
+                    # saves must never rewrite a recorded month.
+                    row.teacher_name = tp.full_name
+                    row.rates_snapshot = [{
+                        'line_no': 1,
+                        'title': '',
+                        'rate': (str(tp.monthly_rate)
+                                 if tp.monthly_rate is not None else None),
+                    }]
+            for field, value in updates.items():
+                setattr(row, field, value)
+            row.save()
+        saved_teachers += 1
+
+    if invalid:
+        messages.warning(
+            request,
+            'Қиматҳои нодуруст рад шуданд: %s' % ', '.join(sorted(set(invalid))),
+        )
+    messages.success(request, 'Табел барои %d омӯзгор сабт шуд.' % saved_teachers)
+    return _tabel_redirect(school if request.user.is_superuser else None, year, month)
+
+
+@login_required
+def workload_tabel_export(request):
+    """Excel export of the monthly tabel, preserving columns A–AB of the
+    official template (payroll-derived cells stay blank for now)."""
+    if not _tabel_access(request.user):
+        return redirect('dashboard')
+    school = _tabel_school(request)
+    if not school or not has_school_access(request.user, school):
+        return redirect('dashboard')
+    year, month, invalid_month = _tabel_month(request)
+    if invalid_month:
+        messages.warning(request, 'Моҳи нодуруст — моҳи ҷорӣ содир карда мешавад.')
+
+    display_rows, _, _, _ = _tabel_display_data(school, year, month)
+    output = build_tabel_workbook(school, year, month, display_rows)
+
+    filename = f"Табел_{get_school_number(school)}_{year}-{month:02d}.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
+    return response
 
 
 @login_required

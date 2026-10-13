@@ -8,7 +8,8 @@ from django.utils import timezone
 from .forms import ClassSubjectAdminForm, BulkClassSubjectForm
 from .models import (
     School, Teacher, Student, Grade, QuarterGrade, QuarterLock,
-    ClassSubject, UserProfile, SubjectDeactivationRequest,
+    ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth,
+    SubjectDeactivationRequest,
     Lesson, Assessment, SubjectAvailability,
     normalize_class_name, normalize_subject,
 )
@@ -287,3 +288,17 @@ class QuarterLockAdmin(admin.ModelAdmin):
 class UserProfileAdmin(admin.ModelAdmin):
     list_display = ['user', 'role', 'school', 'assigned_class', 'assigned_subject']
     list_filter = ['role', 'school']
+
+
+@admin.register(TeacherProfile)
+class TeacherProfileAdmin(admin.ModelAdmin):
+    list_display = ['full_name', 'school', 'user', 'monthly_rate', 'is_archived']
+    list_filter = ['school', 'is_archived']
+    search_fields = ['full_name', 'user__username']
+
+
+@admin.register(TeacherTabelMonth)
+class TeacherTabelMonthAdmin(admin.ModelAdmin):
+    list_display = ['teacher', 'school', 'year', 'month', 'updated_at']
+    list_filter = ['school', 'year', 'month']
+    search_fields = ['teacher__full_name']

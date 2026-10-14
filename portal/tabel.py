@@ -343,6 +343,21 @@ _COLUMN_WIDTHS = {
 ROWS_PER_TEACHER = 3  # each teacher block in the template spans 3 rows
 FIRST_DATA_ROW = 6
 
+# Payroll formulas verified against the official workbook. Every cell is
+# guarded by IF(D…="","") — a missing rate renders blank, not a
+# misleading zero salary. Blank inputs evaluate as zero inside Excel
+# arithmetic, so unset monthly fields never error.
+_PAYROLL_FORMULAS = {
+    'H': '=IF(D{r}="","",D{r}/20*E{r})',
+    'I': '=IF(D{r}="","",D{r}/18*F{r})',
+    'J': '=IF(D{r}="","",D{r}/18*G{r})',
+    'K': '=IF(D{r}="","",SUM(H{r}:J{r}))',
+    'O': '=IF(D{r}="","",(D{r}/80*L{r})+(D{r}/72*M{r})+(D{r}/72*N{r}))',
+    'S': '=IF(D{r}="","",(D{r}/80*P{r})+(D{r}/72*Q{r})+(D{r}/72*R{r}))',
+    'W': '=IF(D{r}="","",(D{r}/18*20%*U{r})+(D{r}/18*20%*V{r})+(D{r}/20*20%*T{r}))',
+    'AB': '=IF(D{r}="","",K{r}-O{r}+S{r}+W{r}+X{r}+Y{r}+Z{r}+AA{r})',
+}
+
 
 def _num_or_blank(value):
     """Hours/amounts render as numbers; unset values stay blank (never zero)."""
@@ -354,11 +369,13 @@ def _num_or_blank(value):
 def build_tabel_workbook(school, year, month, display_rows):
     """Build the official-style табел workbook for one school+month.
 
-    Populates only verified data: № (A), name (B), subjects (C), the
+    Populates verified data — № (A), name (B), subjects (C), the
     deputy-entered monthly rate (D), weekly hours per band (E–G), and the
-    manually captured monthly hours/amounts (L–N, P–R, T–V, X–AA).
-    Payroll-derived cells (H–K, O, S, W, AB) stay blank until the payroll
-    rules are confirmed. Column AC is never touched.
+    manually captured monthly hours/amounts (L–N, P–R, T–V, X–AA) — and
+    writes the payroll formulas verified against the official workbook on
+    all three rows of each teacher block: band pay H–J, totals K,
+    missed-hours deduction O, substitution S, notebook-check W, and the
+    month total AB = K−O+S+W+X+Y+Z+AA. Column AC is never touched.
     """
     wb = Workbook()
     ws = wb.active
@@ -446,6 +463,10 @@ def build_tabel_workbook(school, year, month, display_rows):
                 if value is not None:
                     ws.cell(row=r, column=col_idx, value=value)
 
+        for block_row in range(r, r_end + 1):
+            for col_letter, template in _PAYROLL_FORMULAS.items():
+                ws[f'{col_letter}{block_row}'] = template.format(r=block_row)
+
         for block_row in ws.iter_rows(min_row=r, max_row=r_end, min_col=1, max_col=28):
             for cell in block_row:
                 cell.border = _BORDER
@@ -464,6 +485,10 @@ def build_tabel_workbook(school, year, month, display_rows):
     if director and director != 'Номи директор':
         director_text = f"{director_text}   {director}"
     ws.cell(row=footer_row, column=11, value=director_text).font = _HEADER_FONT
+
+    # openpyxl stores formulas without calculated results — force
+    # Excel/LibreOffice to recalculate when the file is opened.
+    wb.calculation.fullCalcOnLoad = True
 
     output = io.BytesIO()
     wb.save(output)

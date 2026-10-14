@@ -9,6 +9,7 @@ export's preserved A–AB structure.
 """
 import importlib
 import io
+import re
 from decimal import Decimal
 from unittest import mock
 
@@ -18,6 +19,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
 from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string, get_column_letter
 
 from portal.curriculum_hours import CURRICULUM_HOURS, DEFAULT_WEEKLY_HOURS
 from django.db.models import ProtectedError
@@ -38,6 +40,158 @@ TAJIK = 'ЗАБОНИ ТОҶИКӢ'
 TARBIYAVI = 'СОАТИ ТАРБИЯВӢ'
 MONTH = '2026-08'
 MONTH_Y, MONTH_M = 2026, 8
+
+# --- Formula evaluator ----------------------------------------------------
+# openpyxl stores formulas without calculated results; this evaluator
+# verifies their arithmetic semantics without a spreadsheet engine. It
+# supports exactly the grammar the tabel emits: cell refs, numbers, the
+# postfix % operator, + - * /, parentheses, SUM(range) and the
+# IF(ref="","",expr) guard — evaluated lazily like Excel, so a guarded
+# branch never computes on blank operands.
+
+_FORMULA_TOKEN = re.compile(
+    r'\s*(IF\(|SUM\(|\$?[A-Z]{1,2}\d+|""|\d+(?:\.\d+)?|[+\-*/%(),=:])')
+
+
+class TabelFormulaEvaluator:
+    """Evaluate exported tabel formulas against worksheet cells.
+
+    ``value(coord)`` returns a Decimal for numeric results, '' for the
+    IF-guard blank, or the raw cell value for literal cells.
+    """
+
+    def __init__(self, ws):
+        self._ws = ws
+        self._cache = {}
+
+    def value(self, coord):
+        if coord not in self._cache:
+            raw = self._ws[coord].value
+            self._cache[coord] = (
+                self._eval_text(raw[1:])
+                if isinstance(raw, str) and raw.startswith('=') else raw)
+        return self._cache[coord]
+
+    def _num(self, value):
+        if value in (None, ''):
+            return Decimal(0)
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+
+    def _eval_text(self, text):
+        # Save/restore so evaluating a referenced cell mid-parse (e.g. AB6
+        # pulling in K6) does not corrupt the outer token stream.
+        outer = getattr(self, '_tokens', None), getattr(self, '_pos', 0)
+        self._tokens = _FORMULA_TOKEN.findall(text)
+        self._pos = 0
+        result = self._expr()
+        assert self._pos == len(self._tokens), 'unparsed formula tail'
+        self._tokens, self._pos = outer
+        return result
+
+    def _eval_tokens(self, tokens):
+        outer_tokens, outer_pos = self._tokens, self._pos
+        self._tokens, self._pos = tokens, 0
+        result = self._expr()
+        assert self._pos == len(tokens), 'unparsed formula tail'
+        self._tokens, self._pos = outer_tokens, outer_pos
+        return result
+
+    def _peek(self, offset=0):
+        index = self._pos + offset
+        return self._tokens[index] if index < len(self._tokens) else None
+
+    def _pop(self):
+        token = self._peek()
+        self._pos += 1
+        return token
+
+    def _expr(self):
+        if self._peek() == 'IF(':
+            return self._if()
+        if self._peek() == '""':
+            self._pop()
+            return ''
+        if (re.fullmatch(r'\$?[A-Z]{1,2}\d+', self._peek() or '')
+                and self._peek(1) == '='):
+            ref = self._pop()
+            self._pop()  # '='
+            lit = self._pop()
+            raw = self.value(ref.lstrip('$'))
+            if lit == '""':
+                return raw in (None, '')
+            return self._num(raw) == Decimal(lit)
+        return self._additive()
+
+    def _if(self):
+        self._pop()  # 'IF('
+        # Split the three arguments on top-level commas and evaluate only
+        # the taken branch — Excel-style lazy evaluation.
+        parts, depth = [[]], 0
+        while True:
+            token = self._pop()
+            assert token is not None, 'unbalanced IF('
+            if token in ('IF(', 'SUM(', '('):
+                depth += 1
+            elif token == ')':
+                if depth == 0:
+                    break
+                depth -= 1
+            if token == ',' and depth == 0:
+                parts.append([])
+            else:
+                parts[-1].append(token)
+        assert len(parts) == 3, 'IF() needs 3 arguments'
+        branch = parts[1] if self._eval_tokens(parts[0]) else parts[2]
+        return self._eval_tokens(branch)
+
+    def _additive(self):
+        value = self._term()
+        while self._peek() in ('+', '-'):
+            op = self._pop()
+            rhs = self._term()
+            value = value + rhs if op == '+' else value - rhs
+        return value
+
+    def _term(self):
+        value = self._postfix()
+        while self._peek() in ('*', '/'):
+            op = self._pop()
+            rhs = self._postfix()
+            value = value * rhs if op == '*' else value / rhs
+        return value
+
+    def _postfix(self):
+        value = self._num(self._atom())
+        while self._peek() == '%':
+            self._pop()
+            value /= Decimal(100)
+        return value
+
+    def _atom(self):
+        token = self._pop()
+        if token == '(':
+            value = self._expr()
+            assert self._pop() == ')'
+            return value
+        if token == 'SUM(':
+            cells = self._range()
+            return sum(
+                (self._num(self.value(c)) for c in cells), Decimal(0))
+        if re.fullmatch(r'\$?[A-Z]{1,2}\d+', token):
+            return self.value(token.lstrip('$'))
+        return Decimal(token)
+
+    def _range(self):
+        m_start = re.fullmatch(r'([A-Z]+)(\d+)', self._pop())
+        assert self._pop() == ':'
+        m_end = re.fullmatch(r'([A-Z]+)(\d+)', self._pop())
+        assert self._pop() == ')'
+        cols = range(column_index_from_string(m_start.group(1)),
+                     column_index_from_string(m_end.group(1)) + 1)
+        rows = range(int(m_start.group(2)), int(m_end.group(2)) + 1)
+        return [f'{get_column_letter(c)}{r}' for c in cols for r in rows]
 
 
 class TabelWorkloadServiceTests(GoldenBase):
@@ -607,13 +761,15 @@ class TabelExportTests(GoldenBase):
         self.assertEqual(ws['F6'].value, DEFAULT_WEEKLY_HOURS)
         self.assertIsNone(ws['G6'].value)
 
-    def test_payroll_columns_left_blank(self):
+    def test_payroll_columns_have_guarded_formulas(self):
         wb = self._export({'month': MONTH})
         ws = wb.active
         for col in ('H', 'I', 'J', 'K', 'O', 'S', 'W', 'AB'):
             for row in range(6, 9):
-                self.assertIsNone(
-                    ws[f'{col}{row}'].value, f'{col}{row} must stay blank')
+                self.assertTrue(
+                    str(ws[f'{col}{row}'].value).startswith(
+                        f'=IF(D{row}='),
+                    f'{col}{row} must carry the guarded payroll formula')
         # Column AC is never used.
         for row in range(1, ws.max_row + 1):
             self.assertIsNone(ws.cell(row=row, column=29).value)
@@ -905,3 +1061,207 @@ class TabelIntegrityTests(GoldenBase):
         # Rows that already carry a snapshot are left untouched.
         self.assertEqual(preset.teacher_name, 'Таҳририй')
         self.assertEqual(preset.rates_snapshot[0]['rate'], '100.00')
+
+
+class TabelPayrollFormulaTests(GoldenBase):
+    """Stage 2B.1 — payroll formulas H–K, O, S, W, AB in the export.
+
+    Formula strings are asserted verbatim and their arithmetic is checked
+    with TabelFormulaEvaluator; openpyxl itself computes nothing.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('workload_tabel_export')
+        self.save_url = reverse('workload_tabel_save')
+        self.profile_a = make_teacher_profile(
+            self.teacher_a, self.school_a, full_name='Омӯзгор А')
+
+    def _export(self, params=None):
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, params or {'month': MONTH})
+        self.assertEqual(r.status_code, 200)
+        return load_workbook(io.BytesIO(r.content))
+
+    def _sheet(self, params=None):
+        ws = self._export(params).active
+        return ws, TabelFormulaEvaluator(ws)
+
+    def test_formula_strings_all_three_block_rows(self):
+        ws, _ = self._sheet()
+        bodies = {
+            'H': 'D{r}/20*E{r}',
+            'I': 'D{r}/18*F{r}',
+            'J': 'D{r}/18*G{r}',
+            'K': 'SUM(H{r}:J{r})',
+            'O': '(D{r}/80*L{r})+(D{r}/72*M{r})+(D{r}/72*N{r})',
+            'S': '(D{r}/80*P{r})+(D{r}/72*Q{r})+(D{r}/72*R{r})',
+            'W': '(D{r}/18*20%*U{r})+(D{r}/18*20%*V{r})+(D{r}/20*20%*T{r})',
+            'AB': 'K{r}-O{r}+S{r}+W{r}+X{r}+Y{r}+Z{r}+AA{r}',
+        }
+        for r in (6, 7, 8):  # all three rows of the teacher block
+            for col, body in bodies.items():
+                self.assertEqual(
+                    ws[f'{col}{r}'].value,
+                    f'=IF(D{r}="","",{body.format(r=r)})',
+                    f'{col}{r}')
+
+    def test_second_teacher_formulas_reference_own_row(self):
+        other = make_user('teacher_z', role='teacher', school=self.school_a)
+        profile_z = make_teacher_profile(other, self.school_a, 'Омӯзгор З')
+        make_class_subject(self.school_a, '9-В', MATH, allocated=profile_z)
+        ws, _ = self._sheet()
+        # 'Омӯзгор А' sorts before 'Омӯзгор З' -> blocks at rows 6 and 9.
+        self.assertEqual(ws['B9'].value, 'Омӯзгор З')
+        self.assertEqual(ws['H9'].value, '=IF(D9="","",D9/20*E9)')
+        self.assertEqual(ws['AB9'].value,
+                         '=IF(D9="","",K9-O9+S9+W9+X9+Y9+Z9+AA9)')
+
+    def test_base_pay_and_total_evaluate(self):
+        self.profile_a.monthly_rate = Decimal('2479')
+        self.profile_a.save()
+        ws, ev = self._sheet()
+        # cs_a: 7-А МАТЕМАТИКА -> F6=DEFAULT_WEEKLY_HOURS, E6/G6 blank.
+        rate = Decimal('2479')
+        self.assertEqual(ev.value('H6'), Decimal(0))
+        self.assertEqual(ev.value('I6'), rate / 18 * DEFAULT_WEEKLY_HOURS)
+        self.assertEqual(ev.value('J6'), Decimal(0))
+        self.assertEqual(ev.value('K6'), rate / 18 * DEFAULT_WEEKLY_HOURS)
+
+    def test_decimal_inputs_evaluate(self):
+        self.profile_a.monthly_rate = Decimal('2479')
+        self.profile_a.save()
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {
+            'month': MONTH,
+            f'missed_5_9_{self.profile_a.id}': '3',
+            f'missed_10_11_{self.profile_a.id}': '1.5',
+            f'substitution_1_4_{self.profile_a.id}': '2.5',
+            f'notebook_5_9_{self.profile_a.id}': '4',
+            f'allowance_class_head_{self.profile_a.id}': '100',
+        })
+        ws, ev = self._sheet()
+        rate = Decimal('2479')
+        self.assertEqual(ws['M6'].value, 3)
+        self.assertEqual(ws['N6'].value, 1.5)
+        self.assertEqual(ws['P6'].value, 2.5)
+        self.assertEqual(ws['U6'].value, 4)
+        self.assertEqual(
+            ev.value('O6'),
+            rate / 72 * 3 + rate / 72 * Decimal('1.5'))
+        self.assertEqual(ev.value('S6'), rate / 80 * Decimal('2.5'))
+        # W: notebook check pays 20% of the hourly rate per band.
+        self.assertEqual(
+            ev.value('W6'), rate / 18 * Decimal('0.2') * 4)
+        expected_ab = (ev.value('K6') - ev.value('O6') + ev.value('S6')
+                       + ev.value('W6') + Decimal(100))
+        self.assertEqual(ev.value('AB6'), expected_ab)
+
+    def test_zero_hours_row_payroll_evaluates(self):
+        # A teacher with a saved month but no allocation still exports:
+        # bands blank -> base pay 0; AB reflects manual amounts only.
+        # (Web-page inclusion of zero-hour employees is a later stage.)
+        other = make_user('teacher_z', role='teacher', school=self.school_a)
+        profile_z = make_teacher_profile(other, self.school_a, 'Омӯзгор З')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {
+            'month': MONTH,
+            f'rate_{profile_z.id}': '1602',
+            f'allowance_admin_{profile_z.id}': '500',
+        })
+        ws, ev = self._sheet()
+        self.assertEqual(ws['B9'].value, 'Омӯзгор З')
+        self.assertIsNone(ws['F9'].value)
+        self.assertEqual(ev.value('K9'), Decimal(0))
+        self.assertEqual(ev.value('AB9'), Decimal(500))
+
+    def test_missing_rate_yields_blank_results(self):
+        # profile_a has allocations but no monthly_rate -> D6 empty.
+        ws, ev = self._sheet()
+        self.assertIsNone(ws['D6'].value)
+        for col in ('H', 'I', 'J', 'K', 'O', 'S', 'W', 'AB'):
+            self.assertEqual(ev.value(f'{col}6'), '', f'{col}6')
+            self.assertEqual(ev.value(f'{col}8'), '', f'{col}8')
+
+    def test_missing_monthly_inputs_compute_zero_not_error(self):
+        self.profile_a.monthly_rate = Decimal('2479')
+        self.profile_a.save()
+        ws, ev = self._sheet()
+        # No TeacherTabelMonth: L–N, P–R, T–V, X–AA are all blank.
+        rate = Decimal('2479')
+        self.assertEqual(ev.value('O6'), Decimal(0))
+        self.assertEqual(ev.value('S6'), Decimal(0))
+        self.assertEqual(ev.value('W6'), Decimal(0))
+        self.assertEqual(ev.value('AB6'), rate / 18 * DEFAULT_WEEKLY_HOURS)
+
+    def test_manual_allowances_feed_ab(self):
+        self.profile_a.monthly_rate = Decimal('2000')
+        self.profile_a.save()
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {
+            'month': MONTH,
+            f'allowance_class_head_{self.profile_a.id}': '300',
+            f'allowance_admin_{self.profile_a.id}': '50',
+            f'allowance_methodical_{self.profile_a.id}': '20',
+            f'allowance_language_{self.profile_a.id}': '10',
+        })
+        ws, ev = self._sheet()
+        expected = (Decimal('2000') / 18 * DEFAULT_WEEKLY_HOURS
+                    + Decimal('380'))
+        self.assertEqual(ev.value('AB6'), expected)
+
+    def test_workbook_recalculates_on_open(self):
+        wb = self._export({'month': MONTH})
+        self.assertTrue(wb.calculation.fullCalcOnLoad)
+        # openpyxl wrote formulas without cached values — data_only
+        # returns None, proving no stale results are shipped.
+        r = self.client.get(self.url, {'month': MONTH})
+        wb2 = load_workbook(io.BytesIO(r.content), data_only=True)
+        self.assertIsNone(wb2.active['K6'].value)
+
+    def test_formula_cells_keep_money_format_and_ac_empty(self):
+        ws, _ = self._sheet()
+        for col in ('H', 'I', 'J', 'K', 'O', 'S', 'W', 'AB'):
+            self.assertEqual(ws[f'{col}6'].number_format, '0.00', col)
+        for row in range(1, ws.max_row + 1):
+            self.assertIsNone(ws.cell(row=row, column=29).value)
+
+    def test_missing_rate_with_allowances_all_blank(self):
+        # Allowances entered but no rate -> every payroll cell stays
+        # blank; the entered allowance itself is preserved.
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {
+            'month': MONTH,
+            f'allowance_class_head_{self.profile_a.id}': '300',
+        })
+        ws, ev = self._sheet()
+        self.assertIsNone(ws['D6'].value)
+        self.assertEqual(ws['X6'].value, 300)
+        for col in ('H', 'I', 'J', 'K', 'O', 'S', 'W', 'AB'):
+            self.assertEqual(ev.value(f'{col}6'), '', f'{col}6')
+
+    def test_zero_hours_with_missed_deduction(self):
+        # Rate + missed hours but zero teaching hours: K=0, O>0, and AB
+        # applies -O + allowances exactly per the approved formula.
+        other = make_user('teacher_z', role='teacher', school=self.school_a)
+        profile_z = make_teacher_profile(other, self.school_a, 'Омӯзгор З')
+        self.client.force_login(self.zavuch_a)
+        self.client.post(self.save_url, {
+            'month': MONTH,
+            f'rate_{profile_z.id}': '2000',
+            f'missed_5_9_{profile_z.id}': '4',
+            f'allowance_admin_{profile_z.id}': '100',
+        })
+        ws, ev = self._sheet()
+        self.assertEqual(ws['B9'].value, 'Омӯзгор З')
+        self.assertIsNone(ws['E9'].value)
+        self.assertIsNone(ws['F9'].value)
+        self.assertIsNone(ws['G9'].value)
+        self.assertEqual(ev.value('K9'), Decimal(0))
+        expected_o = Decimal('2000') / 72 * 4
+        self.assertGreater(ev.value('O9'), Decimal(0))
+        self.assertEqual(ev.value('O9'), expected_o)
+        self.assertEqual(
+            ev.value('AB9'),
+            ev.value('K9') - expected_o + ev.value('S9')
+            + ev.value('W9') + Decimal(100))

@@ -6673,7 +6673,7 @@ def workload_tabel_save(request):
 @login_required
 def workload_tabel_export(request):
     """Excel export of the monthly tabel, preserving columns A–AB of the
-    official template (payroll-derived cells stay blank for now)."""
+    official template including the verified payroll formulas."""
     if not _tabel_access(request.user):
         return redirect('dashboard')
     school = _tabel_school(request)

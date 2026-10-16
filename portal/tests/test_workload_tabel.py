@@ -1491,3 +1491,231 @@ class TabelTariffSuggestionTests(GoldenBase):
         ws = load_workbook(io.BytesIO(r.content)).active
         self.assertEqual(ws['B6'].value, 'Қурбонов Фаромуз Жамшедович')
         self.assertIsNone(ws['D6'].value)
+
+
+class TabelPayrollDisplayTests(GoldenBase):
+    """Website-side payroll calculation (row['pay']) — Python twin of
+    the export formulas, plus the frozen NULL-rate recovery."""
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('workload_tabel')
+        self.save_url = reverse('workload_tabel_save')
+        self.export_url = reverse('workload_tabel_export')
+        self.profile_a = make_teacher_profile(
+            self.teacher_a, self.school_a, full_name='Омӯзгор А')
+
+    def _row(self, response):
+        for r in response.context['rows']:
+            if r['teacher'].id == self.profile_a.id:
+                return r
+        self.fail('teacher not in rows')
+
+    def _save(self, data):
+        self.client.force_login(self.zavuch_a)
+        return self.client.post(self.save_url, data)
+
+    # --- computed columns ------------------------------------------------
+
+    def test_pay_blank_without_rate(self):
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, {'month': MONTH})
+        pay = self._row(r)['pay']
+        self.assertEqual(pay, {'K': None, 'O': None, 'S': None,
+                               'W': None, 'AB': None})
+
+    def test_pay_matches_export_formula_results(self):
+        # cs_a: 7-А МАТЕМАТИКА -> F = DEFAULT_WEEKLY_HOURS (band 5-9).
+        self._save({
+            'month': MONTH,
+            f'rate_{self.profile_a.id}': '2479',
+            f'missed_5_9_{self.profile_a.id}': '3',
+            f'substitution_1_4_{self.profile_a.id}': '2.5',
+            f'notebook_5_9_{self.profile_a.id}': '4',
+            f'allowance_class_head_{self.profile_a.id}': '100',
+        })
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, {'month': MONTH})
+        pay = self._row(r)['pay']
+        ex = self.client.get(self.export_url, {'month': MONTH})
+        ws = load_workbook(io.BytesIO(ex.content)).active
+        ev = TabelFormulaEvaluator(ws)
+        for key, col in (('K', 'K6'), ('O', 'O6'), ('S', 'S6'),
+                         ('W', 'W6'), ('AB', 'AB6')):
+            self.assertEqual(pay[key], ev.value(col), col)
+        # Sanity-check the arithmetic itself once.
+        rate = Decimal('2479')
+        self.assertEqual(pay['K'], rate / 18 * DEFAULT_WEEKLY_HOURS)
+        self.assertEqual(pay['O'], rate / 72 * 3)
+        self.assertEqual(pay['S'], rate / 80 * Decimal('2.5'))
+        self.assertEqual(pay['W'], rate / 18 * Decimal('0.2') * 4)
+        self.assertEqual(
+            pay['AB'],
+            pay['K'] - pay['O'] + pay['S'] + pay['W'] + Decimal(100))
+
+    def test_page_renders_computed_columns(self):
+        self._save({'month': MONTH,
+                    f'rate_{self.profile_a.id}': '2479'})
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, {'month': MONTH})
+        rate = Decimal('2479')
+        expected = f"{rate / 18 * DEFAULT_WEEKLY_HOURS:.2f}".replace('.', ',')
+        self.assertContains(r, f'<td><strong>{expected}</strong></td>')
+        # The header group is present exactly once.
+        self.assertContains(r, '<th colspan="5">Ҳисоби музди меҳнат', 1)
+
+    def test_page_pay_blank_shows_empty_cells_not_dash(self):
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, {'month': MONTH})
+        # No rate -> computed cells render empty, matching the Excel
+        # IF(D="","") guard — not '—' and not '0.00'.
+        self.assertContains(r, '<td><strong></strong></td>', 2)
+
+    def test_pay_uses_frozen_snapshot_not_live_workload(self):
+        # A monthly field is required to create the month row — a
+        # rate-only save freezes nothing.
+        self._save({'month': MONTH,
+                    f'rate_{self.profile_a.id}': '2479',
+                    f'missed_5_9_{self.profile_a.id}': '1'})
+        # Re-allocate: the recorded month must keep its frozen hours.
+        self.cs_a.hours_per_week = 9
+        self.cs_a.save()
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, {'month': MONTH})
+        pay = self._row(r)['pay']
+        self.assertEqual(
+            pay['K'], Decimal('2479') / 18 * DEFAULT_WEEKLY_HOURS)
+        # An unsaved month computes from the live allocation.
+        r2 = self.client.get(self.url, {'month': '2026-09'})
+        pay2 = self._row(r2)['pay']
+        self.assertEqual(pay2['K'], Decimal('2479') / 18 * 9)
+
+    # --- frozen NULL-rate recovery ---------------------------------------
+
+    def _freeze_month_without_rate(self):
+        self._save({'month': MONTH,
+                    f'missed_5_9_{self.profile_a.id}': '3'})
+        row = TeacherTabelMonth.objects.get(
+            teacher=self.profile_a, year=MONTH_Y, month=MONTH_M)
+        self.assertIsNone(row.rates_snapshot[0]['rate'])
+        return row
+
+    def test_rate_can_be_recorded_once_into_null_snapshot(self):
+        self._freeze_month_without_rate()
+        self._save({'month': MONTH,
+                    f'rate_{self.profile_a.id}': '2479'})
+        row = TeacherTabelMonth.objects.get(
+            teacher=self.profile_a, year=MONTH_Y, month=MONTH_M)
+        self.assertEqual(row.rates_snapshot[0]['rate'], '2479')
+        self.profile_a.refresh_from_db()
+        self.assertEqual(self.profile_a.monthly_rate, Decimal('2479'))
+
+    def test_recorded_snapshot_rate_never_rewritten(self):
+        self._freeze_month_without_rate()
+        self._save({'month': MONTH,
+                    f'rate_{self.profile_a.id}': '2479'})
+        self._save({'month': MONTH,
+                    f'rate_{self.profile_a.id}': '9999'})
+        row = TeacherTabelMonth.objects.get(
+            teacher=self.profile_a, year=MONTH_Y, month=MONTH_M)
+        # The first recorded rate is history — it must not change.
+        self.assertEqual(row.rates_snapshot[0]['rate'], '2479')
+        # The live profile rate still follows the latest entry.
+        self.profile_a.refresh_from_db()
+        self.assertEqual(self.profile_a.monthly_rate, Decimal('9999'))
+
+    def test_frozen_null_rate_row_offers_input_once(self):
+        self._freeze_month_without_rate()
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, {'month': MONTH})
+        ctx = self._row(r)
+        self.assertTrue(ctx['frozen'])
+        # The hole is fillable: input rendered, empty, hint allowed.
+        self.assertContains(r, f'name="rate_{self.profile_a.id}" value=""')
+        self._save({'month': MONTH,
+                    f'rate_{self.profile_a.id}': '2479'})
+        r2 = self.client.get(self.url, {'month': MONTH})
+        # After recording, the frozen row is read-only again and shows
+        # the recorded snapshot rate (stored as a string).
+        self.assertNotContains(
+            r2, f'name="rate_{self.profile_a.id}"')
+        ctx2 = self._row(r2)
+        self.assertEqual(ctx2['display_rate'], '2479')
+        self.assertEqual(ctx2['pay']['K'],
+                         Decimal('2479') / 18 * DEFAULT_WEEKLY_HOURS)
+
+    def test_full_tabel_workflow_end_to_end(self):
+        """The complete loop in one pass: lesson allocation -> zavuch
+        saves rate + monthly inputs -> website shows the computed
+        payroll -> Excel export agrees -> recorded month stays frozen
+        -> another school cannot touch it."""
+        # 1. Hours come from the real allocation: 7-А МАТЕМАТИКА
+        #    resolves via the teacher-FK fallback onto profile_a
+        #    (band 5-9, DEFAULT_WEEKLY_HOURS).
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(self.url, {'month': MONTH})
+        row = self._row(r)
+        self.assertEqual(row['hours'][BAND_5_9], DEFAULT_WEEKLY_HOURS)
+        self.assertIn(MATH, row['subjects'])
+        self.assertIsNone(row['pay']['K'])  # no rate yet -> all blank
+
+        # 2. The zavuch enters the confirmed rate + payroll inputs.
+        self._save({
+            'month': MONTH,
+            f'rate_{self.profile_a.id}': '2479',
+            f'missed_5_9_{self.profile_a.id}': '3',
+            f'substitution_10_11_{self.profile_a.id}': '2',
+            f'notebook_5_9_{self.profile_a.id}': '4',
+            f'allowance_class_head_{self.profile_a.id}': '100',
+        })
+
+        # 3. The website displays the calculated payroll.
+        r = self.client.get(self.url, {'month': MONTH})
+        ctx = self._row(r)
+        self.assertTrue(ctx['frozen'])
+        rate = Decimal('2479')
+        expected_k = rate / 18 * DEFAULT_WEEKLY_HOURS
+        self.assertEqual(ctx['pay']['K'], expected_k)
+        self.assertEqual(ctx['pay']['O'], rate / 72 * 3)
+        self.assertEqual(ctx['pay']['S'], rate / 72 * 2)
+        self.assertEqual(ctx['pay']['W'], rate / 18 * Decimal('0.2') * 4)
+        self.assertEqual(
+            ctx['pay']['AB'],
+            expected_k - ctx['pay']['O'] + ctx['pay']['S']
+            + ctx['pay']['W'] + Decimal('100'))
+        k_fmt = f"{expected_k:.2f}".replace('.', ',')
+        self.assertContains(r, f'<td><strong>{k_fmt}</strong></td>')
+
+        # 4. The export carries the saved rate, the guarded formulas,
+        #    and evaluates to the same amounts the page displayed.
+        ex = self.client.get(self.export_url, {'month': MONTH})
+        ws = load_workbook(io.BytesIO(ex.content)).active
+        ev = TabelFormulaEvaluator(ws)
+        self.assertEqual(ws['D6'].value, 2479)
+        self.assertEqual(ws['K6'].value, '=IF(D6="","",SUM(H6:J6))')
+        for key, col in (('K', 'K6'), ('O', 'O6'), ('S', 'S6'),
+                         ('W', 'W6'), ('AB', 'AB6')):
+            self.assertEqual(ctx['pay'][key], ev.value(col), col)
+
+        # 5. The recorded month stays frozen: a later re-allocation
+        #    changes only unsaved months; school-B cannot edit it.
+        self.cs_a.hours_per_week = 9
+        self.cs_a.save()
+        r2 = self.client.get(self.url, {'month': MONTH})
+        self.assertEqual(self._row(r2)['pay']['K'], expected_k)
+        r3 = self.client.get(self.url, {'month': '2026-09'})
+        self.assertEqual(self._row(r3)['pay']['K'], rate / 18 * 9)
+
+        zavuch_b = make_user('zavuch_2', role='teacher',
+                             school=self.school_b)
+        self.client.force_login(zavuch_b)
+        self.client.post(self.save_url, {
+            'month': MONTH,
+            f'missed_5_9_{self.profile_a.id}': '99',
+            f'rate_{self.profile_a.id}': '9999'})
+        row_obj = TeacherTabelMonth.objects.get(
+            teacher=self.profile_a, year=MONTH_Y, month=MONTH_M)
+        self.assertEqual(row_obj.missed_5_9, Decimal('3'))
+        self.assertEqual(row_obj.rates_snapshot[0]['rate'], '2479')
+        self.profile_a.refresh_from_db()
+        self.assertEqual(self.profile_a.monthly_rate, Decimal('2479'))

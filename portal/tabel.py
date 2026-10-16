@@ -283,7 +283,11 @@ def row_display(workload_row, monthly, rate_hint=None):
     row['display_rate'] = display_rate(monthly, teacher)
     row['rate_input'] = row['display_rate']
     row['rate_hint'] = None
-    if rate_hint and not row['frozen']:
+    # A frozen row whose snapshot rate was never recorded (NULL) is the
+    # one case where a hint still helps: it can be completed once.
+    # A frozen row WITH a recorded rate gets no hint — recorded history
+    # is never questioned on the page.
+    if rate_hint and not (row['frozen'] and row['display_rate'] is not None):
         if row['display_rate'] is None:
             row['rate_hint'] = rate_hint
             if rate_hint['kind'] == 'verified':
@@ -298,7 +302,56 @@ def row_display(workload_row, monthly, rate_hint=None):
                 stored = None
             if stored != rate_hint['value']:
                 row['rate_hint'] = rate_hint
+    row['pay'] = payroll_amounts(row)
     return row
+
+
+def _d(value):
+    """Coerce to Decimal; a blank input counts as zero, exactly like
+    Excel arithmetic on empty cells."""
+    if value is None:
+        return Decimal(0)
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def payroll_amounts(row):
+    """Computed payroll for one display row — the Python twin of
+    ``_PAYROLL_FORMULAS`` so the website shows the same results the
+    exported workbook calculates on open.
+
+    Mirrors the IF(D…="","") guard: a missing rate blanks every
+    computed column (None), it never yields a misleading zero salary.
+    Returns {'K', 'O', 'S', 'W', 'AB'} — base pay, missed-hours
+    deduction, substitution pay, notebook-check pay, month total.
+    """
+    rate = row.get('display_rate')
+    if rate is None:
+        return {'K': None, 'O': None, 'S': None, 'W': None, 'AB': None}
+    rate = _d(rate)
+    hours = row.get('hours') or {}
+    monthly = row.get('monthly')
+
+    def m(field):
+        return _d(getattr(monthly, field, None) if monthly else None)
+
+    k = (rate / 20 * _d(hours.get(BAND_1_4))
+         + rate / 18 * _d(hours.get(BAND_5_9))
+         + rate / 18 * _d(hours.get(BAND_10_11)))
+    o = (rate / 80 * m('missed_1_4')
+         + rate / 72 * m('missed_5_9')
+         + rate / 72 * m('missed_10_11'))
+    s = (rate / 80 * m('substitution_1_4')
+         + rate / 72 * m('substitution_5_9')
+         + rate / 72 * m('substitution_10_11'))
+    pct = Decimal('0.2')
+    w = (rate / 18 * pct * m('notebook_5_9')
+         + rate / 18 * pct * m('notebook_10_11')
+         + rate / 20 * pct * m('notebook_1_4'))
+    ab = (k - o + s + w
+          + sum((m(f) for f in MONTHLY_ALLOWANCE_FIELDS), Decimal(0)))
+    return {'K': k, 'O': o, 'S': s, 'W': w, 'AB': ab}
 
 
 def merge_workload_and_monthly(workload_rows, monthly_map, rate_hints=None):

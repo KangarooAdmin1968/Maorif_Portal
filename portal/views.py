@@ -6611,14 +6611,30 @@ def workload_tabel_save(request):
     saved_teachers = 0
     for tp in profiles.values():
         raw_rate = request.POST.get(f'rate_{tp.id}')
+        new_rate = None
         if raw_rate is not None:
             try:
-                rate = parse_decimal(raw_rate, max_value=MAX_MONEY_VALUE)
-                if tp.monthly_rate != rate:
-                    tp.monthly_rate = rate
+                new_rate = parse_decimal(raw_rate, max_value=MAX_MONEY_VALUE)
+                if tp.monthly_rate != new_rate:
+                    tp.monthly_rate = new_rate
                     tp.save(update_fields=['monthly_rate'])
             except (InvalidOperation, ValueError):
                 invalid.append(tp.full_name)
+                new_rate = None
+        # A month frozen before any rate existed keeps a NULL snapshot
+        # rate and could never be completed — record the entered rate
+        # into that snapshot once. A recorded non-null rate is never
+        # rewritten; this only fills the hole left by the first save.
+        if new_rate is not None:
+            month_row = monthly_map.get(tp.id)
+            if month_row is not None and month_row.rates_snapshot:
+                for line in month_row.rates_snapshot:
+                    if line.get('line_no') == 1:
+                        if line.get('rate') is None:
+                            line['rate'] = str(new_rate)
+                            month_row.save(
+                                update_fields=['rates_snapshot'])
+                        break
 
         updates = {}
         has_value = False

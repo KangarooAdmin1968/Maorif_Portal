@@ -104,6 +104,7 @@
             <th colspan="3">Ивазкунии дарсҳо</th>
             <th colspan="3">Тафтиши дафтар</th>
             <th colspan="4">Иловапулиҳо (маблағ)</th>
+            <th colspan="5">Ҳисоби музди меҳнат (сомонӣ)</th>
         </tr>
         <tr>
             <th>1–4</th><th>5–9</th><th>10–11</th>
@@ -114,6 +115,11 @@
             <th>Сарбории маъмурият</th>
             <th>Иттиҳоди методӣ</th>
             <th>Забони русӣ/англисӣ</th>
+            <th>Асосӣ</th>
+            <th>Нагузашта</th>
+            <th>Ивазкунӣ</th>
+            <th>Дафтар</th>
+            <th>Ҳамагӣ</th>
         </tr>
     </thead>
     <tbody>
@@ -134,8 +140,12 @@
                 </ul>
             </td>
             <td>
-                {% if can_edit and row.teacher.school_id == school.id and not row.teacher.is_archived and not row.frozen %}
+                {% if can_edit and row.teacher.school_id == school.id and not row.teacher.is_archived %}
+                    {% if not row.frozen or row.display_rate is None %}
                 <input type="text" class="rate-input" inputmode="decimal" name="rate_{{ row.teacher.id }}" value="{{ row.rate_input|floatformat:'-2' }}">
+                    {% else %}
+                {{ row.display_rate|floatformat:'-2'|default:'—' }}
+                    {% endif %}
                 {% else %}
                 {{ row.display_rate|floatformat:'-2'|default:'—' }}
                 {% endif %}
@@ -187,9 +197,14 @@
             <td>{{ row.monthly.allowance_methodical|floatformat:'-2'|default:'—' }}</td>
             <td>{{ row.monthly.allowance_language|floatformat:'-2'|default:'—' }}</td>
             {% endif %}
+            <td><strong>{{ row.pay.K|floatformat:'2' }}</strong></td>
+            <td>{{ row.pay.O|floatformat:'2' }}</td>
+            <td>{{ row.pay.S|floatformat:'2' }}</td>
+            <td>{{ row.pay.W|floatformat:'2' }}</td>
+            <td><strong>{{ row.pay.AB|floatformat:'2' }}</strong></td>
         </tr>
         {% empty %}
-        <tr><td colspan="21">Ягон омӯзгори таъйиншуда ёфт нашуд. Аввал дар «Тақсимоти дарсҳо» омӯзгоронро таъйин кунед.</td></tr>
+        <tr><td colspan="26">Ягон омӯзгори таъйиншуда ёфт нашуд. Аввал дар «Тақсимоти дарсҳо» омӯзгоронро таъйин кунед.</td></tr>
         {% endfor %}
     </tbody>
 </table>
@@ -205,7 +220,8 @@
 <p class="payroll-note">
     Соатҳои ҳафта аз «Тақсимоти дарсҳо» ва меъёри миллии таълимӣ ҳисоб мешаванд;
     «Соати тарбиявӣ» низ дар сарбории омӯзгори таъйиншуда ҳисоб мешавад.
-    Устунҳои муҳоҷиратии музди меҳнат (ҳамагӣ, тарҳи маош) то тасдиқи қоидаҳои ҳисоббарӣ холӣ мемонанд.
+    Ҳисоби музди меҳнат аз рӯи формулаҳои тасдиқшудаи ҳуҷҷати расмӣ ҳисоб мешавад;
+    то даме ки ставка сабт нашудааст, устунҳои ҳисоб холӣ мемонанд.
 </p>
 
 {% else %}

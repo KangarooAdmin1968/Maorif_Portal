@@ -899,3 +899,157 @@ class PendingQueueContractTests(GoldenBase):
         resp = post_grade(self.client, self.s1, score='9', date=D_Q1_B)
         self.assertEqual(resp.status_code, 403)
         self.assertFalse(resp.json()['success'])
+
+
+# ---------------------------------------------------------------------------
+# Control mode attendance/behavior — marks ride the assessment-linked row.
+# ---------------------------------------------------------------------------
+
+
+class AssessmentAttendanceBehaviorTests(GoldenBase):
+    def setUp(self):
+        self.client.force_login(self.teacher_a)
+        self.a = make_control(self.cs_a, date=D_Q1, number=1)
+
+    def _journal_get(self, date=D_Q1):
+        return self.client.get(
+            reverse('grade_entry', args=[self.school_a.id, '7-А', MATH]),
+            {'date': date.isoformat()},
+        )
+
+    def test_excused_absence_saves_on_assessment_row(self):
+        resp = post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '+'},
+        )
+        self.assertTrue(resp.json()['success'])
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertEqual(g.attendance, '+')
+
+    def test_unexcused_absence_saves_on_assessment_row(self):
+        resp = post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '-'},
+        )
+        self.assertTrue(resp.json()['success'])
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertEqual(g.attendance, '-')
+
+    def test_invalid_attendance_value_rejected(self):
+        resp = post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': 'X'},
+        )
+        self.assertTrue(resp.json()['success'])
+        # An out-of-alphabet value is normalized to "no mark"; with no other
+        # field set the empty row is deleted, not stored.
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment=self.a).exists()
+        )
+
+    def test_behavior_saves_on_assessment_row(self):
+        resp = post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'behavior_score': '3'},
+        )
+        self.assertTrue(resp.json()['success'])
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertEqual(g.behavior_score, 3)
+
+    def test_attendance_only_row_is_kept(self):
+        # An attendance mark alone is a valid row — it is NOT deleted as
+        # "empty" the way a score-only clear is.
+        post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '-'},
+        )
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertIsNone(g.score)
+        self.assertEqual(g.attendance, '-')
+
+    def test_clearing_attendance_keeps_row_with_score(self):
+        post_grade(self.client, self.s1, score='8', assessment=self.a,
+                   extra={'attendance': '+'})
+        resp = post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': ''},
+        )
+        self.assertTrue(resp.json()['success'])
+        g = Grade.objects.get(student=self.s1, assessment=self.a)
+        self.assertIsNone(g.attendance)
+        self.assertEqual(g.score, 8)
+
+    def test_clearing_only_mark_deletes_row(self):
+        post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '+'},
+        )
+        post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': ''},
+        )
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment=self.a).exists()
+        )
+
+    def test_marks_do_not_create_daily_row(self):
+        post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '-', 'behavior_score': '4'},
+        )
+        self.assertEqual(
+            Grade.objects.filter(
+                student=self.s1, assessment__isnull=True
+            ).count(), 0
+        )
+        self.assertEqual(
+            Grade.objects.filter(student=self.s1, assessment=self.a).count(), 1
+        )
+
+    def test_locked_quarter_blocks_marks(self):
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        resp = post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '-'},
+        )
+        self.assertFalse(resp.json()['success'])
+        self.assertFalse(
+            Grade.objects.filter(student=self.s1, assessment=self.a).exists()
+        )
+
+    def test_cross_school_assessment_marks_rejected(self):
+        foreign = make_control(self.cs_b)
+        resp = post_grade(
+            self.client, self.s1, assessment=foreign,
+            extra={'attendance': '-'},
+        )
+        self.assertFalse(resp.json()['success'])
+        self.assertFalse(Grade.objects.filter(student=self.s1).exists())
+
+    def test_context_exposes_assessment_marks(self):
+        post_grade(
+            self.client, self.s1, score='7', assessment=self.a,
+            extra={'attendance': '-', 'behavior_score': '4'},
+        )
+        resp = self._journal_get()
+        self.assertEqual(resp.status_code, 200)
+        marks = resp.context['assessment_marks']
+        self.assertEqual(marks[self.a.id][self.s1.id]['att'], '-')
+        self.assertEqual(marks[self.a.id][self.s1.id]['beh'], 4)
+
+    def test_assessment_marks_not_in_daily_maps(self):
+        post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '-', 'behavior_score': '2'},
+        )
+        resp = self._journal_get()
+        self.assertNotIn(self.s1.id, resp.context['daily_attendance'])
+        self.assertNotIn(self.s1.id, resp.context['daily_behavior'])
+
+    def test_marks_rendered_in_json_script(self):
+        post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'attendance': '+'},
+        )
+        resp = self._journal_get()
+        self.assertIn('assessment-marks-data', resp.content.decode('utf-8'))

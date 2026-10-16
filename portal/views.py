@@ -2902,6 +2902,10 @@ def grade_entry(request, school_id, class_name, subject):
     # Display follows the work type's semantics: paired-grade works show the
     # journal pair ('8/9'), legacy/untyped rows show the combined score.
     assessment_grade_map = {}
+    # Attendance/behavior stored on assessment-linked rows: {assessment_id:
+    # {student_id: {att, beh}}} — same queryset, no extra query. Control mode
+    # renders these into the Давомат/Тарбия selects.
+    assessment_marks = {}
     if control_assessments:
         sem_by_id = {}
         for a in Assessment.objects.filter(id__in=[a['id'] for a in control_assessments]):
@@ -2914,6 +2918,11 @@ def grade_entry(request, school_id, class_name, subject):
             assessment_grade_map.setdefault(g.assessment_id, {})[g.student_id] = result_display(
                 g, sem_by_id.get(g.assessment_id)
             )
+            if g.attendance or g.behavior_score is not None:
+                assessment_marks.setdefault(g.assessment_id, {})[g.student_id] = {
+                    'att': g.attendance or '',
+                    'beh': g.behavior_score if g.behavior_score is not None else '',
+                }
 
     return render(request, 'portal/grade_entry.html', {
         'school': school,
@@ -2946,6 +2955,7 @@ def grade_entry(request, school_id, class_name, subject):
         ),
         'control_assessments': control_assessments,
         'assessment_grade_map': assessment_grade_map,
+        'assessment_marks': assessment_marks,
         'date_is_control': date_is_control,
         'work_type_choices': work_type_choices(),
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the

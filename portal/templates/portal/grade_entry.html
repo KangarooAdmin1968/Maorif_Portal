@@ -316,6 +316,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
 
 {{ control_assessments|json_script:"assessments-data" }}
 {{ assessment_grade_map|json_script:"assessment-grades-data" }}
+{{ assessment_marks|json_script:"assessment-marks-data" }}
 
 <script>
 function openTab(id, btn) {
@@ -350,10 +351,12 @@ const className = "{{ class_name|escapejs }}";
 const subjectName = "{{ subject|escapejs }}";
 let assessments = [];
 let assessmentGrades = {};
+let assessmentMarks = {};
 try {
   assessments = JSON.parse(document.getElementById('assessments-data').textContent || '[]');
   assessmentGrades = JSON.parse(document.getElementById('assessment-grades-data').textContent || '{}');
-} catch(e) { assessments = []; assessmentGrades = {}; }
+  assessmentMarks = JSON.parse(document.getElementById('assessment-marks-data').textContent || '{}');
+} catch(e) { assessments = []; assessmentGrades = {}; assessmentMarks = {}; }
 function getStorageKey() {
     // Lesson-aware key: lesson 1 and lesson 2 drafts/pending queues are
     // fully independent; the legacy key (no _l suffix) is untouched.
@@ -525,14 +528,21 @@ async function syncPending() {
             }
             const el = document.querySelector('[name="' + item.name + '"]');
             if (el) {
-                const disp = (el.dataset.assessmentId && resp.score !== undefined)
+                const disp = (el.dataset.assessmentId && resp.score !== undefined
+                        && (el.dataset.field || 'score') === 'score')
                     ? (resp.score == null ? '' : String(resp.score))
                     : item.value;
                 el.value = disp;
                 el.dataset.origValue = disp;
-                if (el.dataset.assessmentId) {
+                if (el.dataset.assessmentId && (el.dataset.field || 'score') === 'score') {
                     if (!assessmentGrades[el.dataset.assessmentId]) assessmentGrades[el.dataset.assessmentId] = {};
                     assessmentGrades[el.dataset.assessmentId][el.dataset.studentId] = disp;
+                }
+                if (el.dataset.assessmentId && (el.dataset.field === 'attendance' || el.dataset.field === 'behavior_score')) {
+                    if (!assessmentMarks[el.dataset.assessmentId]) assessmentMarks[el.dataset.assessmentId] = {};
+                    const mk = assessmentMarks[el.dataset.assessmentId][el.dataset.studentId] || {};
+                    if (el.dataset.field === 'attendance') mk.att = disp; else mk.beh = disp;
+                    assessmentMarks[el.dataset.assessmentId][el.dataset.studentId] = mk;
                 }
                 const status = document.getElementById('daily-status-' + el.dataset.rowId);
                 if (status) showStatus(status, '✔ Сабт шуд!');
@@ -606,10 +616,14 @@ function setGradeKind(kind) {
   if (kind === 'control') enterControlMode(); else exitControlMode();
   gradeKind = kind;
 }
+function markInputs() {
+  return Array.from(document.querySelectorAll('.daily-att, .daily-behavior'));
+}
 function enterControlMode() {
   document.getElementById('assessment-picker').style.display = '';
   dailySnapshot = {};
   scoreInputs().forEach(inp => { dailySnapshot[inp.dataset.studentId] = inp.value; });
+  markInputs().forEach(el => { dailySnapshot[el.name] = el.value; });
   document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => { el.dataset.wasDisabled = el.disabled ? '1' : '0'; });
   const scoped = scopedAssessments();
   if ((!currentAssessmentId || !findAssessment(currentAssessmentId) ||
@@ -624,6 +638,7 @@ function enterControlMode() {
 function loadAssessmentValues() {
   const aid = currentAssessmentId;
   const map = (aid && assessmentGrades[aid]) || {};
+  const marks = (aid && assessmentMarks[aid]) || {};
   const a = findAssessment(aid);
   const locked = a ? !!a.locked : false;
   scoreInputs().forEach(inp => {
@@ -634,7 +649,27 @@ function loadAssessmentValues() {
     inp.dataset.origValue = inp.value;
     inp.disabled = !aid || locked || inp.dataset.wasDisabled === '1';
   });
-  document.querySelectorAll('.daily-att, .daily-behavior').forEach(el => { el.disabled = true; });
+  // Давомат/Тарбия stay usable in Назорат mode: they save onto the
+  // assessment-linked Grade row through the same per-cell path as ascore_*.
+  // Renamed like the score cells so pending-queue and draft keys never mix
+  // with the Ҷорӣ slot of the same date.
+  markInputs().forEach(el => {
+    const sid = el.dataset.studentId;
+    const m = marks[sid] || {};
+    const field = el.dataset.field;
+    const isAtt = field === 'attendance';
+    el.name = (isAtt ? 'aatt_' : 'abeh_') + aid + '_' + sid;
+    el.dataset.assessmentId = aid || '';
+    const stored = isAtt ? (m.att || '') : (m.beh === '' || m.beh === undefined ? '' : String(m.beh));
+    el.value = stored;
+    // An unsaved offline draft for this exact control field wins over the
+    // stored value — nothing entered is ever silently dropped.
+    if (state.draft && state.draft[el.name] !== undefined) {
+      el.value = state.draft[el.name];
+    }
+    el.dataset.origValue = el.value;
+    el.disabled = !aid || locked || el.dataset.wasDisabled === '1';
+  });
 }
 function exitControlMode() {
   document.getElementById('assessment-picker').style.display = 'none';
@@ -647,7 +682,15 @@ function exitControlMode() {
     inp.dataset.origValue = inp.value;
     inp.disabled = inp.dataset.wasDisabled === '1';
   });
-  document.querySelectorAll('.daily-att, .daily-behavior').forEach(el => { el.disabled = el.dataset.wasDisabled === '1'; });
+  markInputs().forEach(el => {
+    const sid = el.dataset.studentId;
+    const dailyName = (el.dataset.field === 'attendance' ? 'attendance_' : 'behavior_') + sid;
+    el.value = dailySnapshot ? (dailySnapshot[dailyName] || '') : el.value;
+    el.name = dailyName;
+    delete el.dataset.assessmentId;
+    el.dataset.origValue = el.value;
+    el.disabled = el.dataset.wasDisabled === '1';
+  });
 }
 function onAssessmentChange() {
   const sel = document.getElementById('assessment-select');
@@ -840,7 +883,7 @@ function saveDaily(input) {
     delete input.dataset.inflight;
     if (!resp) return;
     if (resp.success) {
-      if (assessmentId && resp.score !== undefined) {
+      if (assessmentId && resp.score !== undefined && field === 'score') {
         // Backend-authoritative echo: the cell shows the combined numeric
         // result (8/9 -> 8.5); components remain stored server-side.
         const saved = resp.score == null ? '' : String(resp.score);
@@ -851,6 +894,14 @@ function saveDaily(input) {
       } else {
         input.value = value;
         input.dataset.origValue = value;
+      }
+      if (assessmentId && (field === 'attendance' || field === 'behavior_score')) {
+        // Keep the in-memory marks map in sync so switching assessments and
+        // back re-renders the just-saved value without a reload.
+        if (!assessmentMarks[assessmentId]) assessmentMarks[assessmentId] = {};
+        const mk = assessmentMarks[assessmentId][input.dataset.studentId] || {};
+        if (field === 'attendance') mk.att = value; else mk.beh = value;
+        assessmentMarks[assessmentId][input.dataset.studentId] = mk;
       }
       if (resp.quarter !== undefined) {
         updateQuarterCell(input.dataset.studentId, resp.quarter, resp.quarter_value, resp.quarter_live);

@@ -49,6 +49,7 @@ from .tabel import (
     parse_decimal, parse_month_param, teacher_workload,
     workload_snapshot,
 )
+from .tariff_rates import suggested_rate_map, tariff_data_available
 from .monitoring import (
     can_access_monitoring, get_activity_summary, scope_monitoring_stats,
 )
@@ -6516,8 +6517,16 @@ def _tabel_display_data(school, year, month):
         m.teacher_id: m for m in TeacherTabelMonth.objects.filter(
             school=school, year=year, month=month)
     }
+    # Verified-tariff hints need the full non-archived profile list (not
+    # just allocated teachers) so duplicate names can be detected. The
+    # extra flat query only runs for schools that actually have data.
+    rate_hints = {}
+    if tariff_data_available(school):
+        rate_hints = suggested_rate_map(
+            school, year, month,
+            TeacherProfile.objects.filter(school=school, is_archived=False))
     return (
-        merge_workload_and_monthly(workload_rows, monthly_map),
+        merge_workload_and_monthly(workload_rows, monthly_map, rate_hints),
         unassigned,
         unbanded,
         monthly_map,

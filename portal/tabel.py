@@ -240,9 +240,18 @@ def display_rate(monthly, teacher):
     return teacher.monthly_rate
 
 
-def row_display(workload_row, monthly):
+def row_display(workload_row, monthly, rate_hint=None):
     """Display row for page/export: frozen snapshot when the month was
-    already recorded, live workload otherwise."""
+    already recorded, live workload otherwise.
+
+    ``rate_hint`` is an optional verified-tariff suggestion
+    ({'value', 'kind', 'period'} from tariff_rates.suggested_rate_map).
+    It never changes ``display_rate``: a 'verified' hint pre-fills the
+    editable input when no rate is stored, while a 'derived' hint only
+    shows as text next to the input — derived values must be confirmed
+    by the deputy, never auto-entered. Frozen months keep their recorded
+    rate untouched and get no hint.
+    """
     snapshot = monthly.workload_snapshot if monthly else None
     if snapshot:
         row = {
@@ -272,18 +281,39 @@ def row_display(workload_row, monthly):
     teacher = row['teacher']
     row['display_name'] = display_name(monthly, teacher)
     row['display_rate'] = display_rate(monthly, teacher)
+    row['rate_input'] = row['display_rate']
+    row['rate_hint'] = None
+    if rate_hint and not row['frozen']:
+        if row['display_rate'] is None:
+            row['rate_hint'] = rate_hint
+            if rate_hint['kind'] == 'verified':
+                row['rate_input'] = rate_hint['value']
+        else:
+            # A stored value differing from the period-correct
+            # suggestion is flagged for review — e.g. an old-scale rate
+            # left on a month that belongs to a later pay scale.
+            try:
+                stored = Decimal(str(row['display_rate']))
+            except (InvalidOperation, ValueError):
+                stored = None
+            if stored != rate_hint['value']:
+                row['rate_hint'] = rate_hint
     return row
 
 
-def merge_workload_and_monthly(workload_rows, monthly_map):
+def merge_workload_and_monthly(workload_rows, monthly_map, rate_hints=None):
     """Combine live workload rows with saved TeacherTabelMonth rows.
 
     Teachers with a saved month but no current allocation still appear.
-    Returns display rows sorted by teacher name.
+    Returns display rows sorted by teacher name. ``rate_hints`` is the
+    optional {teacher_id: hint} map from suggested_rate_map.
     """
+    rate_hints = rate_hints or {}
     rows_by_teacher = {r['teacher'].id: r for r in workload_rows}
     display = [
-        row_display(rows_by_teacher.get(tid), monthly_map.get(tid))
+        row_display(
+            rows_by_teacher.get(tid), monthly_map.get(tid),
+            rate_hint=rate_hints.get(tid))
         for tid in set(rows_by_teacher) | set(monthly_map)
     ]
     display.sort(key=lambda r: r['teacher'].full_name)

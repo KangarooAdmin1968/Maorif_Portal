@@ -15,6 +15,8 @@
   }
   table.tabel-table input.rate-input { width: 4.6rem; }
   .frozen-badge { display: inline-block; font-size: .68rem; color: #065f46; background: #d1fae5; border-radius: .3rem; padding: 0 .35rem; }
+  .rate-hint { font-size: .68rem; line-height: 1.25; margin-top: 2px; color: #92400e; }
+  .rate-hint.verified { color: #065f46; }
   .tabel-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
   .tabel-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
   .unassigned-box { border: 1px solid #f59e0b; background: #fffbeb; border-radius: .5rem; padding: .6rem .9rem; margin-bottom: 1rem; }
@@ -133,9 +135,23 @@
             </td>
             <td>
                 {% if can_edit and row.teacher.school_id == school.id and not row.teacher.is_archived and not row.frozen %}
-                <input type="text" class="rate-input" inputmode="decimal" name="rate_{{ row.teacher.id }}" value="{{ row.display_rate|floatformat:'-2' }}">
+                <input type="text" class="rate-input" inputmode="decimal" name="rate_{{ row.teacher.id }}" value="{{ row.rate_input|floatformat:'-2' }}">
                 {% else %}
                 {{ row.display_rate|floatformat:'-2'|default:'—' }}
+                {% endif %}
+                {% if row.rate_hint %}
+                <div class="rate-hint{% if row.rate_hint.kind == 'verified' %} verified{% endif %}"
+                     title="{% if row.rate_hint.kind == 'verified' %}Қимат аз ҳуҷҷати тарифбандии мактаб гирифта шудааст — дар ҳолати дуруст будан онро ҳамин тавр гузоред{% else %}Қимат тавассути коэффитсиенти расмии зиёдшавӣ ҳисоб шудааст — пеш аз сабт бо варақаи тарифбандӣ тасдиқ кунед{% endif %}">
+                    {% if row.rate_hint.kind == 'verified' %}
+                        аз тарификатсия: {{ row.rate_hint.value|floatformat:'-2' }}
+                    {% elif row.rate_hint.period == '2026-27' %}
+                        аз 01.09.2026 (+25%): ≈{{ row.rate_hint.value|floatformat:'-2' }}
+                    {% elif row.rate_hint.period == '2025-26' %}
+                        аз 01.09.2025 (+30%): ≈{{ row.rate_hint.value|floatformat:'-2' }}
+                    {% else %}
+                        то 01.09.2025: ≈{{ row.rate_hint.value|floatformat:'-2' }}
+                    {% endif %}
+                </div>
                 {% endif %}
             </td>
             <td>{{ row.hours|dict_key:'1-4'|default:'' }}</td>

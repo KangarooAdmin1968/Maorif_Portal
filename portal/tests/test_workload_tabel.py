@@ -32,7 +32,7 @@ from portal.tabel import (
     parse_month_param, teacher_workload,
 )
 from portal.tests.helpers import (
-    MATH, GoldenBase, make_class_subject, make_student,
+    MATH, GoldenBase, make_class_subject, make_school, make_student,
     make_teacher_profile, make_user,
 )
 
@@ -1004,7 +1004,8 @@ class TabelIntegrityTests(GoldenBase):
 
     def test_tabel_page_query_count(self):
         # Snapshot fields ride the existing queries — the count must stay
-        # flat regardless of how many teachers/months exist.
+        # flat regardless of how many teachers/months exist. School A has
+        # no verified-tariff data, so the hint path adds no query here.
         self._save_month()
         self.client.force_login(self.zavuch_a)
         with self.assertNumQueries(11):
@@ -1265,3 +1266,228 @@ class TabelPayrollFormulaTests(GoldenBase):
             ev.value('AB9'),
             ev.value('K9') - expected_o + ev.value('S9')
             + ev.value('W9') + Decimal(100))
+
+
+class TabelTariffSuggestionTests(GoldenBase):
+    """Verified-tariff hints from tariff_rates.suggested_rate_map.
+
+    Fixture schools mirror the real tariffication sources: 'МТМУ №3'
+    (Aug-2026 tabel, 2025-26 scale) and 'МТМУ №20' (2024-25 tariffication,
+    pre-raise scale).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('workload_tabel')
+        self.save_url = reverse('workload_tabel_save')
+        self.export_url = reverse('workload_tabel_export')
+        self.school3 = make_school('Муассисаи таҳсилоти умумии №3')
+        self.zavuch3 = make_user('zavuch_3', role='teacher',
+                                 school=self.school3)
+        self.teacher3 = make_user('teacher_3', role='teacher',
+                                  school=self.school3)
+        # 'Қурбонов Фаромуз Жамшедович' -> 2479 in the Aug-2026 tabel.
+        self.profile3 = make_teacher_profile(
+            self.teacher3, self.school3, 'Қурбонов Фаромуз Жамшедович')
+        make_class_subject(self.school3, '7-А', MATH,
+                           allocated=self.profile3)
+
+    def _row(self, response, profile):
+        for r in response.context['rows']:
+            if r['teacher'].id == profile.id:
+                return r
+        self.fail('teacher not in tabel rows')
+
+    def test_verified_rate_prefills_same_period_input(self):
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-08'})
+        row = self._row(r, self.profile3)
+        self.assertEqual(row['rate_hint']['kind'], 'verified')
+        self.assertEqual(row['rate_input'], Decimal('2479'))
+        self.assertContains(
+            r, f'name="rate_{self.profile3.id}" value="2479"')
+        self.assertContains(r, 'аз тарификатсия')
+
+    def test_prefilled_verified_rate_saves_and_snapshots(self):
+        # The deputy accepts the pre-filled value by simply saving.
+        self.client.force_login(self.zavuch3)
+        r = self.client.post(self.save_url, {
+            'month': '2026-08',
+            f'rate_{self.profile3.id}': '2479',
+            f'missed_5_9_{self.profile3.id}': '2',
+        })
+        self.assertEqual(r.status_code, 302)
+        self.profile3.refresh_from_db()
+        self.assertEqual(self.profile3.monthly_rate, Decimal('2479'))
+        row = TeacherTabelMonth.objects.get(
+            teacher=self.profile3, year=2026, month=8)
+        self.assertEqual(row.rates_snapshot[0]['rate'], '2479')
+
+    def test_derived_hint_for_2026_27_never_prefilled(self):
+        # +25% from 01.09.2026 is law, but the rounded absolute values
+        # are unverified — the hint is text only, the input stays empty.
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-10'})
+        row = self._row(r, self.profile3)
+        self.assertEqual(row['rate_hint']['kind'], 'derived')
+        self.assertEqual(row['rate_hint']['value'], Decimal('3099'))
+        self.assertIsNone(row['rate_input'])
+        self.assertContains(r, f'name="rate_{self.profile3.id}" value=""')
+        self.assertContains(r, 'аз 01.09.2026')
+
+    def test_derived_hint_for_pre_2025_month(self):
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2025-06'})
+        row = self._row(r, self.profile3)
+        self.assertEqual(row['rate_hint']['kind'], 'derived')
+        # 2479 / 1.3 = 1906.92… -> 1907 (old-scale grid point).
+        self.assertEqual(row['rate_hint']['value'], Decimal('1907'))
+        self.assertIsNone(row['rate_input'])
+
+    def test_manual_rate_wins_over_suggestion(self):
+        # A manually stored rate is never overwritten — but when it
+        # differs from the verified workbook value the hint flags the
+        # discrepancy so the deputy can review it.
+        self.profile3.monthly_rate = Decimal('2479')
+        self.profile3.save(update_fields=['monthly_rate'])
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-08'})
+        row = self._row(r, self.profile3)
+        self.assertEqual(row['rate_input'], Decimal('2479'))
+        self.assertIsNone(row['rate_hint'])  # stored == verified -> quiet
+        self.profile3.monthly_rate = Decimal('1500')
+        self.profile3.save(update_fields=['monthly_rate'])
+        r = self.client.get(self.url, {'month': '2026-08'})
+        row = self._row(r, self.profile3)
+        self.assertEqual(row['rate_input'], Decimal('1500'))
+        self.assertEqual(row['rate_hint']['kind'], 'verified')
+        self.assertEqual(row['rate_hint']['value'], Decimal('2479'))
+
+    def test_stale_rate_flags_derived_hint(self):
+        # An old-scale stored rate on a 2026-27 month gets the
+        # 'confirm the new scale' hint next to the stored value.
+        self.profile3.monthly_rate = Decimal('2479')
+        self.profile3.save(update_fields=['monthly_rate'])
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-10'})
+        row = self._row(r, self.profile3)
+        self.assertEqual(row['rate_input'], Decimal('2479'))
+        self.assertEqual(row['rate_hint']['kind'], 'derived')
+        self.assertEqual(row['rate_hint']['value'], Decimal('3099'))
+
+    def test_frozen_month_shows_no_hint(self):
+        self.client.force_login(self.zavuch3)
+        self.client.post(self.save_url, {
+            'month': '2026-08',
+            f'rate_{self.profile3.id}': '2100',
+            f'missed_5_9_{self.profile3.id}': '1',
+        })
+        r = self.client.get(self.url, {'month': '2026-08'})
+        row = self._row(r, self.profile3)
+        self.assertTrue(row['frozen'])
+        self.assertIsNone(row['rate_hint'])
+        # The recorded 2100 wins over the verified 2479.
+        self.assertEqual(row['display_rate'], '2100')
+
+    def test_unmatched_teacher_gets_no_hint(self):
+        other = make_user('teacher_9', role='teacher', school=self.school3)
+        profile = make_teacher_profile(other, self.school3, 'Ҳакимов Аброр')
+        make_class_subject(self.school3, '8-Б', TAJIK, allocated=profile)
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-08'})
+        row = self._row(r, profile)
+        self.assertIsNone(row['rate_hint'])
+        self.assertIsNone(row['rate_input'])
+        self.assertContains(r, f'name="rate_{profile.id}" value=""')
+
+    def test_duplicate_profile_names_get_no_hint(self):
+        # Two same-name profiles in one school -> the workbook entry is
+        # ambiguous and must not suggest for either.
+        other = make_user('teacher_8', role='teacher', school=self.school3)
+        dup = make_teacher_profile(
+            other, self.school3, 'Қурбонов Фаромуз Жамшедович')
+        make_class_subject(self.school3, '9-В', TAJIK, allocated=dup)
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-08'})
+        self.assertIsNone(self._row(r, self.profile3)['rate_hint'])
+        self.assertIsNone(self._row(r, dup)['rate_hint'])
+
+    def test_ambiguous_prefix_match_skipped(self):
+        # 'Назарова Нигора' and 'Назарова Нигора Холбобоевна' both
+        # prefix-match the single entry -> hint suppressed for both.
+        u1 = make_user('teacher_10', role='teacher', school=self.school3)
+        p1 = make_teacher_profile(u1, self.school3, 'Назарова Нигора')
+        u2 = make_user('teacher_11', role='teacher', school=self.school3)
+        p2 = make_teacher_profile(
+            u2, self.school3, 'Назарова Нигора Холбобоевна')
+        make_class_subject(self.school3, '5-А', TAJIK, allocated=p1)
+        make_class_subject(self.school3, '6-А', TAJIK, allocated=p2)
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-08'})
+        self.assertIsNone(self._row(r, p1)['rate_hint'])
+        self.assertIsNone(self._row(r, p2)['rate_hint'])
+
+    def test_no_cross_school_hint(self):
+        # The same name under a different school number gets nothing.
+        zavuch_b = make_user('zavuch_2', role='teacher',
+                             school=self.school_b)
+        profile_b = make_teacher_profile(
+            self.teacher_b, self.school_b, 'Қурбонов Фаромуз Жамшедович')
+        self.client.force_login(zavuch_b)
+        r = self.client.get(self.url, {'month': '2026-08'})
+        row = self._row(r, profile_b)
+        self.assertIsNone(row['rate_hint'])
+        self.assertIsNone(row['rate_input'])
+
+    def test_short_name_prefix_match_and_periods(self):
+        # Production 'Фамилия Имя' (with ҳ) prefix-matches the
+        # tariffication 'Фамилия Имя Отчество' (with х) for МТМУ №20.
+        school20 = make_school('Муассисаи таҳсилоти умумии №20')
+        zavuch20 = make_user('zavuch_20', role='teacher', school=school20)
+        teacher20 = make_user('teacher_20', role='teacher', school=school20)
+        profile = make_teacher_profile(
+            teacher20, school20, 'Абдулҳамидова Дилором')
+        make_class_subject(school20, '3-А', TAJIK, allocated=profile)
+        self.client.force_login(zavuch20)
+        # Recorded period (pre-Sept-2025): verified 2076 prefills.
+        r = self.client.get(self.url, {'month': '2024-10'})
+        row = self._row(r, profile)
+        self.assertEqual(row['rate_hint']['kind'], 'verified')
+        self.assertEqual(row['rate_input'], Decimal('2076'))
+        # Post-raise periods: derived only, never prefilled.
+        r = self.client.get(self.url, {'month': '2025-10'})
+        row = self._row(r, profile)
+        self.assertEqual(row['rate_hint']['kind'], 'derived')
+        self.assertEqual(row['rate_hint']['value'], Decimal('2699'))
+        self.assertIsNone(row['rate_input'])
+        r = self.client.get(self.url, {'month': '2026-10'})
+        row = self._row(r, profile)
+        self.assertEqual(row['rate_hint']['kind'], 'derived')
+        # 2076 * 1.3 * 1.25 = 3373.5 -> 3374
+        self.assertEqual(row['rate_hint']['value'], Decimal('3374'))
+        self.assertIsNone(row['rate_input'])
+
+    def test_birthdate_suffix_in_profile_name_still_matches(self):
+        # Free the workbook entry first — the setUp profile would
+        # otherwise make it ambiguous together with the new one.
+        self.profile3.full_name = 'Ҳакимов Аброр'
+        self.profile3.save(update_fields=['full_name'])
+        teacher = make_user('teacher_12', role='teacher',
+                            school=self.school3)
+        profile = make_teacher_profile(
+            teacher, self.school3,
+            'Қурбонов Фаромуз Жамшедович 12.03.1985')
+        make_class_subject(self.school3, '4-Г', TAJIK, allocated=profile)
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.url, {'month': '2026-08'})
+        self.assertEqual(
+            self._row(r, profile)['rate_hint']['kind'], 'verified')
+
+    def test_export_never_writes_suggestion(self):
+        # Column D carries stored rates only — a suggestion must not
+        # leak into the official export.
+        self.client.force_login(self.zavuch3)
+        r = self.client.get(self.export_url, {'month': '2026-08'})
+        ws = load_workbook(io.BytesIO(r.content)).active
+        self.assertEqual(ws['B6'].value, 'Қурбонов Фаромуз Жамшедович')
+        self.assertIsNone(ws['D6'].value)

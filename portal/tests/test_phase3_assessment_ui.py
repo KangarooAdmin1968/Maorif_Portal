@@ -1053,3 +1053,72 @@ class AssessmentAttendanceBehaviorTests(GoldenBase):
         )
         resp = self._journal_get()
         self.assertIn('assessment-marks-data', resp.content.decode('utf-8'))
+
+    def test_behavior_default_without_stored_mark(self):
+        # No mark on the assessment row — the select must show the same
+        # neutral default the Ҷорӣ cell would (5), not a blank.
+        resp = self._journal_get()
+        marks = resp.context['assessment_marks']
+        self.assertEqual(marks[self.a.id][self.s1.id]['beh'], 5)
+        self.assertEqual(marks[self.a.id][self.s1.id]['att'], '')
+
+    def test_behavior_default_carries_subject_prior(self):
+        # Latest non-assessment behavior for THIS subject before the
+        # assessment's own date is the prefill — same carry-over rule as
+        # the daily cell.
+        make_grade(self.s1, score=8, date=D_Q1 - datetime.timedelta(days=30),
+                   behavior=3)
+        resp = self._journal_get()
+        marks = resp.context['assessment_marks']
+        self.assertEqual(marks[self.a.id][self.s1.id]['beh'], 3)
+
+    def test_behavior_default_uses_latest_prior(self):
+        make_grade(self.s1, score=8, date=D_Q1 - datetime.timedelta(days=30),
+                   behavior=2)
+        make_grade(self.s1, score=8, date=D_Q1 - datetime.timedelta(days=10),
+                   behavior=4)
+        resp = self._journal_get()
+        marks = resp.context['assessment_marks']
+        self.assertEqual(marks[self.a.id][self.s1.id]['beh'], 4)
+
+    def test_behavior_default_ignores_other_subject(self):
+        # Conduct is subject-specific — a TAJIK mark never prefills МАТЕМАТИКА.
+        make_grade(self.s1, subject=TAJIK, score=9,
+                   date=D_Q1 - datetime.timedelta(days=5), behavior=1)
+        resp = self._journal_get()
+        marks = resp.context['assessment_marks']
+        self.assertEqual(marks[self.a.id][self.s1.id]['beh'], 5)
+
+    def test_behavior_default_ignores_later_dates(self):
+        # A behavior mark AFTER the assessment's own date must not prefill
+        # it, even when it precedes the viewed journal date. View the page
+        # on D_Q1_B while the assessment stays on D_Q1 — the Oct-20 mark is
+        # inside the history queryset but must be skipped for the Oct-15
+        # assessment.
+        make_grade(self.s1, score=8, date=D_Q1 - datetime.timedelta(days=30),
+                   behavior=2)
+        make_grade(self.s1, score=8,
+                   date=D_Q1 + datetime.timedelta(days=5), behavior=1)
+        resp = self._journal_get(date=D_Q1_B)
+        marks = resp.context['assessment_marks']
+        self.assertEqual(marks[self.a.id][self.s1.id]['beh'], 2)
+
+    def test_stored_behavior_beats_carryover(self):
+        make_grade(self.s1, score=8, date=D_Q1 - datetime.timedelta(days=5),
+                   behavior=2)
+        post_grade(
+            self.client, self.s1, assessment=self.a,
+            extra={'behavior_score': '4'},
+        )
+        resp = self._journal_get()
+        marks = resp.context['assessment_marks']
+        self.assertEqual(marks[self.a.id][self.s1.id]['beh'], 4)
+
+    def test_daily_behavior_default_unchanged(self):
+        # Regression: the Ҷорӣ carry-over chain is untouched — on a normal
+        # (non-control) date the daily map still resolves daily -> prior -> 5.
+        make_grade(self.s1, score=8, date=D_Q1 - datetime.timedelta(days=30),
+                   behavior=3)
+        resp = self._journal_get(date=D_Q1_B)
+        self.assertFalse(resp.context['date_is_control'])
+        self.assertEqual(resp.context['behavior_default'][self.s1.id], 3)

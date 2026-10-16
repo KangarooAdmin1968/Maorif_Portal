@@ -2726,6 +2726,11 @@ def grade_entry(request, school_id, class_name, subject):
     # conduct is subject-specific: a Physics mark must never carry over as
     # the default for Algebra (or vice versa).
     prior_behavior = {}
+    # Per-student behavior history for THIS subject (non-assessment rows),
+    # newest first. Control mode resolves each assessment's display default
+    # against the assessment's OWN date — the same row used for the daily
+    # carry-over, so no extra query.
+    prior_behavior_hist = defaultdict(list)
     for g in Grade.objects.filter(
         student__in=students,
         subject=subject,
@@ -2735,6 +2740,7 @@ def grade_entry(request, school_id, class_name, subject):
     ).order_by('student_id', '-date', '-pk'):
         if g.student_id not in prior_behavior:
             prior_behavior[g.student_id] = g.behavior_score
+        prior_behavior_hist[g.student_id].append((g.date, g.behavior_score))
 
     # Display chain per student: today's slot value -> latest stored value
     # FOR THIS SUBJECT -> neutral default 5. The 5 is display-only: untouched
@@ -2923,6 +2929,21 @@ def grade_entry(request, school_id, class_name, subject):
                     'att': g.attendance or '',
                     'beh': g.behavior_score if g.behavior_score is not None else '',
                 }
+        # Behavior display chain for control mode, same semantics as Ҷорӣ:
+        # stored mark on THIS assessment -> latest subject behavior before
+        # the assessment's own date -> neutral 5. Display-only: the value
+        # posts only when the teacher actually changes the select.
+        for a in control_assessments:
+            adate = datetime.date.fromisoformat(a['date'])
+            per_student = assessment_marks.setdefault(a['id'], {})
+            for s in students:
+                entry = per_student.setdefault(s.id, {'att': '', 'beh': ''})
+                if entry['beh'] == '':
+                    entry['beh'] = next(
+                        (b for d, b in prior_behavior_hist.get(s.id, ())
+                         if d < adate),
+                        5,
+                    )
 
     return render(request, 'portal/grade_entry.html', {
         'school': school,

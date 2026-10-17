@@ -52,6 +52,7 @@
     </form>
     <a href="{% url 'workload_tabel_export' %}?month={{ month_value }}{% if request.user.is_superuser and request.GET.school_id %}&school_id={{ request.GET.school_id }}{% endif %}" class="btn btn-success">⬇️ Excel</a>
     <a href="{% url 'school_documents' %}" class="btn">Ҳуҷҷатнигорӣ</a>
+    <a href="{% url 'class_reports' %}{% if request.user.is_superuser and request.GET.school_id %}?school_id={{ request.GET.school_id }}{% endif %}" class="btn">📊 Ҳисоботи синфҳо</a>
     <button type="button" class="btn" onclick="window.print()">🖨️ Чоп</button>
 </div>
 

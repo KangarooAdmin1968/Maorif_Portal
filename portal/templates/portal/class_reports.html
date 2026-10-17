@@ -1,0 +1,91 @@
+{% extends 'portal/base.html' %}
+{% block title %}Ҳисоботи синфҳо{% endblock %}
+{% block extra_head %}
+<style>
+  .cr-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+  .cr-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .cr-toolbar select { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; min-width: 12rem; }
+  .doc-card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem;
+    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  .doc-card h2 { margin: 0 0 .75rem; font-size: 1.1rem; color: #003366; }
+  table.class-table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  table.class-table th, table.class-table td { border: 1px solid #d1d5db; padding: .45rem .7rem; text-align: left; }
+  table.class-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
+  table.class-table td.center { text-align: center; }
+  .quarter-labels { font-size: .78rem; color: #6b7280; margin-top: .6rem; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>📄 Ҳисоботи синфҳо</h1>
+
+<div class="cr-toolbar no-print">
+    {% if can_pick_school %}
+    <form method="get" action="{% url 'class_reports' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        <label>Муассиса
+            <select name="school_id" onchange="this.form.submit()">
+                <option value="">— интихоб кунед —</option>
+                {% for s in schools %}
+                <option value="{{ s.id }}"{% if school and s.id == school.id %} selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+    {% endif %}
+    {% if school %}
+    <form method="get" action="{% url 'class_reports' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        {% if can_pick_school %}<input type="hidden" name="school_id" value="{{ school.id }}">{% endif %}
+        <label>Чорак
+            <select name="quarter" onchange="this.form.submit()">
+                {% for q in quarters %}
+                <option value="{{ q }}"{% if q == quarter %} selected{% endif %}>{{ q }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn">Нишон додан</button></noscript>
+    </form>
+    {% endif %}
+    <a href="{% url 'school_documents' %}" class="btn">Ҳуҷҷатнигорӣ</a>
+    <a href="{% url 'workload_tabel' %}" class="btn">📋 Табели сарборӣ</a>
+</div>
+
+{% if school %}
+<div class="doc-card">
+    <h2>Ҳисоботи чоряки {{ quarter }} — {{ school.name }}</h2>
+    <table class="class-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>Синф</th>
+                <th style="width:140px;">Шумораи хонандагон</th>
+                <th style="width:150px;">Ҳисобот (Excel)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in classes %}
+            <tr>
+                <td class="center">{{ forloop.counter }}</td>
+                <td>{{ c.class_name }}</td>
+                <td class="center">{{ c.students }}</td>
+                <td class="center">
+                    <a class="btn btn-success" href="{% url 'class_report_export' %}?class_name={{ c.class_name|urlencode }}&quarter={{ quarter }}{% if can_pick_school %}&school_id={{ school.id }}{% endif %}">⬇️ Боргирӣ</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4">Дар ин муассиса синфи хонандадошта ёфт нашуд.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="quarter-labels">
+        Ҳисобот бо шаблони расмии «Ҳисобот» сохта мешавад — чоп дар варақаи A4
+        дар ҳолати уфуқӣ ба як саҳифа ҷӯйбар мегардад; ҳисобҳо ҳангоми кушодани
+        файл аз рӯи формулаҳои шаблон ҳисоб мешаванд.
+    </p>
+</div>
+{% else %}
+<div class="doc-card">
+    <p>{% if can_pick_school %}Барои дидани ҳисоботҳо аввал муассисаро интихоб кунед.{% else %}Барои дидани ҳисоботҳо бояд ба муассиса вобаста бошед.{% endif %}</p>
+</div>
+{% endif %}
+{% endblock %}

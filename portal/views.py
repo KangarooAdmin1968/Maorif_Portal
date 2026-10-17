@@ -49,6 +49,7 @@ from .tabel import (
     parse_decimal, parse_month_param, teacher_workload,
     workload_snapshot,
 )
+from .class_report import ClassReportError, build_class_report_workbook
 from .tariff_rates import suggested_rate_map, tariff_data_available
 from .monitoring import (
     can_access_monitoring, get_activity_summary, scope_monitoring_stats,
@@ -7061,6 +7062,124 @@ def workload_tabel_export(request):
     output = build_tabel_workbook(school, year, month, display_rows)
 
     filename = f"Табел_{get_school_number(school)}_{year}-{month:02d}.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Ҳисоботи синфҳо — quarterly class report workbook.
+#
+# Same Ҳуҷҷатнигорӣ gate and school isolation as the tabel; the xlsx is
+# built on demand from the owner's template by portal.class_report and
+# recalculates on open (wb.calculation.fullCalcOnLoad).
+# ---------------------------------------------------------------------------
+
+def _class_report_school(request):
+    """User's own school; superusers and district directors may pick one."""
+    school = get_user_school(request.user)
+    role = get_user_role(request.user)
+    if request.user.is_superuser or role == settings.ROLE_DIRECTOR:
+        school_id = request.GET.get('school_id') or request.POST.get('school_id')
+        if school_id:
+            try:
+                school = School.objects.get(pk=int(school_id))
+            except (ValueError, School.DoesNotExist):
+                pass
+    return school
+
+
+def _class_report_quarter(request):
+    """(quarter 1-4, invalid) from ?quarter=; defaults to the current one."""
+    raw = request.GET.get('quarter') or request.POST.get('quarter') or ''
+    try:
+        quarter = int(raw)
+    except (TypeError, ValueError):
+        quarter = 0
+    if quarter in (1, 2, 3, 4):
+        return quarter, False
+    return get_date_quarter(timezone.localdate()), bool(raw)
+
+
+def _class_report_classes(school):
+    """Graded classes that actually have students, with headcounts."""
+    rows = (
+        Student.objects.filter(school=school)
+        .exclude(class_name='')
+        .values('class_name')
+        .annotate(students=Count('id'))
+    )
+    classes = [r for r in rows if not is_non_graded(r['class_name'])]
+    classes.sort(key=lambda r: (class_numeric_part(r['class_name']), r['class_name']))
+    return classes
+
+
+def _class_report_redirect(school, quarter):
+    url = f"{reverse('class_reports')}?quarter={quarter}"
+    if school:
+        url += f"&school_id={school.id}"
+    return redirect(url)
+
+
+@login_required
+def class_reports(request):
+    """Ҳуҷҷатнигорӣ → Ҳисоботи синфҳо: class picker + per-class export."""
+    if not _tabel_access(request.user):
+        return redirect('dashboard')
+    school = _class_report_school(request)
+    if school and not has_school_access(request.user, school):
+        return redirect('dashboard')
+    quarter, invalid_quarter = _class_report_quarter(request)
+    if invalid_quarter:
+        messages.warning(request, 'Чораки нодуруст — чораки ҷорӣ нишон дода шуд.')
+
+    can_pick_school = request.user.is_superuser or (
+        get_user_role(request.user) == settings.ROLE_DIRECTOR)
+    schools = sorted(
+        academic_schools(), key=lambda s: s.name) if can_pick_school else []
+    classes = _class_report_classes(school) if school else []
+    return render(request, 'portal/class_reports.html', {
+        'school': school,
+        'schools': schools,
+        'can_pick_school': can_pick_school,
+        'classes': classes,
+        'quarter': quarter,
+        'quarters': [1, 2, 3, 4],
+    })
+
+
+@login_required
+def class_report_export(request):
+    """On-demand Excel «Ҳисобот» for one school + class + quarter.
+
+    The selected class's students and QuarterGrade.grade values are the
+    only data written into the owner's template; band/average cells keep
+    the workbook's own formulas and recalc when the file is opened.
+    """
+    if not _tabel_access(request.user):
+        return redirect('dashboard')
+    school = _class_report_school(request)
+    if not school or not has_school_access(request.user, school):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    class_name = normalize_class_name(request.GET.get('class_name') or '')
+    if not class_name or is_non_graded(class_name):
+        messages.error(request, 'Синфи нодуруст интихоб шудааст.')
+        return _class_report_redirect(school, quarter)
+    if not Student.objects.filter(school=school, class_name=class_name).exists():
+        messages.error(request, f'Синфи {class_name} дар муассиса ёфт нашуд.')
+        return _class_report_redirect(school, quarter)
+    try:
+        output = build_class_report_workbook(school, class_name, quarter)
+    except ClassReportError as exc:
+        messages.error(request, str(exc))
+        return _class_report_redirect(school, quarter)
+
+    filename = f"Ҳисобот_{class_name}_{get_school_number(school)}_чорак{quarter}.xlsx"
     encoded_filename = urllib.parse.quote(filename)
     response = HttpResponse(
         output.read(),

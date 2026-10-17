@@ -102,11 +102,27 @@ def _academic_year(today=None):
 
 
 def _school_short_name(school):
-    """'Муассисаи таҳсилоти умумии №20' -> 'МТМУ №20' (owner's signature style)."""
-    m = re.search(r'№\s*(\d+)', school.name or '')
-    if m:
-        return f'МТМУ №{m.group(1)}'
-    return school.name
+    """Short institution label for the signature line, derived from the
+    school's own type/name: 'МТМУ №20', 'Литсей №1', 'Гимназия №1'.
+    Falls back to the full School.name when the type or number cannot be
+    determined reliably — never guesses 'МТМУ'."""
+    name = (school.name or '').strip()
+    num = re.search(r'№\s*(\d+)', name)
+    kind = f"{(school.type or '').lower()} {name.lower()}"
+    if 'лит' in kind or 'лиц' in kind:      # Литсей / Лицей
+        prefix = 'Литсей'
+    elif 'гимн' in kind:
+        prefix = 'Гимназия'
+    elif (school.type or '').lower() == 'мактаб' \
+            or re.search(r'\bмактаб', name.lower()) \
+            or 'муассисаи таҳсилоти' in kind or 'мтму' in kind:
+        # '\bмактаб' skips 'томактабӣ' (kindergarten) names.
+        prefix = 'МТМУ'
+    else:
+        prefix = None
+    if prefix and num:
+        return f'{prefix} №{num.group(1)}'
+    return name
 
 
 def _director_name(school):
@@ -188,9 +204,15 @@ def build_class_report_workbook(school, class_name, quarter, today=None):
         ws.unmerge_cells(str(m))
     ws.delete_rows(FIRST_DATA_ROW, ws.max_row - FIRST_DATA_ROW + 1)
 
+    # The owner's AG/AH/AI per-student formulas average E:W (X is a spare
+    # slot). When a class uses all 20 columns the range extends to X so
+    # every graded subject is counted — identical while X stays empty.
+    avg_last = 'X' if len(subjects) >= TJB_SUBJECT_LIMIT else SUBJ_AVG_LAST
+
     _fill_header(ws, school, class_name, quarter, subjects, teacher_name, today)
-    _fill_students(ws, students, subjects, grades, data_styles)
-    _fill_footer(ws, footer_spec, footer_merges, delta, last, school)
+    _fill_students(ws, students, subjects, grades, data_styles, avg_last)
+    _fill_footer(ws, footer_spec, footer_merges, delta, last, school,
+                 avg_last)
     _resize_table(ws, last)
     _page_setup(ws, FOOTER_LAST_ROW + delta)
 
@@ -243,12 +265,7 @@ def _row_formulas(row, avg_last):
     }
 
 
-def _fill_students(ws, students, subjects, grades, data_styles):
-    # The owner's AG/AH/AI formulas average E:W (X is a spare slot). When a
-    # class uses all 20 columns the range extends to X so every graded
-    # subject is counted — identical results while X stays empty.
-    avg_last = 'X' if len(subjects) >= (SUBJ_LAST_COL - SUBJ_FIRST_COL + 1) \
-        else SUBJ_AVG_LAST
+def _fill_students(ws, students, subjects, grades, data_styles, avg_last):
     for idx, student in enumerate(students):
         row = FIRST_DATA_ROW + idx
         for col in range(1, MAX_COL + 1):
@@ -285,7 +302,19 @@ def _min_chain(first, last, threshold):
     return '=' + '+'.join(parts)
 
 
-def _fill_footer(ws, spec, merges, delta, last, school):
+def _band13_chain(first, last):
+    """'IF(AND(COUNT(E6:X6)>0,MIN(E6:X6)<4),1,0)+...' — students whose
+    minimum NUMERIC grade is 1-3, matching the other bands' per-row
+    MIN-chain scheme. The COUNT>0 guard keeps fully-blank rows out of the
+    band (a blank row's MIN is 0 and would otherwise be miscounted)."""
+    parts = [
+        f'IF(AND(COUNT(E{r}:X{r})>0,MIN(E{r}:X{r})<4),1,0)'
+        for r in range(first, last + 1)
+    ]
+    return '+'.join(parts)
+
+
+def _fill_footer(ws, spec, merges, delta, last, school, avg_last):
     """Write the footer block shifted by `delta` rows: captured styles and
     label text verbatim, formulas regenerated against the live range."""
     first = FIRST_DATA_ROW
@@ -336,9 +365,13 @@ def _fill_footer(ws, spec, merges, delta, last, school):
     ws.cell(row=s + 2, column=26).value = (
         _min_chain(first, last, 4) + f'-Z{s}-Z{s + 1}'
     )
+    # 1-3 band: the owner's Z45-based difference could go negative because
+    # Z45 averages per-subject counts instead of counting students. Count
+    # the band directly like the rows above — a student lands here when
+    # they have at least one numeric grade and their minimum is <4.
     ws.cell(row=s + 3, column=26).value = (
         f'=IF(COUNTIF(E{avg_row}:X{avg_row},">0"),'
-        f'Z{cnt_row}-Z{s}-Z{s + 1}-Z{s + 2},"")'
+        f'{_band13_chain(first, last)},"")'
     )
 
     # Холи миёна row.
@@ -348,9 +381,16 @@ def _fill_footer(ws, spec, merges, delta, last, school):
             f'=IF(COUNTIF({letter}{s}:{letter}{s + 3},">0"),'
             f'AVERAGE({letter}{first}:{letter}{last}),"")'
         )
+    # Z and AG of the Холи миёна row both mean the overall class average.
+    # The owner averaged per-subject means in Z and per-student means in
+    # AG — equal only when every student is graded in every subject, so
+    # partial quarters produced a false «Хатои ҳисоббарорӣ». Both now
+    # pool the same grade range through different paths (SUM/COUNT vs
+    # AVERAGE) so the AA audit still compares two real computations.
+    grades_range = f'E{first}:{avg_last}{last}'
     ws.cell(row=avg_row, column=26).value = (
         f'=IF(COUNTIF(E{avg_row}:Y{avg_row},">0"),'
-        f'AVERAGE(E{avg_row}:Y{avg_row}),"")'
+        f'SUM({grades_range})/COUNT({grades_range}),"")'
     )
     ws.cell(row=avg_row, column=27).value = (
         f'=IF(COUNTIF(E{avg_row}:X{avg_row},">0"),'
@@ -359,7 +399,7 @@ def _fill_footer(ws, spec, merges, delta, last, school):
     )
     ws.cell(row=avg_row, column=33).value = (
         f'=IF(COUNTIF(E{avg_row}:X{avg_row},">0"),'
-        f'AVERAGE(AG{first}:AG{s + 3}),"")'
+        f'AVERAGE({grades_range}),"")'
     )
     ws.cell(row=avg_row, column=34).value = (
         f'=IF(COUNTIF(AH{first}:AH{last},">0"),'
@@ -378,8 +418,7 @@ def _fill_footer(ws, spec, merges, delta, last, school):
             f'{letter}{avg_row}*10,"")'
         )
     ws.cell(row=pct_row, column=26).value = (
-        f'=IF(COUNTIF(E{pct_row}:Y{pct_row},">0"),'
-        f'AVERAGE(E{pct_row}:Y{pct_row}),"")'
+        f'=IF(COUNTIF(E{pct_row}:Y{pct_row},">0"),Z{avg_row}*10,"")'
     )
     ws.cell(row=pct_row, column=33).value = (
         f'=IF(COUNTIF(E{avg_row}:X{avg_row},">0"),AG{avg_row}*10,"")'

@@ -248,9 +248,9 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
           <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a></td>
           {% for q in quarter_numbers %}
           <td>
-            {# Quarter grades are derived automatically — display-only for
-               everyone. The disabled controls are never posted; the server
-               also ignores q_* keys. #}
+            {% comment %}Quarter grades are derived automatically — display-only
+            for everyone. The disabled controls are never posted; the server
+            also ignores q_* keys.{% endcomment %}
             {% if non_graded %}
             <select name="q_{{ q }}_{{ s.id }}" class="q-input grade-select" data-row-id="{{ forloop.parentloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="{{ q }}" disabled>
               {% for val, label in qualitative_choices %}

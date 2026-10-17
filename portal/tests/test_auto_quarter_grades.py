@@ -9,6 +9,7 @@ any teacher grade-entry endpoint, while the attestation mark (quarter 0)
 stays teacher-entered and feeds the derived Ҷамъбастӣ.
 """
 import json
+import re
 from unittest.mock import patch
 
 from django.urls import reverse
@@ -440,4 +441,46 @@ class FailedRecalcTests(GoldenBase):
         self.assertEqual(qg(self.s3, 1).grade, 6)                  # untouched
         drop_stale_quarter_grades([(self.s3.id, MATH, 1)])
         self.assertEqual(qg(self.s3, 1).grade, 6)                  # locked row kept
+
+
+# ---------------------------------------------------------------------------
+# Journal rendering — quarter cells must stay display-only with no leaks
+# ---------------------------------------------------------------------------
+
+
+class QuarterJournalRenderTests(GoldenBase):
+    """Regression: the template used a multi-line {# ... #} comment, but
+    Django treats {# as single-line only — the English implementation note
+    was emitted literally into every Ч1-Ч4 cell. The block is now a
+    {% comment %}; these tests pin down that nothing internal renders and
+    that every quarter input stays disabled."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.teacher_a)
+        self.url = reverse(
+            'grade_entry', args=[self.school_a.id, '7-А', MATH])
+        post_grade(self.client, self.s1, score='8', date=D_Q1)
+        post_grade(self.client, self.s1, score='10', date=D_Q1_B)
+
+    def test_no_implementation_text_in_rendered_journal(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        html = resp.content.decode()
+        for leak in ('derived automatically', 'display-only',
+                     'q_* keys', 'never posted', '{#'):
+            self.assertNotIn(leak, html)
+
+    def test_quarter_cells_render_disabled_with_derived_value(self):
+        html = self.client.get(self.url).content.decode()
+        # s1's derived Q1 = mean(8, 10) = 9 — rendered in a disabled input.
+        m = re.search(
+            r'<input[^>]*name="q_1_%s"[^>]*>' % self.s1.id, html)
+        self.assertIsNotNone(m)
+        self.assertIn('disabled', m.group(0))
+        self.assertIn('value="9"', m.group(0))
+        # Every quarter input on the page is disabled — none editable.
+        tags = re.findall(r'<input[^>]*name="q_\d+_[^"]+"[^>]*>', html)
+        self.assertTrue(tags)
+        self.assertTrue(all('disabled' in tag for tag in tags))
 

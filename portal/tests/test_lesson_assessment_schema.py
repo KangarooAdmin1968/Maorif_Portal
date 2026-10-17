@@ -13,7 +13,7 @@ The 0013 migration is additive-only. These tests prove that:
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 
-from portal.models import Assessment, Grade, Lesson
+from portal.models import Assessment, Grade, Lesson, QuarterGrade
 from portal.tests.helpers import (
     D_Q1, D_Q1_B, MATH, GoldenBase, make_grade, make_teacher_profile,
 )
@@ -207,7 +207,10 @@ class RegressionContractTests(GoldenBase):
         self.assertIsNone(g.lesson)
         self.assertIsNone(g.assessment)
 
-    def test_offline_quarterly_save_contract_unchanged(self):
+    def test_offline_quarterly_save_rejected_derived(self):
+        # Quarter grades 1-4 are derived automatically now — a manual
+        # quarterly write through the offline-capable endpoint is rejected
+        # and stores nothing.
         self.client.force_login(self.teacher_a)
         resp = self.client.post(reverse('save_grade_ajax'), {
             'student_id': self.s1.id,
@@ -218,8 +221,9 @@ class RegressionContractTests(GoldenBase):
         })
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertTrue(data['success'])
-        self.assertEqual(data['semi_annual_1'], 9)
+        self.assertFalse(data['success'])
+        self.assertFalse(QuarterGrade.objects.filter(
+            student=self.s1, quarter=1).exists())
 
     def test_teacher_activity_list_returns_teacher_rows(self):
         """school_readiness_rating still renders the allocated-teacher drilldown."""

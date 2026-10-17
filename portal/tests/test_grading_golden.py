@@ -315,34 +315,30 @@ class SaveGradeAjaxContractTests(GoldenBase):
         self.assertEqual(g.score, 8)          # untouched
         self.assertEqual(g.attendance, '+')   # updated
 
-    def test_manual_quarter_grade_survives_daily_save(self):
-        # GOLDEN (TEST 5): a daily cell save never touches QuarterGrade —
-        # official period results are only modified by quarterly saves,
-        # the form POST, or calc_quarter_from_daily.
+    def test_manual_quarter_grade_corrected_by_daily_save(self):
+        # Quarter grades are derived automatically: a stale manual value is
+        # replaced by the recalculated one as soon as a source grade saves.
         make_quarter_grade(self.s1, quarter=1, grade=7)
         r = self._post(student_id=self.s1.id, subject=MATH,
                        date=D_Q1.isoformat(), type='daily', score='10')
         self.assertTrue(r.json()['success'])
         self.assertEqual(QuarterGrade.objects.get(
-            student=self.s1, quarter=1).grade, 7)
+            student=self.s1, quarter=1).grade, 10)
 
     # --- quarterly saves ---------------------------------------------------
 
-    def test_quarterly_save_creates_quarter_grade_and_returns_calc(self):
+    def test_quarterly_save_rejected_quarter_grades_are_derived(self):
+        # Quarter grades 1-4 are calculated automatically — a manual
+        # write is rejected and leaves existing rows untouched.
         make_quarter_grade(self.s1, quarter=1, grade=8)
         r = self._post(student_id=self.s1.id, subject=MATH,
                        type='quarterly', quarter='2', score='10')
         self.assertEqual(r.status_code, 200)
-        data = r.json()
-        self.assertTrue(data['success'])
-        self.assertTrue(data['saved'])
+        self.assertFalse(r.json()['success'])
+        self.assertFalse(QuarterGrade.objects.filter(
+            student=self.s1, quarter=2).exists())
         self.assertEqual(QuarterGrade.objects.get(
-            student=self.s1, quarter=2).grade, 10)
-        # The response carries the recalculated calc_quarterly payload —
-        # the journal JS renders Нимсола/Солона/Ҷамъбастӣ from these keys.
-        for key in ('semi_annual_1', 'semi_annual_2', 'annual', 'final'):
-            self.assertIn(key, data)
-        self.assertEqual(data['semi_annual_1'], 9)
+            student=self.s1, quarter=1).grade, 8)
 
     def test_quarterly_quarter_zero_writes_attestation(self):
         r = self._post(student_id=self.s1.id, subject=MATH,
@@ -352,12 +348,14 @@ class SaveGradeAjaxContractTests(GoldenBase):
         self.assertEqual(qg.att_grade, 9)
         self.assertIsNone(qg.grade)
 
-    def test_quarterly_empty_score_deletes_row(self):
+    def test_quarterly_empty_score_cannot_delete_derived_row(self):
+        # A blank quarterly cell used to delete the row; derived rows are
+        # now protected — the write is rejected and the row survives.
         make_quarter_grade(self.s1, quarter=1, grade=8)
         r = self._post(student_id=self.s1.id, subject=MATH,
                        type='quarterly', quarter='1', score='')
-        self.assertTrue(r.json()['success'])
-        self.assertFalse(QuarterGrade.objects.filter(
+        self.assertFalse(r.json()['success'])
+        self.assertTrue(QuarterGrade.objects.filter(
             student=self.s1, quarter=1).exists())
 
     def test_quarterly_invalid_quarter_error(self):
@@ -426,11 +424,15 @@ class SaveGradeAjaxContractTests(GoldenBase):
         self.assertEqual(r.status_code, 200)
         self.assertFalse(r.json()['success'])
 
-    def test_lock_scoped_per_quarter_other_quarter_still_saves(self):
+    def test_quarterly_save_rejected_even_when_quarter_unlocked(self):
+        # Derived quarter writes are rejected regardless of lock state —
+        # the derived-grade guard runs before the lock check.
         lock_quarter(self.school_a, '7-А', MATH, quarter=1)
         r = self._post(student_id=self.s1.id, subject=MATH,
                        type='quarterly', quarter='2', score='9')
-        self.assertTrue(r.json()['success'])
+        self.assertFalse(r.json()['success'])
+        self.assertFalse(QuarterGrade.objects.filter(
+            student=self.s1, quarter=2).exists())
 
 
 # ---------------------------------------------------------------------------
@@ -486,9 +488,11 @@ class CalcQuarterFromDailyGoldenTests(GoldenBase):
             student=self.s1, quarter=1).grade, 10)  # 9.5 -> 10
 
     def test_locked_quarter_is_skipped(self):
+        # Lock first: automatic recalculation also skips locked quarters,
+        # so the Q1 fixture grades must not create a stored row either.
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
         make_grade(self.s1, score=8, date=D_Q1)
         make_grade(self.s1, score=10, date=D_Q2)
-        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
         self.client.force_login(self.admin)
         self.client.post(self.url)
         self.assertFalse(QuarterGrade.objects.filter(
@@ -546,14 +550,16 @@ class GradeEntryPostContractTests(GoldenBase):
         self.assertEqual(g.attendance, '+')
         self.assertEqual(g.behavior_score, 4)
 
-    def test_batch_post_saves_quarter_and_attestation(self):
+    def test_batch_post_ignores_quarter_keeps_attestation(self):
+        # Quarter grades are derived — a posted q_* value is ignored. The
+        # attestation mark (quarter 0) is a source mark and stays writable.
         self.client.post(self.url, {
             'date': D_Q1.isoformat(),
             f'q_1_{self.s1.id}': '9',
             f'att_{self.s1.id}': '10',
         })
-        self.assertEqual(QuarterGrade.objects.get(
-            student=self.s1, quarter=1).grade, 9)
+        self.assertFalse(QuarterGrade.objects.filter(
+            student=self.s1, quarter=1).exists())
         self.assertEqual(QuarterGrade.objects.get(
             student=self.s1, quarter=0).att_grade, 10)
 
@@ -568,15 +574,15 @@ class GradeEntryPostContractTests(GoldenBase):
         self.assertEqual(Grade.objects.filter(
             student=self.s1, date=D_Q1).count(), 0)
 
-    def test_empty_quarter_cell_deletes_quarter_grade_current_behavior(self):
-        # GOLDEN (documented): posting the form with a blank quarter cell
-        # deletes that student's official QuarterGrade for the quarter.
+    def test_empty_quarter_cell_no_longer_deletes_derived_row(self):
+        # Quarter cells are display-only; a blank posted value is ignored
+        # and the derived QuarterGrade survives.
         make_quarter_grade(self.s1, quarter=1, grade=8)
         self.client.post(self.url, {
             'date': D_Q1.isoformat(),
             f'q_1_{self.s1.id}': '',
         })
-        self.assertFalse(QuarterGrade.objects.filter(
+        self.assertTrue(QuarterGrade.objects.filter(
             student=self.s1, quarter=1).exists())
 
     def test_non_integer_score_rejected_silently(self):

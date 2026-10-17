@@ -187,10 +187,11 @@ class RankingCacheTests(GoldenBase):
         # Inside the refresh window the read is rate-limited to the
         # shadow; once the window elapses (patched to 0 here) the
         # recomputed ranking includes the new score with no extra write:
-        # School A pool = 9 + 6 + 10 = 25 / 3 = 8.33.
+        # School A pool = s1 {9, 10, derived q1=10} + s2 {6, derived q1=6}
+        # = 41 / 5 = 8.20.
         with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0):
             data = {d['school'].id: d for d in calculate_school_rankings()}
-        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.33)
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.20)
 
     def test_stale_shadow_served_during_refresh_interval(self):
         first = calculate_school_rankings()  # warm cache
@@ -230,7 +231,7 @@ class RankingCacheTests(GoldenBase):
         # Once released, the pending change is picked up.
         with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0):
             data = {d['school'].id: d for d in calculate_school_rankings()}
-        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.33)
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.20)
 
     def test_entry_predating_dirty_stamp_is_not_served_fresh(self):
         # Simulates a save committing mid-refresh: the stored entry's
@@ -240,7 +241,7 @@ class RankingCacheTests(GoldenBase):
         data = calculate_school_rankings()
         self.assertNotEqual(data, ['sentinel'])
         by_school = {d['school'].id: d for d in data}
-        self.assertAlmostEqual(by_school[self.school_a.id]['gpa'], 8.33)
+        self.assertAlmostEqual(by_school[self.school_a.id]['gpa'], 8.20)
 
     def test_refresh_failure_serves_shadow_instead_of_error(self):
         first = calculate_school_rankings()  # warm cache
@@ -285,7 +286,7 @@ class RankingCacheTests(GoldenBase):
                 mock.patch('time.sleep'):  # skip the cold-start spin
             data = {d['school'].id: d for d in calculate_school_rankings()}
         cache.delete('rank:v1:school:computing')
-        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.33)
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.20)
 
     def test_refresh_failure_with_corrupt_shadow_raises_original(self):
         calculate_school_rankings()  # warm
@@ -320,10 +321,10 @@ class RankingCacheTests(GoldenBase):
         self.assertIsNotNone(commit_dirty)
         self.assertGreaterEqual(commit_dirty, mid_txn_at)
         # The mid-transaction entry is not fresh: the next read recomputes
-        # and sees the committed row (pool 9+6+10 = 25/3 = 8.33).
+        # and sees the committed row (pool 9+10+10+6+6 = 41/5 = 8.20).
         with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0):
             data = {d['school'].id: d for d in calculate_school_rankings()}
-        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.33)
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.20)
 
     def test_rollback_does_not_run_commit_restamp(self):
         with self.captureOnCommitCallbacks() as callbacks:

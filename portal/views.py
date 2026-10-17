@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Avg, Count, Sum, Q, Max, ProtectedError
 from django.core.cache import cache
 import calendar
@@ -63,6 +63,10 @@ from .assessment_catalog import (
 from .grouping import (
     GROUP_LABELS, gender_split, balanced_split, validate_assignment,
 )
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 QUALITATIVE_CHOICES = [
@@ -339,6 +343,228 @@ def calc_quarter_value(current_scores, ajm_results):
     return ajm
 
 
+def recalculate_quarter_grade(student, subject, quarter):
+    """Persist the automatically-derived QuarterGrade for one quarter.
+
+    The single writer for quarter grades 1-4: every source Grade
+    add/edit/delete funnels here via signals (and the manual Ҳисобкунӣ
+    button). Locked quarters are skipped — a locked period keeps its
+    stored value frozen. When no source scores remain the stored row is
+    removed, matching the live bridge which would also show nothing.
+    """
+    if quarter not in (1, 2, 3, 4):
+        return
+    if is_quarter_locked(student.school, student.class_name, subject, quarter):
+        return
+    current_scores, ajm_results = collect_quarter_inputs(student, subject, quarter)
+    value = calc_quarter_value(current_scores, ajm_results)
+    if value is None:
+        QuarterGrade.objects.filter(
+            student=student, class_name=student.class_name,
+            subject=subject, quarter=quarter,
+        ).delete()
+        return
+    QuarterGrade.objects.update_or_create(
+        student=student,
+        class_name=student.class_name,
+        subject=subject,
+        quarter=quarter,
+        defaults={'grade': std_round(value)},
+    )
+
+
+def recalculate_quarter_grades_bulk(rows):
+    """Bulk counterpart of recalculate_quarter_grade.
+
+    `rows` is an iterable of (student_id, subject, quarter) keys — typically
+    the set collected by defer_quarter_recalc() while a batch endpoint wrote
+    source grades. Lock checks, the source pool, and the existing
+    QuarterGrade rows are resolved with a handful of shared queries instead
+    of a full pass per student, and the writes go through bulk operations.
+    """
+    keys = {(sid, subj, q) for sid, subj, q in rows
+            if sid and q in (1, 2, 3, 4)}
+    if not keys:
+        return
+    students = {
+        s.pk: s for s in Student.objects.filter(
+            pk__in={k[0] for k in keys}).select_related('school')
+    }
+    if not students:
+        return
+    subjects = {k[1] for k in keys}
+    # One query per distinct subject — a journal batch edits a single
+    # subject, so this is normally exactly one fetch covering every
+    # quarter (quarter membership is decided in Python below anyway).
+    pools = {}
+    for subj in subjects:
+        for g in Grade.objects.filter(
+                student_id__in=students.keys(), subject=subj,
+                period='Холҳои ҷорӣ (Онлайн)',
+                score__isnull=False).select_related('assessment'):
+            pools.setdefault(
+                (g.student_id, normalize_subject(subj)), []).append(g)
+    # Every distinct lock key resolved in one query, then matched exactly.
+    lock_keys = {
+        (st.school_id, normalize_class_name(st.class_name),
+         normalize_subject(subj), q)
+        for sid, subj, q in keys for st in [students.get(sid)]
+        if st is not None
+    }
+    locked = {
+        (row[0], normalize_class_name(row[1]),
+         normalize_subject(row[2]), row[3])
+        for row in QuarterLock.objects.filter(
+            school_id__in={k[0] for k in lock_keys},
+            class_name__in={k[1] for k in lock_keys},
+            subject__in={k[2] for k in lock_keys},
+            quarter__in={k[3] for k in lock_keys},
+            locked=True,
+        ).values_list('school_id', 'class_name', 'subject', 'quarter')
+    } if lock_keys else set()
+    existing = {
+        (qg.student_id, normalize_class_name(qg.class_name),
+         normalize_subject(qg.subject), qg.quarter): qg
+        for qg in QuarterGrade.objects.filter(
+            student_id__in=students, subject__in=subjects,
+            quarter__in={k[2] for k in keys})
+    }
+    to_create, to_update, to_delete = [], [], []
+    for sid, subj, q in keys:
+        student = students.get(sid)
+        if student is None:
+            continue
+        lock_key = (student.school_id, normalize_class_name(student.class_name),
+                    normalize_subject(subj), q)
+        if lock_key in locked:
+            continue
+        current_scores, ajm_results = _split_quarter_grades(
+            pools.get((sid, normalize_subject(subj)), []), q)
+        value = calc_quarter_value(current_scores, ajm_results)
+        qkey = (sid, normalize_class_name(student.class_name),
+                normalize_subject(subj), q)
+        qg = existing.get(qkey)
+        if value is None:
+            if qg is not None:
+                to_delete.append(qg.pk)
+            continue
+        new_grade = std_round(value)
+        if qg is None:
+            to_create.append(QuarterGrade(
+                student=student, class_name=student.class_name,
+                subject=subj, quarter=q, grade=new_grade))
+        elif qg.grade != new_grade:
+            qg.grade = new_grade
+            to_update.append(qg)
+    if to_delete:
+        QuarterGrade.objects.filter(pk__in=to_delete).delete()
+    if to_create:
+        try:
+            QuarterGrade.objects.bulk_create(to_create)
+        except IntegrityError:
+            # A concurrent write won the (student, class, subject, quarter)
+            # key — fall back to row-wise upserts for the conflicting set.
+            for row in to_create:
+                QuarterGrade.objects.update_or_create(
+                    student_id=row.student_id, class_name=row.class_name,
+                    subject=row.subject, quarter=row.quarter,
+                    defaults={'grade': row.grade})
+    if to_update:
+        QuarterGrade.objects.bulk_update(to_update, ['grade'])
+
+
+def drop_stale_quarter_grade(student, subject, quarter):
+    """Best-effort fallback when automatic recalculation fails.
+
+    Every display prefers a stored QuarterGrade over the live projection,
+    so a row whose refresh failed would keep showing the old value —
+    silently misleading. Removing it makes the established live bridge
+    project the quarter from the source Grade rows instead (and flag it
+    as a live value). Never called on the happy path.
+
+    A locked quarter keeps its frozen row — that stored value is still
+    the official one. If the lock check itself fails, the caller's
+    exception guard leaves the row rather than risk deleting a frozen
+    value.
+    """
+    if quarter not in (1, 2, 3, 4):
+        return
+    if is_quarter_locked(student.school, student.class_name, subject, quarter):
+        return
+    QuarterGrade.objects.filter(
+        student=student,
+        class_name=normalize_class_name(student.class_name),
+        subject=normalize_subject(subject),
+        quarter=quarter,
+    ).delete()
+
+
+def drop_stale_quarter_grades(keys):
+    """Bulk variant of drop_stale_quarter_grade for batch failure paths.
+
+    `keys` is an iterable of (student_id, subject, quarter) — typically the
+    set collected by defer_quarter_recalc() when its bulk recalc failed.
+    Locked cells are resolved in one query and keep their frozen rows.
+    """
+    keys = {
+        (sid, normalize_subject(subj), q)
+        for sid, subj, q in keys if sid and q in (1, 2, 3, 4)
+    }
+    if not keys:
+        return
+    students = {
+        s.pk: s for s in Student.objects.filter(
+            pk__in={k[0] for k in keys}).select_related('school')
+    }
+    if not students:
+        return
+    locked = {
+        (row[0], normalize_class_name(row[1]),
+         normalize_subject(row[2]), row[3])
+        for row in QuarterLock.objects.filter(
+            school_id__in={st.school_id for st in students.values()},
+            locked=True,
+        ).values_list('school_id', 'class_name', 'subject', 'quarter')
+    }
+    drop_q = None
+    for sid, subj, q in keys:
+        st = students.get(sid)
+        if st is None or (
+            st.school_id, normalize_class_name(st.class_name), subj, q
+        ) in locked:
+            continue
+        clause = Q(
+            student_id=sid,
+            class_name=normalize_class_name(st.class_name),
+            subject=subj, quarter=q)
+        drop_q = clause if drop_q is None else drop_q | clause
+    if drop_q is not None:
+        QuarterGrade.objects.filter(drop_q).delete()
+
+
+def _drain_deferred_quarter_recalc(deferred):
+    """Bulk recalc drain for batch writes that commit without atomicity.
+
+    daily_save and assessment_delete call recalculate_quarter_grades_bulk
+    inside transaction.atomic() — a failure there rolls the whole write
+    back and surfaces an error to the client, so no stale state persists.
+    The non-atomic batch paths (grade_entry POST, monthly_save, the Excel
+    import) have already committed their source rows when this runs; an
+    unhandled failure would 500 while leaving stale stored quarters that
+    every display prefers over the live projection. Log it and drop the
+    affected unlocked rows instead — the live bridge then projects each
+    cell from its source grades.
+    """
+    try:
+        recalculate_quarter_grades_bulk(deferred)
+    except Exception:
+        logger.exception('Bulk quarter recalculation failed')
+        try:
+            drop_stale_quarter_grades(deferred)
+        except Exception:
+            logger.exception('Failed to drop stale quarter grades')
+
+
 def _live_quarter_payload(student, subject, class_name):
     """Live quarter projection for one student: (qmap, live_flags).
 
@@ -353,19 +579,76 @@ def _live_quarter_payload(student, subject, class_name):
             official['att'] = qg.att_grade
         elif qg.grade is not None:
             official[qg.quarter] = qg.grade
+    grades = list(Grade.objects.filter(
+        student=student, subject=subject,
+        period='Холҳои ҷорӣ (Онлайн)',
+        score__isnull=False).select_related('assessment'))
     qmap = {}
     live_flags = set()
     for q in (1, 2, 3, 4):
         if q in official:
             qmap[q] = official[q]
         else:
-            current_scores, ajm_results = collect_quarter_inputs(student, subject, q)
+            current_scores, ajm_results = _split_quarter_grades(grades, q)
             value = calc_quarter_value(current_scores, ajm_results)
             if value is not None:
                 qmap[q] = std_round(value)
                 live_flags.add(q)
     qmap['att'] = official.get('att')
     return qmap, live_flags
+
+
+def _live_quarter_payloads(infos):
+    """Shared-query version of _live_quarter_payload for batch responses.
+
+    `infos` is an iterable of {'student': Student, 'subject': str} dicts.
+    Returns {student_pk: (qmap, live_flags)} — identical content to calling
+    _live_quarter_payload per student, but the QuarterGrade and Grade pools
+    are fetched once for the whole batch.
+    """
+    out = {}
+    subjects = {i['subject'] for i in infos}
+    students = [i['student'] for i in infos]
+    if not subjects or not students:
+        return out
+    grade_pool = {}
+    for g in Grade.objects.filter(
+            student__in=students, subject__in=subjects,
+            period='Холҳои ҷорӣ (Онлайн)',
+            score__isnull=False).select_related('assessment'):
+        grade_pool.setdefault(
+            (g.student_id, normalize_subject(g.subject)), []).append(g)
+    qg_rows = {}
+    for qg in QuarterGrade.objects.filter(
+            student__in=students, subject__in=subjects):
+        qg_rows.setdefault(
+            (qg.student_id, normalize_class_name(qg.class_name),
+             normalize_subject(qg.subject)), {})[qg.quarter] = qg
+    for info in infos:
+        st, subj = info['student'], info['subject']
+        rows = qg_rows.get(
+            (st.pk, normalize_class_name(st.class_name),
+             normalize_subject(subj)), {})
+        official = {}
+        for quarter, qg in rows.items():
+            if quarter == 0 and qg.att_grade is not None:
+                official['att'] = qg.att_grade
+            elif qg.grade is not None:
+                official[quarter] = qg.grade
+        pool = grade_pool.get((st.pk, normalize_subject(subj)), [])
+        qmap, live_flags = {}, set()
+        for q in (1, 2, 3, 4):
+            if q in official:
+                qmap[q] = official[q]
+            else:
+                current_scores, ajm_results = _split_quarter_grades(pool, q)
+                value = calc_quarter_value(current_scores, ajm_results)
+                if value is not None:
+                    qmap[q] = std_round(value)
+                    live_flags.add(q)
+        qmap['att'] = official.get('att')
+        out[st.pk] = (qmap, live_flags)
+    return out
 
 
 def parse_result_input(raw, work_type=None):
@@ -2558,105 +2841,98 @@ def grade_entry(request, school_id, class_name, subject):
         else:
             daily_is_control = control_q.filter(lesson__isnull=True).exists()
 
-        for student in students:
-            # daily grade fallback (skip if quarter is locked)
-            if not daily_locked and not daily_is_control:
-                # Explicit lesson=None/assessment=None: the legacy daily
-                # write must never match a lesson-linked or assessment-linked
-                # row for the same student/subject/date.
-                grade, _ = get_or_create_grade(
-                    student=student,
-                    subject=subject,
-                    period='Холҳои ҷорӣ (Онлайн)',
-                    date=date,
-                    assessment=None,
-                    lesson=post_lesson,
-                    defaults={'score': None, 'attendance': None, 'behavior_score': None}
-                )
-
-                key = f"score_{student.id}"
-                val = request.POST.get(key, '').strip()
-                if val:
-                    try:
-                        score = float(val)
-                        if not score.is_integer():
-                            score = None
-                        else:
-                            score = int(score)
-                            if not (1 <= score <= 10):
+        from .signals import defer_quarter_recalc  # local import avoids cycles
+        deferred = set()
+        try:
+            with defer_quarter_recalc() as deferred:
+                for student in students:
+                    # daily grade fallback (skip if quarter is locked)
+                    if not daily_locked and not daily_is_control:
+                        # Explicit lesson=None/assessment=None: the legacy daily
+                        # write must never match a lesson-linked or assessment-linked
+                        # row for the same student/subject/date.
+                        grade, _ = get_or_create_grade(
+                            student=student,
+                            subject=subject,
+                            period='Холҳои ҷорӣ (Онлайн)',
+                            date=date,
+                            assessment=None,
+                            lesson=post_lesson,
+                            defaults={'score': None, 'attendance': None, 'behavior_score': None}
+                        )
+    
+                        key = f"score_{student.id}"
+                        val = request.POST.get(key, '').strip()
+                        if val:
+                            try:
+                                score = float(val)
+                                if not score.is_integer():
+                                    score = None
+                                else:
+                                    score = int(score)
+                                    if not (1 <= score <= 10):
+                                        score = None
+                            except ValueError:
                                 score = None
-                    except ValueError:
-                        score = None
-                else:
-                    score = None
-                grade.score = score
-
-                att = request.POST.get(f"attendance_{student.id}", '').strip()
-                grade.attendance = att if att in ('+', '-') else None
-
-                # Conduct is written only when the field was actually
-                # submitted — the journal disables untouched behavior selects
-                # on submit, so an absent key means 'leave the stored value
-                # alone'. This keeps a batch save from materializing the
-                # carry-over/default prefill (or a foreign subject's value)
-                # into rows for students the teacher never edited.
-                beh_key = f"behavior_{student.id}"
-                if beh_key in request.POST:
-                    beh = request.POST.get(beh_key, '').strip()
-                    if beh:
-                        try:
-                            b = int(beh)
-                            grade.behavior_score = b if 1 <= b <= 5 else None
-                        except ValueError:
-                            grade.behavior_score = None
-                    else:
-                        grade.behavior_score = None
-
-                if grade.score is None and not grade.attendance and grade.behavior_score is None:
-                    grade.delete()
-                else:
-                    grade.save()
-
-            # quarterly grade fallback (skip locked quarters)
-            for q in (1, 2, 3, 4, 0):
-                if is_quarter_locked(school, class_name, subject, q):
-                    continue
-                if q == 0:
-                    qkey = f"att_{student.id}"
-                else:
-                    qkey = f"q_{q}_{student.id}"
-                qval = request.POST.get(qkey, '').strip()
-                if qval:
-                    try:
-                        qscore = float(qval)
-                        if 1 <= qscore <= 10:
-                            if q == 0:
-                                QuarterGrade.objects.update_or_create(
-                                    student=student,
-                                    class_name=class_name,
-                                    subject=subject,
-                                    quarter=0,
-                                    defaults={'att_grade': int(qscore)}
-                                )
+                        else:
+                            score = None
+                        grade.score = score
+    
+                        att = request.POST.get(f"attendance_{student.id}", '').strip()
+                        grade.attendance = att if att in ('+', '-') else None
+    
+                        # Conduct is written only when the field was actually
+                        # submitted — the journal disables untouched behavior selects
+                        # on submit, so an absent key means 'leave the stored value
+                        # alone'. This keeps a batch save from materializing the
+                        # carry-over/default prefill (or a foreign subject's value)
+                        # into rows for students the teacher never edited.
+                        beh_key = f"behavior_{student.id}"
+                        if beh_key in request.POST:
+                            beh = request.POST.get(beh_key, '').strip()
+                            if beh:
+                                try:
+                                    b = int(beh)
+                                    grade.behavior_score = b if 1 <= b <= 5 else None
+                                except ValueError:
+                                    grade.behavior_score = None
                             else:
-                                QuarterGrade.objects.update_or_create(
-                                    student=student,
-                                    class_name=class_name,
-                                    subject=subject,
-                                    quarter=q,
-                                    defaults={'grade': int(qscore)}
-                                )
-                    except ValueError:
-                        pass
-                else:
-                    if q == 0:
-                        QuarterGrade.objects.filter(
-                            student=student, class_name=class_name, subject=subject, quarter=0
-                        ).delete()
-                    else:
-                        QuarterGrade.objects.filter(
-                            student=student, class_name=class_name, subject=subject, quarter=q
-                        ).delete()
+                                grade.behavior_score = None
+    
+                        if grade.score is None and not grade.attendance and grade.behavior_score is None:
+                            grade.delete()
+                        else:
+                            grade.save()
+    
+                    # Attestation entry (quarter 0) stays teacher-editable — it is a
+                    # source mark for the final grade. Quarter grades 1-4 are derived
+                    # automatically from Grade rows; posted q_* values are ignored.
+                    if not is_quarter_locked(school, class_name, subject, 0):
+                        qval = request.POST.get(f"att_{student.id}", '').strip()
+                        if qval:
+                            try:
+                                qscore = float(qval)
+                                if 1 <= qscore <= 10:
+                                    QuarterGrade.objects.update_or_create(
+                                        student=student,
+                                        class_name=class_name,
+                                        subject=subject,
+                                        quarter=0,
+                                        defaults={'att_grade': int(qscore)}
+                                    )
+                            except ValueError:
+                                pass
+                        else:
+                            QuarterGrade.objects.filter(
+                                student=student, class_name=class_name,
+                                subject=subject, quarter=0
+                            ).delete()
+        finally:
+            # Re-derive every (student, subject, quarter) the batch
+            # touched in one bulk pass — and drain even when the batch
+            # aborted partway, so committed source rows never sit
+            # beside a stale stored quarter.
+            _drain_deferred_quarter_recalc(deferred)
         back = f"?date={date.isoformat()}"
         if post_lesson is not None:
             back += f"&lesson={post_lesson.id}"
@@ -3338,8 +3614,13 @@ def export_journal_excel(request, school_id, class_name, subject):
 _MEMO_MISS = object()
 
 
-def _save_journal_cell(user, item, ctx=None):
+def _save_journal_cell(user, item, ctx=None, affected=None):
     """Apply one staged journal cell edit; returns (ok, message).
+
+    `affected`, when given, is a dict that receives an entry
+    {student_id: {'student': ..., 'subject': ..., 'quarters': set()}} for
+    every successfully written cell so the caller can report which derived
+    quarter values changed (the recalc itself runs via Grade signals).
 
     Shared write pipeline for monthly_save and daily_save — identical
     permission, lesson-scope, control-mode and quarter-lock checks as the
@@ -3449,6 +3730,11 @@ def _save_journal_cell(user, item, ctx=None):
         _apply_grade_fields(grade, values)
     except (ValueError, TypeError) as e:
         return False, str(e)
+    if affected is not None:
+        info = affected.setdefault(
+            student.pk, {'student': student, 'subject': subject,
+                         'quarters': set()})
+        info['quarters'].add(get_date_quarter(date))
     return True, ''
 
 
@@ -3474,14 +3760,23 @@ def monthly_save(request):
 
     results = []
     saved = 0
-    for item in payload:
-        key = item.get('key') if isinstance(item, dict) else None
-        ok, message = _save_journal_cell(request.user, item)
-        if ok:
-            saved += 1
-            results.append({'key': key, 'ok': True})
-        else:
-            results.append({'key': key, 'ok': False, 'message': message})
+    from .signals import defer_quarter_recalc  # local import avoids cycles
+    deferred = set()
+    try:
+        with defer_quarter_recalc() as deferred:
+            for item in payload:
+                key = item.get('key') if isinstance(item, dict) else None
+                ok, message = _save_journal_cell(request.user, item)
+                if ok:
+                    saved += 1
+                    results.append({'key': key, 'ok': True})
+                else:
+                    results.append({'key': key, 'ok': False, 'message': message})
+    finally:
+        # One bulk recalc for every (student, subject, quarter) the
+        # batch touched — also drained on a partway abort so
+        # committed rows never sit beside a stale stored quarter.
+        _drain_deferred_quarter_recalc(deferred)
     return JsonResponse(
         {'success': True, 'saved': saved, 'results': results}, status=200
     )
@@ -3521,6 +3816,7 @@ def daily_save(request):
     # instead of once per item. Request-scoped only — nothing crosses
     # requests, and Grade writes are never cached.
     ctx = {}
+    affected = {}
     try:
         with transaction.atomic():
             # SQLite WAL reservation (B3): a deferred transaction upgrades
@@ -3536,22 +3832,29 @@ def daily_save(request):
                 cursor.execute(
                     'UPDATE portal_grade SET score = score WHERE id = -1'
                 )
-            for item in payload:
-                if not isinstance(item, dict):
-                    results.append({
-                        'key': None, 'ok': False,
-                        'message': 'Формати нодуруст.',
-                    })
-                    continue
-                ok, message = _save_journal_cell(request.user, item, ctx)
-                if ok:
-                    saved += 1
-                    results.append({'key': item.get('key'), 'ok': True})
-                else:
-                    results.append({
-                        'key': item.get('key'), 'ok': False,
-                        'message': message,
-                    })
+            from .signals import defer_quarter_recalc  # local import
+            with defer_quarter_recalc() as deferred:
+                for item in payload:
+                    if not isinstance(item, dict):
+                        results.append({
+                            'key': None, 'ok': False,
+                            'message': 'Формати нодуруст.',
+                        })
+                        continue
+                    ok, message = _save_journal_cell(request.user, item, ctx,
+                                                     affected)
+                    if ok:
+                        saved += 1
+                        results.append({'key': item.get('key'), 'ok': True})
+                    else:
+                        results.append({
+                            'key': item.get('key'), 'ok': False,
+                            'message': message,
+                        })
+            # One bulk pass over the collected (student, subject, quarter)
+            # keys inside the same transaction — identical result to the
+            # per-save signal path without re-running the lookups per row.
+            recalculate_quarter_grades_bulk(deferred)
     except Exception:
         # The transaction rolled back — nothing was written, so nothing may
         # be reported as saved; the client keeps all items pending.
@@ -3559,8 +3862,24 @@ def daily_save(request):
             {'success': False, 'message': 'Сабт нашуд. Такрор кунед.'},
             status=200,
         )
+    # Quarter cells are read-only now — return the recalculated value for
+    # every student the batch touched so the journal refreshes the derived
+    # Ч/Нимсола/Солона/Ҷамъбастӣ cells without a reload.
+    students_payload = {}
+    infos = list(affected.values())
+    payloads = _live_quarter_payloads(infos)
+    for info in infos:
+        st = info['student']
+        qmap, live_flags = payloads.get(st.pk, ({}, set()))
+        entry = calc_quarterly(qmap, live_flags)
+        entry['quarters'] = [
+            {'quarter': q, 'value': qmap.get(q), 'live': q in live_flags}
+            for q in sorted(info['quarters'])
+        ]
+        students_payload[str(st.id)] = entry
     return JsonResponse(
-        {'success': True, 'saved': saved, 'results': results}, status=200
+        {'success': True, 'saved': saved, 'results': results,
+         'students': students_payload}, status=200
     )
 
 
@@ -4079,54 +4398,63 @@ def import_excel(request, class_name=None, school_id=None):
     fixed_cols = {name_col, class_col} if class_col else {name_col}
 
     imported = 0
-    for _, row in df.iterrows():
-        full_name = str(row.get(name_col, '')).strip()
-        if not full_name or full_name.lower() in ('nan', 'none'):
-            continue
-
-        if class_col:
-            c_name = str(row.get(class_col, '')).strip()
-            if not c_name or c_name.lower() in ('nan', 'none'):
-                c_name = target_class
-            if not c_name:
-                continue
-            c_name = normalize_class_name(c_name)
-        else:
-            if not target_class:
-                continue
-            c_name = target_class
-
-        student_id = f"{school.name}__{c_name}__{full_name}"
-        student, _ = Student.objects.update_or_create(
-            id=student_id,
-            defaults={'full_name': full_name, 'class_name': c_name, 'school': school}
-        )
-
-        for col in df.columns:
-            if col in fixed_cols:
-                continue
-            low = col.lower()
-            if 'unnamed' in low or 'жами' in low or 'рейтинг' in low or '№' in col or col.strip() == '':
-                continue
-            subj = normalize_subject(col)
-            val = row.get(col)
-            if val is None or str(val).lower() in ('nan', 'none', ''):
-                continue
-            try:
-                score = float(val)
-                if 1 <= score <= 10:
-                    Grade.objects.update_or_create(
-                        student=student,
-                        subject=subj,
-                        period='Холҳои ҷорӣ (Онлайн)',
-                        assessment=None,
-                        lesson=None,
-                        defaults={'score': score}
-                    )
-                    imported += 1
-            except (ValueError, TypeError):
-                continue
-
+    from .signals import defer_quarter_recalc  # local import avoids cycles
+    deferred = set()
+    try:
+        with defer_quarter_recalc() as deferred:
+            for _, row in df.iterrows():
+                full_name = str(row.get(name_col, '')).strip()
+                if not full_name or full_name.lower() in ('nan', 'none'):
+                    continue
+    
+                if class_col:
+                    c_name = str(row.get(class_col, '')).strip()
+                    if not c_name or c_name.lower() in ('nan', 'none'):
+                        c_name = target_class
+                    if not c_name:
+                        continue
+                    c_name = normalize_class_name(c_name)
+                else:
+                    if not target_class:
+                        continue
+                    c_name = target_class
+    
+                student_id = f"{school.name}__{c_name}__{full_name}"
+                student, _ = Student.objects.update_or_create(
+                    id=student_id,
+                    defaults={'full_name': full_name, 'class_name': c_name, 'school': school}
+                )
+    
+                for col in df.columns:
+                    if col in fixed_cols:
+                        continue
+                    low = col.lower()
+                    if 'unnamed' in low or 'жами' in low or 'рейтинг' in low or '№' in col or col.strip() == '':
+                        continue
+                    subj = normalize_subject(col)
+                    val = row.get(col)
+                    if val is None or str(val).lower() in ('nan', 'none', ''):
+                        continue
+                    try:
+                        score = float(val)
+                        if 1 <= score <= 10:
+                            Grade.objects.update_or_create(
+                                student=student,
+                                subject=subj,
+                                period='Холҳои ҷорӣ (Онлайн)',
+                                assessment=None,
+                                lesson=None,
+                                defaults={'score': score}
+                            )
+                            imported += 1
+                    except (ValueError, TypeError):
+                        continue
+    
+    finally:
+        # One bulk derived-grade pass for every (student, subject,
+        # quarter) the import touched — also drained on a partway
+        # abort so committed rows never sit beside a stale quarter.
+        _drain_deferred_quarter_recalc(deferred)
     messages.success(request, f'{imported} хол(ҳо) ворид карда шуд.')
     if target_class:
         return redirect('class_detail', school_id=school.id, class_name=target_class)
@@ -4313,6 +4641,12 @@ def save_grade_ajax(request):
             except ValueError:
                 return JsonResponse({'success': False, 'message': 'Чораки нодуруст.'}, status=200)
 
+            # Quarter grades 1-4 are derived automatically from daily and
+            # control-assessment grades — manual writes are rejected for
+            # everyone. Only the attestation mark (quarter 0) stays editable.
+            if quarter != 0:
+                return JsonResponse({'success': False, 'message': 'Холи чоряк автоматӣ ҳисоб мешавад.'}, status=200)
+
             if is_quarter_locked(student.school, class_name, subject, quarter):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
 
@@ -4322,28 +4656,19 @@ def save_grade_ajax(request):
                 return JsonResponse({'success': False, 'message': str(e)}, status=200)
 
             if score is not None and 1 <= score <= 10:
-                if quarter == 0:
-                    QuarterGrade.objects.update_or_create(
-                        student=student,
-                        class_name=class_name,
-                        subject=subject,
-                        quarter=0,
-                        defaults={'att_grade': score}
-                    )
-                else:
-                    QuarterGrade.objects.update_or_create(
-                        student=student,
-                        class_name=class_name,
-                        subject=subject,
-                        quarter=quarter,
-                        defaults={'grade': score}
-                    )
+                QuarterGrade.objects.update_or_create(
+                    student=student,
+                    class_name=class_name,
+                    subject=subject,
+                    quarter=0,
+                    defaults={'att_grade': score}
+                )
             else:
                 QuarterGrade.objects.filter(
                     student=student,
                     class_name=class_name,
                     subject=subject,
-                    quarter=quarter
+                    quarter=0
                 ).delete()
 
             qmap = {}
@@ -4378,27 +4703,13 @@ def calc_quarter_from_daily(request, school_id, class_name, subject):
         if class_subject is not None
         else Student.objects.filter(school=school, class_name=class_name)
     )
-    for student in students:
-        grades = Grade.objects.filter(
-            student=student,
-            subject=subject,
-            period='Холҳои ҷорӣ (Онлайн)',
-            score__isnull=False
-        ).select_related('assessment')
-        for q in (1, 2, 3, 4):
-            if is_quarter_locked(school, class_name, subject, q):
-                continue
-            current_scores, ajm_results = _split_quarter_grades(grades, q)
-            value = calc_quarter_value(current_scores, ajm_results)
-            if value is None:
-                continue
-            QuarterGrade.objects.update_or_create(
-                student=student,
-                class_name=class_name,
-                subject=subject,
-                quarter=q,
-                defaults={'grade': std_round(value)}
-            )
+    # recalculate_quarter_grades_bulk shares the single derived-grade
+    # formula and lock handling with the automatic path — a quarter with no
+    # remaining source scores loses its stored row.
+    recalculate_quarter_grades_bulk(
+        (student.pk, subject, q)
+        for student in students for q in (1, 2, 3, 4)
+    )
     return redirect('grade_entry', school_id=school.id, class_name=class_name, subject=subject)
 
 
@@ -4620,7 +4931,8 @@ def assessment_delete(request):
         affected_ids = list(
             Grade.objects.filter(assessment=assessment).values_list('student_id', flat=True).distinct()
         )
-        with transaction.atomic():
+        from .signals import defer_quarter_recalc  # local import
+        with transaction.atomic(), defer_quarter_recalc() as deferred:
             # Deliberate, narrowly scoped exception to the "grades are never
             # silently deleted" rule: ONLY rows linked to this Assessment are
             # removed, and they must be deleted rather than detached — letting
@@ -4628,18 +4940,24 @@ def assessment_delete(request):
             # results into ordinary Ҷорӣ daily grades on that date.
             Grade.objects.filter(assessment=assessment).delete()
             assessment.delete()
+            recalculate_quarter_grades_bulk(deferred)
         # Return the recalculated quarter for every affected student so the
         # page can refresh quarter cells immediately — the deleted grades no
         # longer contribute to the projection.
         students_payload = {}
-        for sid in affected_ids:
-            st = Student.objects.get(pk=sid)
-            qmap, live_flags = _live_quarter_payload(st, cs.subject, cs.class_name)
+        infos = [
+            {'student': st, 'subject': cs.subject}
+            for st in Student.objects.filter(pk__in=affected_ids)
+        ]
+        payloads = _live_quarter_payloads(infos)
+        for info in infos:
+            st = info['student']
+            qmap, live_flags = payloads.get(st.pk, ({}, set()))
             entry = calc_quarterly(qmap, live_flags)
             entry['quarter'] = deleted_quarter
             entry['quarter_value'] = qmap.get(deleted_quarter)
             entry['quarter_live'] = deleted_quarter in live_flags
-            students_payload[str(sid)] = entry
+            students_payload[str(st.id)] = entry
         return JsonResponse({'success': True, 'students': students_payload}, status=200)
     except Exception as e:
         return JsonResponse({'success': False, 'message': str(e)}, status=200)

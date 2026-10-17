@@ -248,8 +248,11 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
           <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a></td>
           {% for q in quarter_numbers %}
           <td>
+            {# Quarter grades are derived automatically — display-only for
+               everyone. The disabled controls are never posted; the server
+               also ignores q_* keys. #}
             {% if non_graded %}
-            <select name="q_{{ q }}_{{ s.id }}" class="q-input grade-select" data-row-id="{{ forloop.parentloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="{{ q }}" {% if q in locked_quarters %}disabled{% endif %}>
+            <select name="q_{{ q }}_{{ s.id }}" class="q-input grade-select" data-row-id="{{ forloop.parentloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="{{ q }}" disabled>
               {% for val, label in qualitative_choices %}
               <option value="{{ val }}" {% if quarter_grades|dict_key:s.id|dict_key:q|stringformat:"s" == val %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
@@ -258,7 +261,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
             <input type="number" name="q_{{ q }}_{{ s.id }}" min="1" max="10" step="1"
                    value="{{ quarter_grades|dict_key:s.id|dict_key:q }}" class="q-input"
                    data-row-id="{{ forloop.parentloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-quarter="{{ q }}"
-                   {% if q in locked_quarters %}disabled{% endif %}>{% if q in live_quarter_flags|dict_key:s.id %}<sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;"> Ҷ</sup>{% endif %}
+                   disabled>{% if q in live_quarter_flags|dict_key:s.id %}<sup title="Ҷорӣ (прогноз)" style="color:#f59e0b;font-size:0.7em;"> Ҷ</sup>{% endif %}
             {% endif %}
           </td>
           {% if q == 2 and not non_graded %}
@@ -1234,6 +1237,18 @@ function flushDailyBatch(onDone) {
         if (st) showStatus(st, res.message || 'Сабт нашуд');
       }
     });
+    // Quarter cells are derived and read-only — refresh them plus the
+    // Нимсола/Солона/Ҷамъбастӣ spans with the server-recalculated values.
+    if (resp.students) {
+      Object.keys(resp.students).forEach(sid => {
+        const entry = resp.students[sid];
+        (entry.quarters || []).forEach(qv => {
+          updateQuarterCell(sid, qv.quarter, qv.value, qv.live);
+        });
+        const any = document.querySelector('[data-student-id="' + sid + '"]');
+        if (any) updateCalcSpans(any.dataset.rowId, entry);
+      });
+    }
     updateSaveBar();
     if (failed) {
       showToastMsg('Баъзе баҳоҳо сабт нашуданд.', true);

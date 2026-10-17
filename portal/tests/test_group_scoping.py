@@ -16,7 +16,7 @@ from portal.models import (
 )
 from portal.tests.helpers import (
     D_Q1, MATH, TAJIK, GoldenBase, make_class_subject, make_grade,
-    make_student, make_teacher_profile, make_user,
+    make_quarter_grade, make_student, make_teacher_profile, make_user,
 )
 
 
@@ -284,15 +284,20 @@ class GroupForgedWriteTests(GroupedFixture):
         Grade.objects.create(
             student=self.s2, subject=MATH, period='Холҳои ҷорӣ (Онлайн)',
             date=D_Q1, score=5)
+        # Source grades auto-derive their quarter rows via signals now —
+        # plant wrong values so the endpoint's group scoping stays
+        # observable: it must re-derive s1's row but leave s2's alone.
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=1)
+        make_quarter_grade(self.s2, '7-А', MATH, 1, grade=1)
         self.client.force_login(self.teacher_a)
         self.client.post(reverse(
             'calc_quarter_from_daily',
             args=[self.school_a.id, '7-А', MATH]))
         from portal.models import QuarterGrade
-        self.assertTrue(
-            QuarterGrade.objects.filter(student=self.s1).exists())
-        self.assertFalse(
-            QuarterGrade.objects.filter(student=self.s2).exists())
+        self.assertEqual(
+            QuarterGrade.objects.get(student=self.s1).grade, 9)
+        self.assertEqual(
+            QuarterGrade.objects.get(student=self.s2).grade, 1)
 
 
 class GroupLessonTests(GroupedFixture):

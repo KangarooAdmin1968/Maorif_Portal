@@ -3,17 +3,22 @@
 Deterministic pool (subject МАТЕМАТИКА unless noted):
 
     s1 (School A, 7-А): daily 8, 10 + quarter1=9 + attestation=9  -> 9.00
-    s2 (School A, 7-А): daily 6                                   -> 6.00
+    s2 (School A, 7-А): daily 6 + derived quarter1=6              -> 6.00
     s3 (School B, 7-Б): daily 7 + quarter1=8                      -> 7.50
     s4 (School A, 1-А): non-graded class, custom-subject score 10
     s5 (Idora,    5-А): non-academic school, custom-subject 10
     s6 (School A, 8-Б): student with no grades
 
+Derived quarter rows are now persisted automatically by the Grade signals,
+so every student with a source score also contributes its QuarterGrade to
+the ranking pools (s2 gains quarter1=6, and the explicitly seeded rows
+land on the same values the signals derived).
+
 Frozen expectations:
-    school_rankings : A = (8+10+9+9+6)/5 = 8.40 rank 1; B = 7.50 rank 2
-    class_rankings  : 7-А 8.40 (d1,s1); 7-Б 7.50 (d2,s1); 8-Б 0.00 (d3,s2)
+    school_rankings : A = (8+10+9+9+6+6)/6 = 8.00 rank 1; B = 7.50 rank 2
+    class_rankings  : 7-А 8.00 (d1,s1); 7-Б 7.50 (d2,s1); 8-Б 0.00 (d3,s2)
     top_students    : s1 9.00 (d1,s1); s3 7.50 (d2,s1); s2 6.00 (d3,s2)
-    subject_rankings: МАТЕМАТИКА = 57/7 = 8.14 rank 1; other official
+    subject_rankings: МАТЕМАТИКА = 63/8 = 7.88 rank 1; other official
                       subjects 0.00 rank 2; non-official subject hidden
 """
 from django.test import TestCase
@@ -57,7 +62,7 @@ class SchoolRankingGoldenTests(RankingBase):
 
     def test_school_gpa_pools_daily_quarter_and_attestation(self):
         data = {item['school'].id: item for item in calculate_school_rankings()}
-        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.40)
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.00)
         self.assertAlmostEqual(data[self.school_b.id]['gpa'], 7.50)
 
     def test_school_ranking_order_and_dense_rank(self):
@@ -73,18 +78,18 @@ class SchoolRankingGoldenTests(RankingBase):
 
     def test_non_graded_class_scores_excluded(self):
         # s4's score-10 in class 1-А must NOT lift School A's GPA —
-        # if non-graded classes leaked in, A would show (42+10)/6 = 8.67.
+        # if non-graded classes leaked in, A would show (48+10)/7 = 8.29.
         data = {item['school'].id: item for item in calculate_school_rankings()}
-        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.40)
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.00)
 
     def test_non_graded_quarter_and_attestation_excluded(self):
         # QuarterGrade rows are excluded on their own class_name — a '1-А'
         # quarter or attestation grade must not lift School A either.
-        # Leak would give (42+10+10)/7 = 8.86.
+        # Leak would give (48+10+10)/8 = 8.50.
         make_quarter_grade(self.s4, '1-А', MATH, 1, grade=10)
         make_quarter_grade(self.s4, '1-А', MATH, 0, att=10)
         data = {item['school'].id: item for item in calculate_school_rankings()}
-        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.40)
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.00)
 
     def test_school_with_no_grades_present_with_zero(self):
         empty = make_school('Мактаб №99')
@@ -100,7 +105,7 @@ class ClassRankingGoldenTests(RankingBase):
     def test_class_gpa_district_and_school_ranks(self):
         data = self._by_key(calculate_class_rankings())
         a7 = data[(self.school_a.id, '7-А')]
-        self.assertAlmostEqual(a7['gpa'], 8.40)
+        self.assertAlmostEqual(a7['gpa'], 8.00)
         self.assertEqual(a7['district_rank'], 1)
         self.assertEqual(a7['school_rank'], 1)
         b7 = data[(self.school_b.id, '7-Б')]
@@ -136,7 +141,7 @@ class ClassRankingGoldenTests(RankingBase):
         make_quarter_grade(self.s1, '1-А', MATH, 1, grade=10)
         data = self._by_key(calculate_class_rankings())
         self.assertNotIn((self.school_a.id, '1-А'), data)
-        self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.40)
+        self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.00)
 
     def test_class_entry_from_quarter_only_resolves_school_name(self):
         # '9-Д' has no students at School A — the QuarterGrade row alone
@@ -154,7 +159,7 @@ class ClassRankingGoldenTests(RankingBase):
     def test_same_subject_different_classes_kept_separate(self):
         # TEST 7: the same subject in two classes must not merge class entries.
         data = self._by_key(calculate_class_rankings())
-        self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.40)
+        self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.00)
         self.assertAlmostEqual(data[(self.school_b.id, '7-Б')]['gpa'], 7.50)
 
 
@@ -206,7 +211,7 @@ class SubjectRankingGoldenTests(RankingBase):
 
     def test_subject_gpa_aggregation_normalized(self):
         data = self._by_subject(calculate_subject_rankings())
-        self.assertAlmostEqual(data[MATH]['gpa'], 8.14)  # 57/7
+        self.assertAlmostEqual(data[MATH]['gpa'], 7.88)  # 63/8
         self.assertEqual(data[MATH]['rank'], 1)
 
     def test_all_official_subjects_present_with_zero(self):
@@ -221,9 +226,9 @@ class SubjectRankingGoldenTests(RankingBase):
 
     def test_subject_pool_includes_quarter_and_attestation(self):
         # If quarter/attestation leaked out of the pool, MATH would be
-        # (8+10+6+7)/4 = 7.75 instead of 8.14.
+        # (8+10+6+7)/4 = 7.75 instead of 7.88.
         data = self._by_subject(calculate_subject_rankings())
-        self.assertAlmostEqual(data[MATH]['gpa'], 8.14)
+        self.assertAlmostEqual(data[MATH]['gpa'], 7.88)
 
     def test_subject_ranking_counts_non_graded_scores_current_behavior(self):
         # GOLDEN QUIRK: unlike school/class/student rankings, the subject
@@ -231,7 +236,7 @@ class SubjectRankingGoldenTests(RankingBase):
         # a grade-1 class DOES enter the subject pool today.
         make_grade(self.s4, MATH, 10, D_Q1)  # '1-А' student
         data = self._by_subject(calculate_subject_rankings())
-        self.assertAlmostEqual(data[MATH]['gpa'], 8.38)  # (57+10)/8
+        self.assertAlmostEqual(data[MATH]['gpa'], 8.30)  # (63+10+10)/10
 
     def test_same_subject_across_schools_aggregated(self):
         # TEST 7 counterpart: subject ranking intentionally pools across
@@ -257,6 +262,6 @@ class SubjectRankingGoldenTests(RankingBase):
         make_quarter_grade(self.s1, '7-А', 'Соати тарбиявӣ', 0, att=10)
         data = self._by_subject(calculate_subject_rankings())
         self.assertNotIn('СОАТИ ТАРБИЯВӢ', data)
-        self.assertAlmostEqual(data[MATH]['gpa'], 8.14)
+        self.assertAlmostEqual(data[MATH]['gpa'], 7.88)
         self.assertEqual(data[MATH]['rank'], 1)
         self.assertEqual(data['АЛГЕБРА']['rank'], 2)

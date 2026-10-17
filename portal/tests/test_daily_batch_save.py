@@ -588,8 +588,12 @@ class DailyBatchMemoizationTests(GoldenBase):
         # permission CS filter + CS lookup, and the lesson-less Assessment
         # scope check JOINs classsubject (all resolved once):
         self.assertLessEqual(hits('portal_classsubject'), 3)
-        self.assertLessEqual(hits('portal_quarterlock'), 1)
-        self.assertLessEqual(hits('portal_assessment'), 1)
+        # The deferred derived-grade pass adds exactly one batched lock
+        # fetch on top of the memoized per-cell lock check.
+        self.assertLessEqual(hits('portal_quarterlock'), 2)
+        # Scope check (once) + the bulk recalc source pool and the response
+        # payload pool, each selecting assessment in one JOINed query.
+        self.assertLessEqual(hits('portal_assessment'), 3)
         # Per-item work still happens per item: 6 student fetches.
         self.assertGreaterEqual(
             hits('portal_student'), len(students))

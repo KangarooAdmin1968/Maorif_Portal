@@ -464,8 +464,11 @@ class AjmToggleIntegrationTests(GoldenBase):
         _, ajm = collect_quarter_inputs(self.s1, MATH, 1)
         self.assertEqual(ajm, [8.5])
         make_grade(self.s1, score=10, date=D_Q1)
-        # GPA pools Grade.score: mean(8.5, 10) = 9.25 — components never leak.
-        self.assertEqual(_all_student_gpas()[self.s1.id], 9.25)
+        # GPA pools Grade.score plus the derived QuarterGrade row — the
+        # component pair contributes exactly once to each. Grade.score:
+        # 8.5 + 10; quarter: std_round((10 + 8.5) / 2) = 9.
+        self.assertEqual(_all_student_gpas()[self.s1.id],
+                         round((8.5 + 10 + 9) / 3, 2))
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +502,9 @@ class LegacyAndContextTests(GoldenBase):
         self.assertEqual((g.score, g.components), (8.5, [8, 9]))
 
     # 36
-    def test_official_quartergrade_survives_journal_load(self):
+    def test_stale_manual_quartergrade_auto_corrected_on_write(self):
+        # A pre-existing manual value is replaced by the derived АҶЧ when
+        # a source grade is written; the journal shows the stored result.
         make_quarter_grade(self.s1, quarter=1, grade=10)
         a = make_control(self.cs_a, number=1, is_ajm=True)
         post_grade(self.client, self.s1, score='8', assessment=a)
@@ -507,10 +512,10 @@ class LegacyAndContextTests(GoldenBase):
             'grade_entry', args=[self.school_a.id, '7-А', MATH]
         ))
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 10)
+        self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 8)
         self.assertNotIn(1, resp.context['live_quarter_flags'][self.s1.id])
         self.assertEqual(
-            QuarterGrade.objects.get(student=self.s1, quarter=1).grade, 10
+            QuarterGrade.objects.get(student=self.s1, quarter=1).grade, 8
         )
 
     def test_journal_context_exposes_control_assessments(self):
@@ -591,16 +596,20 @@ class AssessmentSyncResponseTests(GoldenBase):
         # AT = 9, AJM = 8.5 -> АҶЧ = 8.75 -> std_round -> 9
         self.assertEqual(data['quarter'], 1)
         self.assertEqual(data['quarter_value'], 9)
-        self.assertTrue(data['quarter_live'])
+        # The save itself persisted the derived value — it is official now,
+        # not a live projection.
+        self.assertFalse(data['quarter_live'])
         # Full calc payload for the semi-annual/annual/final spans.
         self.assertEqual(data['semi_annual_1'], 9)
         self.assertTrue(data['semi_annual_1_proj'])
 
-    def test_official_quartergrade_wins_in_response(self):
+    def test_stale_manual_quartergrade_corrected_in_response(self):
+        # A pre-existing manual 10 is overwritten by the derived value the
+        # moment a source grade saves — the response carries 9, not 10.
         make_quarter_grade(self.s1, quarter=1, grade=10)
         resp = post_grade(self.client, self.s1, score='8/9', assessment=self.a)
         data = resp.json()
-        self.assertEqual(data['quarter_value'], 10)
+        self.assertEqual(data['quarter_value'], 9)
         self.assertFalse(data['quarter_live'])
 
     def test_clear_response_marks_empty(self):
@@ -674,12 +683,13 @@ class ModeExclusivityTests(GoldenBase):
              f'q_1_{self.s1.id}': '8'},
         )
         self.assertEqual(resp.status_code, 302)
-        # Daily write skipped; quarterly writes are unaffected.
+        # Daily write skipped on a control date, and posted q_* values are
+        # ignored entirely — quarter grades are derived, not writable.
         self.assertFalse(
             Grade.objects.filter(student=self.s1, assessment__isnull=True).exists()
         )
-        self.assertTrue(
-            QuarterGrade.objects.filter(student=self.s1, quarter=1, grade=8).exists()
+        self.assertFalse(
+            QuarterGrade.objects.filter(student=self.s1, quarter=1).exists()
         )
 
     def test_clearing_one_student_keeps_control_mode(self):
@@ -769,10 +779,13 @@ class ModeExclusivityTests(GoldenBase):
         )
 
     def test_delete_preserves_unrelated_records(self):
+        # The quarter grade is derived: deleting the only source grade
+        # removes the derived row too, while genuinely unrelated records
+        # (student, class-subject) are untouched.
         make_quarter_grade(self.s1, quarter=1, grade=9)
         post_grade(self.client, self.s1, score='8', assessment=self.a)
         self.client.post(DELETE_URL, {'assessment_id': self.a.id})
-        self.assertTrue(
+        self.assertFalse(
             QuarterGrade.objects.filter(student=self.s1, quarter=1).exists()
         )
         self.assertTrue(Student.objects.filter(pk=self.s1.pk).exists())
@@ -811,10 +824,10 @@ class ModeExclusivityTests(GoldenBase):
         self.a.save()
         post_grade(self.client, self.s1, score='8', date=D_Q1_B)
         post_grade(self.client, self.s1, score='10', assessment=self.a)
-        # АҶЧ = (АТ 8 + АҶМ 10) / 2 = 9 as a live projection.
+        # АҶЧ = (АТ 8 + АҶМ 10) / 2 = 9 — stored automatically by the saves.
         resp = self._journal_get()
         self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 9)
-        self.assertIn(1, resp.context['live_quarter_flags'][self.s1.id])
+        self.assertNotIn(1, resp.context['live_quarter_flags'][self.s1.id])
         resp = self.client.post(DELETE_URL, {'assessment_id': self.a.id})
         data = resp.json()
         self.assertTrue(data['success'])
@@ -824,7 +837,7 @@ class ModeExclusivityTests(GoldenBase):
         entry = data['students'][str(self.s1.id)]
         self.assertEqual(entry['quarter'], 1)
         self.assertEqual(entry['quarter_value'], 8)
-        self.assertTrue(entry['quarter_live'])
+        self.assertFalse(entry['quarter_live'])
         # Reloading shows АТ-only 8 — the deleted АҶМ result is gone, not stale.
         resp = self._journal_get()
         self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 8)

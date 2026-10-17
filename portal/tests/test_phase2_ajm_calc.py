@@ -321,20 +321,23 @@ class CalcWriteIntegrationTests(GoldenBase):
         )
 
     # TEST 12
-    def test_manual_quartergrade_not_overwritten_by_live(self):
+    def test_manual_quartergrade_auto_corrected_on_write(self):
+        # A stored manual value is replaced by the derived АҶЧ as soon as a
+        # source grade is written — the journal then shows the stored value.
         make_quarter_grade(self.s1, quarter=1, grade=10)
         mk_grade(self.s1, score=8)
         mk_grade(self.s1, score=8, date=D_Q1_B)
+        self.assertEqual(
+            QuarterGrade.objects.get(student=self.s1, quarter=1).grade, 8)
         self.client.force_login(self.teacher_a)
         resp = self.client.get(reverse(
             'grade_entry', args=[self.school_a.id, '7-А', MATH]
         ))
         self.assertEqual(resp.status_code, 200)
-        # Official QuarterGrade wins; live projection never replaces it.
-        self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 10)
+        self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 8)
         self.assertNotIn(1, resp.context['live_quarter_flags'][self.s1.id])
 
-    def test_grade_entry_live_projection_ajm_aware(self):
+    def test_grade_entry_shows_stored_ajm_aware_quarter(self):
         mk_grade(self.s1, score=8)
         a = make_assessment(self.cs_a, is_ajm=True)
         mk_grade(self.s1, score=6, assessment=a)
@@ -343,9 +346,10 @@ class CalcWriteIntegrationTests(GoldenBase):
             'grade_entry', args=[self.school_a.id, '7-А', MATH]
         ))
         self.assertEqual(resp.status_code, 200)
-        # АҶЧ = (8 + 6) / 2 = 7 — projected, so the Ҷ flag stays set.
+        # АҶЧ = (8 + 6) / 2 = 7 — written automatically by the source saves,
+        # so the stored value is shown without the Ҷ projection flag.
         self.assertEqual(resp.context['quarter_grades'][self.s1.id][1], 7)
-        self.assertIn(1, resp.context['live_quarter_flags'][self.s1.id])
+        self.assertNotIn(1, resp.context['live_quarter_flags'][self.s1.id])
 
 
 # ---------------------------------------------------------------------------
@@ -359,15 +363,17 @@ class RankingProtectionTests(GoldenBase):
         mk_grade(self.s1, score=8.5, components=[8, 9], assessment=a)
         mk_grade(self.s1, score=10)
         self.assertEqual(Grade.objects.filter(student=self.s1).count(), 2)
-        # Ranking pools Grade.score only: mean(8.5, 10) = 9.25.
-        # If [8, 9] leaked as separate rows it would be mean(8.5, 8, 9, 10)
-        # = 8.875.
-        self.assertEqual(_all_student_gpas()[self.s1.id], 9.25)
+        # Ranking pools Grade.score plus the derived QuarterGrade row —
+        # the component pair contributes exactly once to each. Grade.score:
+        # 8.5 + 10; quarter: std_round((10 + 8.5) / 2) = 9. If [8, 9]
+        # leaked as separate rows the pool would differ.
+        self.assertEqual(_all_student_gpas()[self.s1.id],
+                         round((8.5 + 10 + 9) / 3, 2))
         school_a = next(
             r for r in calculate_school_rankings()
             if r['school'].id == self.school_a.id
         )
-        self.assertEqual(school_a['gpa'], 9.25)
+        self.assertEqual(school_a['gpa'], round((8.5 + 10 + 9) / 3, 2))
 
     def test_three_component_assessment_one_ranking_contribution(self):
         a = make_assessment(self.cs_a, is_ajm=True)

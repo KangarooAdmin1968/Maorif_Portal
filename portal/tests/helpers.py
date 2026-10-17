@@ -33,6 +33,7 @@ from portal.models import (
     SubjectDeactivationRequest,
     TeacherProfile,
     UserProfile,
+    normalize_subject,
 )
 
 # Canonical normalized values used across the suite.
@@ -105,10 +106,17 @@ def make_grade(student, subject=MATH, score=None, date=D_Q1, attendance=None,
 
 def make_quarter_grade(student, class_name='7-А', subject=MATH, quarter=1,
                        grade=None, att=None):
-    return QuarterGrade.objects.create(
-        student=student, class_name=class_name, subject=subject,
-        quarter=quarter, grade=grade, att_grade=att,
+    # update_or_create: Grade signals may have already written a derived
+    # row for this (student, class, subject, quarter) — a plain create()
+    # would then raise IntegrityError on the unique_together key. The
+    # subject is normalized the same way Grade.save() stores it so the
+    # lookup hits the derived row.
+    obj, _ = QuarterGrade.objects.update_or_create(
+        student=student, class_name=class_name,
+        subject=normalize_subject(subject),
+        quarter=quarter, defaults={'grade': grade, 'att_grade': att},
     )
+    return obj
 
 
 def lock_quarter(school, class_name='7-А', subject=MATH, quarter=1, locked=True):

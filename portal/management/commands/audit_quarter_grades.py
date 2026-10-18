@@ -3,31 +3,52 @@
 
 Re-derives every (student, subject, quarter) cell through the same
 _split_quarter_grades / calc_quarter_value pipeline the signals and the
-journal live-projection use, then reports where a stored value disagrees:
+journal live-projection use, then reports where a stored value disagrees.
 
-    STALE            unlocked cell, stored grade != derived value
-    ORPHAN           unlocked cell, stored grade exists but no source
-                     grades remain to support it
-    MISSING          unlocked cell, source grades derive a value but no
-                     stored row exists (displays show the live
-                     projection; the stored cache is simply absent)
-    FROZEN-CONFLICT  locked cell whose frozen value disagrees with the
-                     current journal data — reported, never "fixed"
-    FROZEN-EMPTY     locked cell with a stored row but no remaining
-                     source grades — kept by design, listed for review
-    STALE-LABEL      stored row whose class_name no longer matches the
-                     student's current class — invisible to every
-                     display and recalc key, lingers forever
-    DUPLICATE        two stored rows normalize to the same
-                     (student, class, subject, quarter) key — the raw
-                     unique_together lets them coexist (bulk_create and
-                     QuerySet.update bypass save() normalization), and
-                     the recalc key sees only one
+QuarterGrade has no academic-year field, so comparisons are scoped to one
+academic year (Sep..Aug): only Grade rows dated inside the year window
+feed the expected value — the calculator is never given mixed-year input.
+A stored row that cannot be attributed to the selected year is reported
+as ambiguous rather than as a confirmed error.
+
+    STALE              unlocked cell, current-year sources derive a value
+                       that disagrees with the stored grade
+    MISSING            unlocked cell, current-year sources derive a value
+                       but no stored row exists (displays show the live
+                       projection; the stored cache is simply absent)
+    ORPHAN             unlocked cell, stored grade exists but no source
+                       rows of ANY year bucket to that quarter — nothing
+                       anywhere supports it
+    AMBIGUOUS          stored grade exists, no current-year sources
+                       bucket to the quarter, but out-of-year rows do —
+                       likely a prior-year value; its year cannot be
+                       established safely enough to call it an error
+    FROZEN-CONFLICT    locked cell whose frozen value disagrees with the
+                       current-year sources — reported, never "fixed"
+    FROZEN-EMPTY       locked cell with a stored row and no supporting
+                       source rows of any year — kept by design
+    STALE-LABEL        stored row whose class_name no longer matches the
+                       student's current class — invisible to every
+                       display and recalc key, lingers forever
+    DUPLICATE          two stored rows normalize to the same
+                       (student, class, subject, quarter) key — the raw
+                       unique_together lets them coexist (bulk_create and
+                       QuerySet.update bypass save() normalization), and
+                       the recalc key sees only one
+    CONFLICT-ASSESSMENT assessment whose own date falls outside its
+                       declared quarter window, or that has linked grade
+                       rows outside the academic year — Assessment.quarter
+                       stays authoritative for bucketing, the record is
+                       only flagged for review
+    OUT-OF-YEAR-ROWS   source rows dated outside the academic year —
+                       excluded from the expected value (reported per
+                       school, counted as rows)
 
 Nothing is written: detection only. Repairs are an explicit operator
 decision (e.g. the Ҳисобкунӣ button on the journal page re-derives one
 class+subject, or a targeted admin action for a frozen cell).
 """
+import calendar
 import datetime
 
 from collections import defaultdict
@@ -35,7 +56,7 @@ from collections import defaultdict
 from django.core.management.base import BaseCommand
 
 from portal.models import (
-    Grade, QuarterGrade, QuarterLock, School, Student,
+    Assessment, Grade, QuarterGrade, QuarterLock, School, Student,
     normalize_class_name, normalize_subject,
 )
 
@@ -43,12 +64,21 @@ SOURCE_PERIOD = 'Холҳои ҷорӣ (Онлайн)'
 QUARTERS = (1, 2, 3, 4)
 
 
-def _current_academic_year(today=None):
-    """(start, end) dates of the Sep..Aug academic year containing today."""
+def _default_academic_year(today=None):
+    """September-start year of the academic year containing today."""
     today = today or datetime.date.today()
-    start_year = today.year if today.month >= 9 else today.year - 1
-    return (datetime.date(start_year, 9, 1),
-            datetime.date(start_year + 1, 8, 31))
+    return today.year if today.month >= 9 else today.year - 1
+
+
+def _quarter_windows(year):
+    """Inclusive (start, end) dates per quarter of the Sep..Aug year."""
+    feb_last = calendar.monthrange(year + 1, 2)[1]
+    return {
+        1: (datetime.date(year, 9, 1), datetime.date(year, 11, 30)),
+        2: (datetime.date(year, 12, 1), datetime.date(year + 1, 2, feb_last)),
+        3: (datetime.date(year + 1, 3, 1), datetime.date(year + 1, 5, 31)),
+        4: (datetime.date(year + 1, 6, 1), datetime.date(year + 1, 8, 31)),
+    }
 
 
 class Command(BaseCommand):
@@ -63,6 +93,11 @@ class Command(BaseCommand):
             '--quarter', type=int, choices=QUARTERS, default=None,
             help='Audit only this quarter (default: all four).')
         parser.add_argument(
+            '--year', type=int, default=None,
+            help='September-start year of the academic year to compare '
+                 '(e.g. 2026 -> 2026-09-01..2027-08-31; default: the year '
+                 'containing today).')
+        parser.add_argument(
             '--no-lines', action='store_true',
             help='Print only the summary counts, not each discrepancy.')
 
@@ -76,8 +111,13 @@ class Command(BaseCommand):
         if options['school'] is not None:
             schools = schools.filter(pk=options['school'])
 
+        year = options['year'] or _default_academic_year()
+        windows = _quarter_windows(year)
+        ay_start, ay_end = windows[1][0], windows[4][1]
+        self.stdout.write(
+            f'Соли таҳсил: {ay_start}..{ay_end} (--year {year})')
+
         totals = defaultdict(int)
-        ay_start, ay_end = _current_academic_year()
 
         for school in schools.iterator():
             students = {
@@ -118,20 +158,42 @@ class Command(BaseCommand):
                     continue
                 stored[key] = qg.grade
 
-            pools = defaultdict(list)
+            # Assessments conflicting with the year: own date outside its
+            # declared quarter window, or linked rows outside the window.
+            # {assessment_id: [assessment, out_of_window_linked_rows]}
+            conflicts = {}
+            for a in Assessment.objects.filter(
+                    class_subject__school=school,
+            ).select_related('class_subject').iterator():
+                w = windows.get(a.quarter)
+                if w is None or not (w[0] <= a.date <= w[1]):
+                    conflicts.setdefault(a.id, [a, 0])
+
+            all_pools = defaultdict(list)   # every source-period row
+            year_pools = defaultdict(list)  # rows inside the year window
             out_of_year = 0
             for g in Grade.objects.filter(
                     student__school=school, period=SOURCE_PERIOD,
                     score__isnull=False,
             ).select_related('assessment').iterator(chunk_size=2000):
-                pools[(g.student_id,
-                       normalize_subject(g.subject))].append(g)
-                if not (ay_start <= g.date <= ay_end):
+                key = (g.student_id, normalize_subject(g.subject))
+                all_pools[key].append(g)
+                in_year = ay_start <= g.date <= ay_end
+                if in_year:
+                    year_pools[key].append(g)
+                else:
                     out_of_year += 1
+                a = g.assessment if g.assessment_id else None
+                if a is not None:
+                    w = windows.get(a.quarter)
+                    if (not in_year or w is None
+                            or not (w[0] <= g.date <= w[1])):
+                        entry = conflicts.setdefault(a.id, [a, 0])
+                        entry[1] += 1
 
             # Cells to check: every (student, subject) with source rows or
             # a stored row under the student's CURRENT class label.
-            cells = set(pools)
+            cells = set(all_pools)
             cells.update((sid, subj) for sid, cls, subj, q in stored)
 
             for sid, subj in cells:
@@ -139,10 +201,11 @@ class Command(BaseCommand):
                 if st is None:
                     continue
                 cls = normalize_class_name(st.class_name)
-                rows = pools.get((sid, subj), ())
+                year_rows = year_pools.get((sid, subj), ())
+                all_rows = all_pools.get((sid, subj), ())
                 for q in quarters:
                     value = calc_quarter_value(
-                        *_split_quarter_grades(rows, q))
+                        *_split_quarter_grades(year_rows, q))
                     expected = std_round(value) if value is not None else None
                     got = stored.get((sid, cls, subj, q))
                     is_locked = (cls, subj, q) in locked
@@ -154,11 +217,22 @@ class Command(BaseCommand):
                         if is_locked:
                             continue
                         kind = 'MISSING'
-                    elif is_locked:
-                        kind = ('FROZEN-EMPTY' if expected is None
-                                else 'FROZEN-CONFLICT')
                     elif expected is None:
-                        kind = 'ORPHAN'
+                        # Stored row with no current-year derivation:
+                        # a quarter supported only by out-of-year rows is
+                        # most likely last year's value — flag it rather
+                        # than treating a historical row as an error.
+                        any_cur, any_ajm = _split_quarter_grades(
+                            all_rows, q)
+                        has_support = bool(any_cur or any_ajm)
+                        if is_locked:
+                            kind = ('AMBIGUOUS' if has_support
+                                    else 'FROZEN-EMPTY')
+                        else:
+                            kind = ('AMBIGUOUS' if has_support
+                                    else 'ORPHAN')
+                    elif is_locked:
+                        kind = 'FROZEN-CONFLICT'
                     else:
                         kind = 'STALE'
                     totals[kind] += 1
@@ -192,20 +266,34 @@ class Command(BaseCommand):
                         f'чорак={qg.quarter} захирашуда={qg.grade}'
                     )
 
+            for a, bad_rows in conflicts.values():
+                totals['CONFLICT-ASSESSMENT'] += 1
+                if not options['no_lines']:
+                    cs = a.class_subject
+                    self.stdout.write(
+                        f'CONFLICT-ASSESSMENT  мактаб={school.pk} '
+                        f'баҳогузорӣ={a.id} '
+                        f'синф={normalize_class_name(cs.class_name)} '
+                        f'фан={normalize_subject(cs.subject)} '
+                        f'чорак={a.quarter} сана={a.date} '
+                        f'сатрҳои_конфликт={bad_rows}'
+                    )
+
             if out_of_year:
                 totals['OUT-OF-YEAR-ROWS'] += out_of_year
                 if not options['no_lines']:
                     self.stdout.write(
                         f'OUT-OF-YEAR-ROWS  мактаб={school.pk} '
                         f'сатрҳо={out_of_year} — сана берун аз соли '
-                        f'таҳсили ҷорӣ ({ay_start}..{ay_end}) аст вале '
-                        f'ба ҳавзаи чорак дохил мешавад'
+                        f'таҳсили интихобшуда ({ay_start}..{ay_end}) аст '
+                        f'ва аз ҳисоби соли ҷорӣ хориҷ карда шуд'
                     )
 
         self.stdout.write('')
         self.stdout.write('Хулоса:')
-        for kind in ('STALE', 'ORPHAN', 'MISSING', 'FROZEN-CONFLICT',
-                     'FROZEN-EMPTY', 'STALE-LABEL', 'DUPLICATE',
+        for kind in ('STALE', 'MISSING', 'ORPHAN', 'AMBIGUOUS',
+                     'FROZEN-CONFLICT', 'FROZEN-EMPTY', 'STALE-LABEL',
+                     'DUPLICATE', 'CONFLICT-ASSESSMENT',
                      'OUT-OF-YEAR-ROWS'):
             self.stdout.write(f'  {kind}: {totals.get(kind, 0)}')
         if not any(totals.values()):

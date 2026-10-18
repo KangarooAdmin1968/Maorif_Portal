@@ -8,6 +8,7 @@ the data: quarter grades cannot be created, overwritten, or deleted through
 any teacher grade-entry endpoint, while the attestation mark (quarter 0)
 stays teacher-entered and feeds the derived Ҷамъбастӣ.
 """
+import datetime
 import io
 import json
 import re
@@ -638,8 +639,11 @@ class AuditQuarterGradesCommandTests(GoldenBase):
     reports disagreements without writing anything."""
 
     def _run(self, *args):
+        # Fixtures live in the 2025-26 academic year (D_Q1=2025-10-15 ..);
+        # pin --year so the window is independent of today's date.
         out = io.StringIO()
-        call_command('audit_quarter_grades', *args, stdout=out)
+        call_command('audit_quarter_grades', '--year', '2025', *args,
+                     stdout=out)
         return out.getvalue()
 
     def test_clean_data_reports_no_findings(self):
@@ -714,4 +718,105 @@ class AuditQuarterGradesCommandTests(GoldenBase):
         after = list(QuarterGrade.objects.order_by('pk').values_list(
             'pk', 'grade', 'att_grade'))
         self.assertEqual(before, after)
+
+
+# Dates inside the 2026-27 academic year used by the scoping tests below.
+D_Y26_Q1 = datetime.date(2026, 10, 15)   # inside Q1 2026-09-01..11-30
+D_Y26_Q2 = datetime.date(2027, 1, 20)    # inside Q2 2026-12-01..2027-02-28
+
+
+class AuditAcademicYearScopeTests(GoldenBase):
+    """--year scopes the comparison to one academic year so historical
+    rows cannot masquerade as current-year errors."""
+
+    def _run(self, *args):
+        out = io.StringIO()
+        call_command('audit_quarter_grades', *args, stdout=out)
+        return out.getvalue()
+
+    def test_prior_year_support_is_ambiguous_not_stale(self):
+        # Stored row + only prior-year sources: the runtime-derived value
+        # exists but is not a confirmed current-year error.
+        make_grade(self.s1, score=9, date=D_Q1)   # 2025-10-15 -> 2025-26
+        QuarterGrade.objects.filter(
+            student=self.s1, quarter=1).update(grade=4)
+        out = self._run('--year', '2026')
+        self.assertIn('AMBIGUOUS: 1', out)
+        self.assertIn('STALE: 0', out)
+
+    def test_mixed_year_sources_use_only_current_year(self):
+        # Prior-year 3 + current-year 9: the current-year derivation must
+        # see 9, not the mixed pool (6).
+        make_grade(self.s1, score=3, date=D_Q1)
+        make_grade(self.s1, score=9, date=D_Y26_Q1)
+        QuarterGrade.objects.filter(
+            student=self.s1, quarter=1).update(grade=9)
+        out = self._run('--year', '2026')
+        self.assertIn('STALE: 0', out)
+        self.assertIn('OUT-OF-YEAR-ROWS', out)
+        # And when the stored value does disagree with the current-year
+        # pool, it is a genuine current-year STALE.
+        QuarterGrade.objects.filter(
+            student=self.s1, quarter=1).update(grade=6)
+        out = self._run('--year', '2026')
+        self.assertIn('ҳисобшуда=9', out)
+        self.assertIn('STALE: 1', out)
+
+    def test_orphan_requires_no_support_in_any_year(self):
+        make_quarter_grade(self.s1, quarter=1, grade=7)  # zero sources
+        out = self._run('--year', '2026')
+        self.assertIn('ORPHAN: 1', out)
+
+    def test_stored_row_without_any_quarter_support_is_orphan(self):
+        # Rows exist for the cell but bucket only to other quarters —
+        # nothing supports the stored quarter in any year.
+        make_grade(self.s1, score=9, date=D_Q2)      # quarter 2 only
+        make_quarter_grade(self.s1, quarter=1, grade=7)
+        out = self._run('--year', '2025')
+        self.assertIn('ORPHAN: 1', out)
+
+    def test_missing_uses_current_year_pool(self):
+        make_grade(self.s1, score=9, date=D_Y26_Q1)
+        QuarterGrade.objects.filter(student=self.s1).delete()
+        out = self._run('--year', '2026')
+        self.assertIn('MISSING: 1', out)
+        out = self._run('--year', '2025')
+        self.assertIn('MISSING: 0', out)
+
+    def test_conflict_assessment_date_outside_quarter_window(self):
+        # Declared quarter 1 but dated inside the Q2 window — flagged.
+        make_control(self.cs_a, date=D_Y26_Q2, quarter=1)
+        out = self._run('--year', '2026')
+        self.assertIn('CONFLICT-ASSESSMENT: 1', out)
+
+    def test_conflict_assessment_linked_row_outside_year(self):
+        # Assessment dated inside its own quarter, but a linked grade
+        # row sits outside the academic year — flagged via the row.
+        a = make_control(self.cs_a, date=D_Y26_Q1, quarter=1)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, score=8,
+            period='Холҳои ҷорӣ (Онлайн)', date=D_Q1, assessment=a)
+        out = self._run('--year', '2026')
+        self.assertIn('CONFLICT-ASSESSMENT: 1', out)
+
+    def test_assessment_quarter_still_authoritative_within_year(self):
+        # Linked row dated in the Q1 window but assigned to Q2 by its
+        # assessment — it must contribute to Q2, not Q1.
+        a = make_control(self.cs_a, date=D_Y26_Q2, quarter=2)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, score=8,
+            period='Холҳои ҷорӣ (Онлайн)', date=D_Y26_Q1, assessment=a)
+        # The signal already stored the derived Q2 row — remove it so the
+        # audit reports the cell as MISSING under its real quarter.
+        QuarterGrade.objects.filter(student=self.s1).delete()
+        out = self._run('--year', '2026')
+        self.assertIn('чорак=2', out)
+        self.assertNotIn('чорак=1', out)
+
+    def test_locked_conflict_against_current_year(self):
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        make_grade(self.s1, score=9, date=D_Y26_Q1)
+        make_quarter_grade(self.s1, quarter=1, grade=4)
+        out = self._run('--year', '2026')
+        self.assertIn('FROZEN-CONFLICT: 1', out)
 

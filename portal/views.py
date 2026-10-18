@@ -5089,19 +5089,41 @@ def lesson_delete(request):
         return JsonResponse({'success': False, 'message': str(e)}, status=200)
 
 
-def _student_subject_scores(student):
-    """Return a dict of {normalized_subject: average_score} for a student."""
-    totals = {}
-    for row in Grade.objects.filter(student=student, score__isnull=False).values('subject').annotate(total=Sum('score'), count=Count('score')):
-        subj = normalize_subject(row['subject'])
-        _add_score(totals, subj, row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(student=student, quarter__in=(1, 2, 3, 4), grade__isnull=False).values('subject').annotate(total=Sum('grade'), count=Count('grade')):
-        subj = normalize_subject(row['subject'])
-        _add_score(totals, subj, row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(student=student, quarter=0, att_grade__isnull=False).values('subject').annotate(total=Sum('att_grade'), count=Count('att_grade')):
-        subj = normalize_subject(row['subject'])
-        _add_score(totals, subj, row['total'], row['count'])
-    return {subj: round(total / count, 2) if count else 0.0 for subj, (total, count) in totals.items()}
+def _student_subject_quarter_scores(student, quarter):
+    """Return ({normalized_subject: grade}, live_subjects) for `quarter`.
+
+    Per-subject quarter value for the student personal page, computed with
+    the same rules as the journal's quarter cells: a stored QuarterGrade
+    for the student's class always wins; otherwise the quarter is projected
+    live from the scored Grade rows through the shared
+    _split_quarter_grades / calc_quarter_value pipeline (АҶЧ = АТ when no
+    АҶМ exists; (АТ + АҶМ) / 2 otherwise, each assessment counted once).
+    Subjects with no value for the quarter are omitted; `live_subjects`
+    marks the ones shown as a projection rather than an official grade.
+    """
+    scores, live_subjects = {}, set()
+    if quarter not in (1, 2, 3, 4):
+        return scores, live_subjects
+    official = {}
+    for qg in QuarterGrade.objects.filter(
+            student=student,
+            class_name=normalize_class_name(student.class_name),
+            quarter=quarter, grade__isnull=False):
+        official[normalize_subject(qg.subject)] = qg.grade
+    grade_pool = defaultdict(list)
+    for g in Grade.objects.filter(
+            student=student, period='Холҳои ҷорӣ (Онлайн)',
+            score__isnull=False).select_related('assessment'):
+        grade_pool[normalize_subject(g.subject)].append(g)
+    for subj, rows in grade_pool.items():
+        if subj in official:
+            continue
+        value = calc_quarter_value(*_split_quarter_grades(rows, quarter))
+        if value is not None:
+            scores[subj] = std_round(value)
+            live_subjects.add(subj)
+    scores.update(official)
+    return scores, live_subjects
 
 
 def _all_student_gpas():
@@ -5126,9 +5148,24 @@ def student_detail(request, student_id):
     if request.user.is_authenticated and not has_school_access(request.user, student.school):
         return redirect('dashboard')
 
-    subject_scores = _student_subject_scores(student)
+    non_graded = is_non_graded(student.class_name)
+
+    today = datetime.date.today()
+    try:
+        selected_quarter = int(request.GET.get('quarter', ''))
+    except ValueError:
+        selected_quarter = None
+    if selected_quarter not in (1, 2, 3, 4):
+        selected_quarter = get_date_quarter(today) or 1
+
+    if non_graded:
+        subject_scores, live_subjects = {}, set()
+    else:
+        subject_scores, live_subjects = _student_subject_quarter_scores(
+            student, selected_quarter)
     subjects = sorted(subject_scores.keys())
     scores = [subject_scores[s] for s in subjects]
+    score_live = [s in live_subjects for s in subjects]
 
     # Тарбия: current conduct per subject — latest stored behavior_score
     # ('-date','-pk') or the display-only default 5. Student.conduct_map is
@@ -5138,8 +5175,6 @@ def student_detail(request, student_id):
     conduct_subjects = sorted(conduct_map)
     conduct_scores = [conduct_map[s] for s in conduct_subjects]
     conduct_advice = _conduct_advice(conduct_map)
-
-    non_graded = is_non_graded(student.class_name)
 
     if non_graded:
         student_gpa = None
@@ -5174,7 +5209,6 @@ def student_detail(request, student_id):
     else:
         recent_stickers = Grade.objects.filter(student=student, sticker__isnull=False).order_by('-date')[:15]
 
-    today = datetime.date.today()
     # One display line per logical slot. Accidental duplicate rows (same
     # subject/score AND same lesson/assessment slot) collapse into a single
     # line; legitimate different slots keep their own labelled line.
@@ -5272,6 +5306,10 @@ def student_detail(request, student_id):
         'district_rank': district_rank,
         'subjects': subjects,
         'scores': scores,
+        'score_live': score_live,
+        'has_live_scores': bool(live_subjects),
+        'selected_quarter': selected_quarter,
+        'quarter_choices': (1, 2, 3, 4),
         'conduct_subjects': conduct_subjects,
         'conduct_scores': conduct_scores,
         'conduct_advice': conduct_advice,

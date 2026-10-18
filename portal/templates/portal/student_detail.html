@@ -179,6 +179,31 @@
 .trend-declined { color: #9a3412; background: #ffedd5; padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-weight: 700; display: inline-block; }
 .trend-stable { color: #1e40af; background: #dbeafe; padding: 0.5rem 0.75rem; border-radius: 0.5rem; font-weight: 700; display: inline-block; }
 
+.quarter-tabs {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+.quarter-tab {
+    padding: 0.35rem 0.9rem;
+    border-radius: 1rem;
+    background: #e5e7eb;
+    color: #374151;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.quarter-tab.active {
+    background: #004e92;
+    color: #fff;
+}
+.live-note {
+    margin: 0.75rem 0 0;
+    font-size: 0.85rem;
+    color: #6b7280;
+}
+
 @media (max-width: 600px) {
     .profile-hero { text-align: center; justify-content: center; }
     .profile-gpa { margin-left: 0; width: 100%; }
@@ -327,20 +352,35 @@
 </section>
 
 {% if not non_graded %}
+<div class="quarter-tabs">
+    {% for q in quarter_choices %}
+    <a href="?quarter={{ q }}" class="quarter-tab{% if q == selected_quarter %} active{% endif %}">Чораки {{ q }}</a>
+    {% endfor %}
+</div>
 <section class="chart-card">
-    <h2>📊 Холҳо аз рӯи фанҳо</h2>
+    <h2>📊 Баҳои чораки {{ selected_quarter }} аз рӯи фанҳо</h2>
+    {% if subjects %}
     <div class="chart-wrapper">
         <canvas id="scoreChart"></canvas>
     </div>
+    {% if has_live_scores %}
+    <p class="live-note">Ҷ — прогнози ҷорӣ (баҳои расмии чорак ҳануз сабт нашудааст)</p>
+    {% endif %}
+    {% else %}
+    <p style="color:#6b7280; margin:0;">Дар ин чорак баҳо ворид нашудааст.</p>
+    {% endif %}
 </section>
 
+{% if subjects %}
 {{ subjects|json_script:"subjects-data" }}
 {{ scores|json_script:"scores-data" }}
+{{ score_live|json_script:"score-live-data" }}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 <script>
 const subjects = JSON.parse(document.getElementById('subjects-data').textContent);
 const scores = JSON.parse(document.getElementById('scores-data').textContent);
+const liveFlags = JSON.parse(document.getElementById('score-live-data').textContent);
 
 const colors = scores.map(score =>
     score >= 9 ? '#22C55E' :
@@ -375,14 +415,15 @@ new Chart(ctx, {
                 offset: 4,
                 color: '#1E293B',
                 font: { weight: 'bold', size: 12 },
-                formatter: function(value) {
-                    return Number(value).toFixed(1);
+                formatter: function(value, context) {
+                    return Number(value) + (liveFlags[context.dataIndex] ? ' Ҷ' : '');
                 }
             },
             tooltip: {
                 callbacks: {
                     label: function(context) {
-                        return 'Хол: ' + context.raw;
+                        return 'Хол: ' + context.raw +
+                            (liveFlags[context.dataIndex] ? ' (прогнози ҷорӣ)' : '');
                     }
                 }
             }
@@ -401,6 +442,7 @@ new Chart(ctx, {
     }
 });
 </script>
+{% endif %}
 {% endif %}
 
 {% if not non_graded and conduct_subjects %}

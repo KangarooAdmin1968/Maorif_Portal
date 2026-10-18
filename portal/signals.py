@@ -242,7 +242,7 @@ def _drop_stale_for_grade(row):
     quarters keep their frozen value (checked inside the drop helper).
     """
     try:
-        if row is None or row.period != 'Холои ҷорӣ (Онлайн)':
+        if row is None or row.period != 'Холҳои ҷорӣ (Онлайн)':
             return
         quarter = _grade_quarter(row)
         if quarter is None:

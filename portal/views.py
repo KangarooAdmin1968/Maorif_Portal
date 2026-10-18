@@ -1151,6 +1151,23 @@ def _move_student(school, student, new_class_name, new_full_name=None,
             quarter_update['class_name'] = new_class_name
         QuarterGrade.objects.filter(student_id=old_id).update(**quarter_update)
         Student.objects.filter(id=old_id).delete()
+        # QuerySet.update() bypasses the Grade signals, so the moved rows'
+        # quarters are re-derived here through the same bulk pass journal
+        # batches use. Relabeled stored rows are refreshed or dropped in
+        # place; relabel_quarter_grades=False history rows keep their old
+        # class label and stay untouched (the new class gets its own
+        # derived row). Locked quarters keep their frozen value.
+        affected = set()
+        for subj, date, a_quarter in Grade.objects.filter(
+                student=new_student).values_list(
+                    'subject', 'date', 'assessment__quarter'):
+            q = a_quarter if a_quarter is not None else get_date_quarter(date)
+            if q in (1, 2, 3, 4):
+                affected.add((new_student.pk, subj, q))
+        for subj, q in QuarterGrade.objects.filter(
+                student=new_student).values_list('subject', 'quarter'):
+            affected.add((new_student.pk, subj, q))
+        recalculate_quarter_grades_bulk(affected)
 
     return new_student
 

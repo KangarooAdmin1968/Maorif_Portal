@@ -427,6 +427,20 @@ class FailedRecalcTests(GoldenBase):
         self.assertIsNone(qg(self.s1, 2))
         self.assertEqual(qg(self.s1, 0).att_grade, 9)
 
+    def test_failed_contribution_check_drops_stale_row(self):
+        # When the contribution pipeline itself raises before any recalc
+        # ran, the outer signal guard drops the stale stored row so the
+        # journal falls back to the live projection. The fallback used to
+        # compare the period against a misspelled 'Холои' literal and was
+        # dead code — a stale row would have survived silently.
+        post_grade(self.client, self.s1, score='8', date=D_Q1)
+        self.assertEqual(qg(self.s1, 1).grade, 8)
+        with patch('portal.views.grade_component_result',
+                   side_effect=RuntimeError('boom')):
+            resp = post_grade(self.client, self.s1, score='4', date=D_Q1_B)
+        self.assertTrue(resp.json()['success'])
+        self.assertIsNone(qg(self.s1, 1))
+
     def test_drop_stale_bulk_respects_school_isolation(self):
         # Locks are school-scoped: a school-B lock must not shield school
         # A's stale row, and sweeping only s1's key must leave school B's
@@ -441,6 +455,69 @@ class FailedRecalcTests(GoldenBase):
         self.assertEqual(qg(self.s3, 1).grade, 6)                  # untouched
         drop_stale_quarter_grades([(self.s3.id, MATH, 1)])
         self.assertEqual(qg(self.s3, 1).grade, 6)                  # locked row kept
+
+
+# ---------------------------------------------------------------------------
+# Student moves re-derive stored quarters (QuerySet.update bypasses signals)
+# ---------------------------------------------------------------------------
+
+
+class MoveStudentQuarterTests(GoldenBase):
+    """_move_student re-links Grade and QuarterGrade rows via
+    QuerySet.update(), which bypasses the recalc signals — the move itself
+    re-derives every moved (student, subject, quarter) so a stale stored
+    row cannot follow a renamed or transferred student."""
+
+    def _move(self, student, new_class='7-А', new_name='Фирӯз Раҳимов II',
+              relabel=True):
+        from portal.views import _move_student
+        return _move_student(
+            student.school, student, new_class, new_name,
+            relabel_quarter_grades=relabel,
+        )
+
+    def test_move_refreshes_stale_stored_quarter(self):
+        # The confirmed production shape: daily rows {3, 8} beside a stored
+        # quarter of 3 — the move must re-derive 6.
+        make_grade(self.s1, score=3, date=D_Q1)
+        make_grade(self.s1, score=8, date=D_Q1_B)
+        make_quarter_grade(self.s1, quarter=1, grade=3)  # stale stored row
+        new = self._move(self.s1)
+        self.assertEqual(qg(new, 1).grade, 6)
+
+    def test_move_derives_quarter_when_none_stored(self):
+        make_grade(self.s1, score=9, date=D_Q1)
+        QuarterGrade.objects.filter(student=self.s1).delete()
+        new = self._move(self.s1)
+        self.assertEqual(qg(new, 1).grade, 9)
+
+    def test_move_without_source_rows_drops_stale(self):
+        make_quarter_grade(self.s1, quarter=1, grade=3)  # no source rows
+        new = self._move(self.s1)
+        self.assertIsNone(qg(new, 1))
+
+    def test_move_into_locked_quarter_keeps_stored_value(self):
+        make_grade(self.s1, score=3, date=D_Q1)
+        make_grade(self.s1, score=8, date=D_Q1_B)
+        make_quarter_grade(self.s1, quarter=1, grade=3)
+        lock_quarter(self.school_a, '7-Б', MATH, quarter=1)
+        new = self._move(self.s1, new_class='7-Б', new_name='Фирӯз Раҳимов')
+        row = QuarterGrade.objects.get(
+            student=new, class_name='7-Б', subject=MATH, quarter=1)
+        self.assertEqual(row.grade, 3)  # frozen by the target lock
+
+    def test_promotion_keeps_history_row_and_derives_new(self):
+        make_grade(self.s1, score=3, date=D_Q1)
+        make_grade(self.s1, score=8, date=D_Q1_B)
+        make_quarter_grade(self.s1, quarter=1, grade=3)  # stale under 7-А
+        new = self._move(self.s1, new_class='8-А',
+                         new_name='Фирӯз Раҳимов', relabel=False)
+        # relabel=False preserves the prior-class row verbatim (history)...
+        self.assertEqual(QuarterGrade.objects.get(
+            student=new, class_name='7-А', subject=MATH, quarter=1).grade, 3)
+        # ...while the current class gets its own derived row.
+        self.assertEqual(QuarterGrade.objects.get(
+            student=new, class_name='8-А', subject=MATH, quarter=1).grade, 6)
 
 
 # ---------------------------------------------------------------------------

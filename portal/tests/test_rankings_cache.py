@@ -12,7 +12,7 @@ from unittest import mock
 from django.core.cache import cache
 from django.db import transaction
 
-from portal.models import Grade
+from portal.models import Assessment, Grade
 from portal.tests.helpers import (
     D_Q1, MATH, GoldenBase, make_class_subject, make_grade,
     make_quarter_grade, make_school, make_student,
@@ -154,6 +154,23 @@ class RankingCacheTests(GoldenBase):
                 self._warm_all()
                 obj.delete()
                 self._assert_all_keys_cleared()
+
+    def test_invalidation_on_assessment_save_and_delete(self):
+        """Assessment edits re-derive QuarterGrade rows via the bulk recalc,
+        whose bulk_create/bulk_update bypass model signals — the Assessment
+        signal itself must drop the ranking keys and stamp dirty."""
+        a = Assessment.objects.create(
+            class_subject=self.cs_a, date=D_Q1, quarter=1,
+            category='control', is_ajm=True)
+        with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0):
+            self._warm_all()
+            a.is_ajm = False
+            a.save()
+            self._assert_all_keys_cleared()
+            self.assertIsNotNone(cache.get(RANKING_DIRTY_KEY))
+            self._warm_all()
+            a.delete()
+            self._assert_all_keys_cleared()
 
     # --- F: TTL ------------------------------------------------------------
 

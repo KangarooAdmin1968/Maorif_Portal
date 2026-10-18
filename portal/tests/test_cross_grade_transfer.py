@@ -193,11 +193,15 @@ class CrossGradeTransferTests(CrossGradeBase):
 
     def test_same_grade_populated_merge_still_relabels(self):
         """5-Д -> 5-А (populated): the existing merge path applies —
-        QuarterGrade.class_name follows the student into 5-А."""
+        QuarterGrade.class_name follows the student into 5-А and the row
+        is re-derived from the student's moved source Grade records."""
         target_st = make_student(self.school, '5-А', 'Хонандаи А')
         st = self.students[0]
+        make_grade(st, subject=MATH, score=8)
+        # Stored row deliberately stale — the merge must re-derive it from
+        # the source Grade rows that move with the student.
         q1 = make_quarter_grade(st, class_name='5-Д', subject=MATH,
-                                quarter=1, grade=8)
+                                quarter=1, grade=3)
 
         self.post_transfer('5-Д', '5-А')
 

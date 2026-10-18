@@ -8,10 +8,12 @@ the data: quarter grades cannot be created, overwritten, or deleted through
 any teacher grade-entry endpoint, while the attestation mark (quarter 0)
 stays teacher-entered and feeds the derived Ҷамъбастӣ.
 """
+import io
 import json
 import re
 from unittest.mock import patch
 
+from django.core.management import call_command
 from django.urls import reverse
 
 from portal.models import Assessment, Grade, QuarterGrade
@@ -560,4 +562,156 @@ class QuarterJournalRenderTests(GoldenBase):
         tags = re.findall(r'<input[^>]*name="q_\d+_[^"]+"[^>]*>', html)
         self.assertTrue(tags)
         self.assertTrue(all('disabled' in tag for tag in tags))
+
+
+# ---------------------------------------------------------------------------
+# Recalc coverage gaps — source-row identity changes must refresh BOTH cells
+# ---------------------------------------------------------------------------
+
+
+class RecalcGapTests(GoldenBase):
+    """Moving a contribution between quarter cells or between students
+    re-derives the cell it LEFT as well as the cell it joined — otherwise
+    the abandoned cell keeps a stored value that counts a contribution
+    which no longer exists."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.teacher_a)
+
+    def test_assessment_quarter_move_recalcs_old_quarter(self):
+        post_grade(self.client, self.s1, score='9', date=D_Q1)
+        a = make_control(self.cs_a, is_ajm=True)
+        post_grade(self.client, self.s1, score='5', assessment=a)
+        self.assertEqual(qg(self.s1, 1).grade, 7)  # (9 + 5) / 2
+        # ORM/admin edit: the assessment moves to quarter 2. Its grade
+        # re-buckets, so BOTH quarters must be re-derived.
+        a.quarter = 2
+        a.save()
+        self.assertEqual(qg(self.s1, 1).grade, 9)  # АҶМ left the pool
+        self.assertEqual(qg(self.s1, 2).grade, 5)  # and joined Q2
+
+    def test_assessment_quarter_move_recalcs_every_linked_student(self):
+        post_grade(self.client, self.s1, score='9', date=D_Q1)
+        post_grade(self.client, self.s2, score='7', date=D_Q1)
+        a = make_control(self.cs_a, is_ajm=True)
+        post_grade(self.client, self.s1, score='5', assessment=a)
+        post_grade(self.client, self.s2, score='3', assessment=a)
+        self.assertEqual(qg(self.s1, 1).grade, 7)
+        self.assertEqual(qg(self.s2, 1).grade, 5)
+        a.quarter = 2
+        a.save()
+        self.assertEqual(qg(self.s1, 1).grade, 9)
+        self.assertEqual(qg(self.s1, 2).grade, 5)
+        self.assertEqual(qg(self.s2, 1).grade, 7)
+        self.assertEqual(qg(self.s2, 2).grade, 3)
+
+    def test_grade_reassigned_with_same_score_recalcs(self):
+        # The trap shape: identical contribution on a different owner —
+        # without a student check in `moved` the handler early-returns and
+        # NEITHER student's stored quarter refreshes.
+        g = make_grade(self.s1, score=9)
+        self.assertEqual(qg(self.s1, 1).grade, 9)
+        g.student = self.s2
+        g.save()
+        self.assertIsNone(qg(self.s1, 1))          # source left s1
+        self.assertEqual(qg(self.s2, 1).grade, 9)  # source joined s2
+
+    def test_grade_reassigned_changes_both_pools(self):
+        g = make_grade(self.s1, score=8)
+        make_grade(self.s2, score=6)
+        self.assertEqual(qg(self.s1, 1).grade, 8)
+        self.assertEqual(qg(self.s2, 1).grade, 6)
+        g.student = self.s2
+        g.save()
+        self.assertIsNone(qg(self.s1, 1))
+        self.assertEqual(qg(self.s2, 1).grade, 7)  # mean(8, 6)
+
+
+# ---------------------------------------------------------------------------
+# audit_quarter_grades — read-only stored-vs-derived discrepancy report
+# ---------------------------------------------------------------------------
+
+
+class AuditQuarterGradesCommandTests(GoldenBase):
+    """The audit re-derives every cell through the runtime pipeline and
+    reports disagreements without writing anything."""
+
+    def _run(self, *args):
+        out = io.StringIO()
+        call_command('audit_quarter_grades', *args, stdout=out)
+        return out.getvalue()
+
+    def test_clean_data_reports_no_findings(self):
+        make_grade(self.s1, score=9)
+        make_grade(self.s1, score=7, date=D_Q1_B)
+        out = self._run()
+        self.assertIn('STALE: 0', out)
+        self.assertIn('ORPHAN: 0', out)
+        self.assertIn('MISSING: 0', out)
+        self.assertIn('FROZEN-CONFLICT: 0', out)
+
+    def test_stale_stored_row_reported_not_repaired(self):
+        make_grade(self.s1, score=9)
+        self.assertEqual(qg(self.s1, 1).grade, 9)
+        # Simulate out-of-band staleness (raw update bypasses signals).
+        QuarterGrade.objects.filter(
+            student=self.s1, quarter=1).update(grade=4)
+        out = self._run()
+        self.assertIn('STALE', out)
+        self.assertIn('захирашуда=4', out)
+        self.assertIn('ҳисобшуда=9', out)
+        # Read-only contract: the stored row is left untouched.
+        self.assertEqual(qg(self.s1, 1).grade, 4)
+
+    def test_orphan_row_reported(self):
+        make_quarter_grade(self.s1, quarter=2, grade=7)  # no source rows
+        out = self._run()
+        self.assertIn('ORPHAN', out)
+
+    def test_missing_stored_row_reported(self):
+        make_grade(self.s1, score=9)
+        QuarterGrade.objects.filter(student=self.s1, quarter=1).delete()
+        out = self._run()
+        self.assertIn('MISSING', out)
+
+    def test_locked_conflict_reported_separately(self):
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        make_grade(self.s1, score=9)          # locked: no recalc ran
+        make_quarter_grade(self.s1, quarter=1, grade=4)  # frozen value
+        out = self._run()
+        self.assertIn('FROZEN-CONFLICT', out)
+        self.assertNotIn('STALE ', out)
+        # The frozen value is never rewritten by the audit.
+        self.assertEqual(qg(self.s1, 1).grade, 4)
+
+    def test_stale_label_row_reported(self):
+        # History row under a prior class label — invisible to every
+        # display and recalc key.
+        make_quarter_grade(self.s1, class_name='6-А', quarter=1, grade=8)
+        out = self._run()
+        self.assertIn('STALE-LABEL', out)
+
+    def test_duplicate_normalized_key_reported(self):
+        make_grade(self.s1, score=9)
+        make_quarter_grade(self.s1, quarter=1, grade=9)
+        # bulk_create bypasses save() normalization — '7-a' normalizes to
+        # '7-А', so the pair collides on the recalc key while the raw
+        # unique_together lets both rows exist.
+        QuarterGrade.objects.bulk_create([QuarterGrade(
+            student=self.s1, class_name='7-a', subject=MATH,
+            quarter=1, grade=4)])
+        out = self._run()
+        self.assertIn('DUPLICATE', out)
+
+    def test_audit_is_read_only(self):
+        make_grade(self.s1, score=9)
+        QuarterGrade.objects.filter(
+            student=self.s1, quarter=1).update(grade=4)
+        before = list(QuarterGrade.objects.order_by('pk').values_list(
+            'pk', 'grade', 'att_grade'))
+        self._run()
+        after = list(QuarterGrade.objects.order_by('pk').values_list(
+            'pk', 'grade', 'att_grade'))
+        self.assertEqual(before, after)
 

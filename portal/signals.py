@@ -146,7 +146,12 @@ def _restamp_ranking_dirty():
         logger.exception('Failed to re-stamp ranking dirty marker')
 
 
-for _model in (Grade, QuarterGrade, Student, School, ClassSubject):
+# Assessment saves/deletes re-derive QuarterGrade rows through
+# recalculate_quarter_grades_bulk, whose bulk_create/bulk_update/delete
+# bypass model signals — without Assessment here, a control-assessment
+# edit would change ranking inputs with no cache invalidation at all.
+for _model in (Grade, QuarterGrade, Assessment, Student, School,
+               ClassSubject):
     post_save.connect(invalidate_ranking_caches, sender=_model)
     post_delete.connect(invalidate_ranking_caches, sender=_model)
 del _model
@@ -312,7 +317,8 @@ def recalc_quarter_on_grade_save(sender, instance, **kwargs):
             # Brand-new placeholder row with no result yet — nothing to pool.
             return
         moved = prev is not None and (
-            prev.subject != instance.subject
+            prev.student_id != instance.student_id
+            or prev.subject != instance.subject
             or prev.period != instance.period
             or prev.assessment_id != instance.assessment_id
             or prev.date != instance.date
@@ -320,8 +326,9 @@ def recalc_quarter_on_grade_save(sender, instance, **kwargs):
         if prev is not None and not moved and old_result == new_result:
             return
         if moved and prev.period == 'Холҳои ҷорӣ (Онлайн)':
-            # The row used to contribute under its old subject/date/quarter —
-            # that cell lost the contribution and needs its own recalc.
+            # The row used to contribute under its old student/subject/
+            # date/quarter — that cell lost the contribution and needs
+            # its own recalc.
             _recalc_student_quarter(prev)
         if instance.period == 'Холҳои ҷорӣ (Онлайн)':
             _recalc_student_quarter(instance)
@@ -376,10 +383,33 @@ def recalc_quarter_on_grade_delete(sender, instance, **kwargs):
             getattr(instance, '_prev_grade_row', None) or instance)
 
 
+@receiver(pre_save, sender=Assessment)
+def capture_assessment_prior_quarter(sender, instance, **kwargs):
+    """Snapshot the stored quarter so a quarter move re-derives both cells.
+
+    The post-save recalc only sees the NEW quarter; without the snapshot
+    the quarter the assessment left would keep counting its linked grades
+    in a stale stored QuarterGrade."""
+    try:
+        instance._prev_quarter = (
+            Assessment.objects.filter(pk=instance.pk)
+            .values_list('quarter', flat=True).first()
+            if instance.pk else None
+        )
+    except Exception:
+        instance._prev_quarter = None
+
+
 def _assessment_recalc(instance, fallback_rows=None):
     """Recalc quarter grades for every (student, subject) an assessment
     touched. `fallback_rows` supplies the linked set for post_delete, where
     the FK has already been detached by the collector."""
+    # A quarter move re-buckets every linked row: the quarter the
+    # assessment left loses those contributions and needs its own recalc,
+    # not just the quarter it moved into.
+    quarters = {q for q in (instance.quarter,
+                          getattr(instance, '_prev_quarter', None))
+                if q in (1, 2, 3, 4)}
     try:
         rows = fallback_rows
         if rows is None:
@@ -390,11 +420,12 @@ def _assessment_recalc(instance, fallback_rows=None):
         defer = _quarter_recalc_deferred.get()
         if defer is not None:
             for student_id, subject in rows:
-                defer.add((student_id, subject, instance.quarter))
+                for quarter in quarters:
+                    defer.add((student_id, subject, quarter))
             return
         recalculate_quarter_grades_bulk(
-            (student_id, subject, instance.quarter)
-            for student_id, subject in rows
+            (student_id, subject, quarter)
+            for student_id, subject in rows for quarter in quarters
         )
     except Exception:
         logger.exception('Failed to recalculate quarter grade')
@@ -404,7 +435,8 @@ def _assessment_recalc(instance, fallback_rows=None):
             # so displays fall back to the live projection.
             from .views import drop_stale_quarter_grades
             drop_stale_quarter_grades(
-                (sid, subj, instance.quarter) for sid, subj in (rows or ()))
+                (sid, subj, q) for sid, subj in (rows or ())
+                for q in quarters)
         except Exception:
             logger.exception('Failed to drop stale quarter grades')
 

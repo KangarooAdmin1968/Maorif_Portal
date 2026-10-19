@@ -51,8 +51,14 @@ class GradeAdmin(admin.ModelAdmin):
 
 @admin.register(QuarterGrade)
 class QuarterGradeAdmin(admin.ModelAdmin):
-    list_display = ['student', 'class_name', 'subject', 'quarter', 'grade', 'att_grade']
-    list_filter = ['quarter', 'class_name']
+    list_display = ['student', 'class_name', 'subject', 'quarter', 'academic_year', 'grade', 'att_grade']
+    list_filter = ['quarter', 'class_name', 'academic_year']
+    # Attribution review: filter academic_year=empty to list legacy rows,
+    # find the audit-reported record via search, check the source evidence
+    # (the cell's Grade dates / stamped quarter rows), then set the year
+    # in the change form — or leave NULL (it stays excluded from
+    # current-year displays until attributed).
+    search_fields = ['student__id', 'class_name', 'subject']
 
 
 @admin.register(ClassSubject)
@@ -279,9 +285,17 @@ class AssessmentAdmin(admin.ModelAdmin):
 
 @admin.register(QuarterLock)
 class QuarterLockAdmin(admin.ModelAdmin):
-    list_display = ['school', 'class_name', 'subject', 'quarter', 'locked', 'locked_at']
-    list_filter = ['locked', 'quarter', 'school']
+    list_display = ['school', 'class_name', 'subject', 'quarter', 'academic_year', 'locked', 'locked_at']
+    list_filter = ['locked', 'quarter', 'academic_year', 'school']
     search_fields = ['class_name', 'subject']
+
+    def save_model(self, request, obj, form, change):
+        # A lock always belongs to an academic year; default to the year
+        # containing today when the admin left it unset.
+        if obj.academic_year is None:
+            from .views import academic_year_start
+            obj.academic_year = academic_year_start()
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(UserProfile)

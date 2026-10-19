@@ -284,7 +284,9 @@ class StudentIdentityGoldenTests(GoldenBase):
         self.assertEqual(Grade.objects.get(student=moved).score, 8)
         qg = QuarterGrade.objects.get(student=moved)
         self.assertEqual(qg.class_name, '8-В')
-        self.assertEqual(qg.grade, 9)
+        # Relabeled stored rows are refreshed in place — the merged
+        # class's quarter derives from the actual source grades (8).
+        self.assertEqual(qg.grade, 8)
 
     def test_student_save_seeds_default_class_subjects(self):
         # Creating a student in a fresh class seeds the grade-level

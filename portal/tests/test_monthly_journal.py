@@ -4,6 +4,7 @@ Covers: month grid shape, per-lesson columns (no same-day collapse),
 legacy lesson-less slot visibility, completion statuses, control markers,
 month navigation, permissions, and the mobile day-list markup.
 """
+import calendar
 import datetime
 import json
 
@@ -15,11 +16,20 @@ from portal.tests.test_phase4_lessons import (
     make_control, make_lesson, post_grade,
 )
 
-OCT = '2025-10'
-NOV = '2025-11'
-D_OCT_A = datetime.date(2025, 10, 15)   # D_Q1
-D_OCT_B = datetime.date(2025, 10, 20)
-D_OCT_C = datetime.date(2025, 10, 22)
+# The journal month of the D_Q1 fixture (October of the current academic
+# year) — resolved dynamically so the grid tests track the fixture dates.
+OCT = f'{D_Q1.year}-{D_Q1.month:02d}'
+NOV = f'{D_Q1.year}-{D_Q1.month + 1:02d}'
+D_OCT_A = D_Q1
+D_OCT_B = datetime.date(D_Q1.year, 10, 20)
+D_OCT_C = datetime.date(D_Q1.year, 10, 22)
+
+
+def _sundays(year, month):
+    """All Sundays of the given month."""
+    return [datetime.date(year, month, d)
+            for d in range(1, calendar.monthrange(year, month)[1] + 1)
+            if datetime.date(year, month, d).weekday() == 6]
 
 
 def col_index(ctx, date, lesson_id):
@@ -63,9 +73,10 @@ class MonthlyJournalTests(GoldenBase):
 
     def test_all_days_present(self):
         resp = self._get()
-        # October 2025 has 31 days, 4 of them Sundays (5, 12, 19, 26).
-        self.assertEqual(len(resp.context['header_groups']), 27)
-        self.assertEqual(len(resp.context['day_rows']), 27)
+        # 31 days minus that October's Sundays.
+        expected = 31 - len(_sundays(D_Q1.year, 10))
+        self.assertEqual(len(resp.context['header_groups']), expected)
+        self.assertEqual(len(resp.context['day_rows']), expected)
 
     def test_sundays_hidden(self):
         resp = self._get()
@@ -75,12 +86,12 @@ class MonthlyJournalTests(GoldenBase):
             self.assertNotEqual(d['date'].weekday(), 6)
         for c in resp.context['columns']:
             self.assertNotEqual(c['date'].weekday(), 6)
-        sunday = datetime.date(2025, 10, 5)
+        sunday = _sundays(D_Q1.year, 10)[0]
         self.assertNotIn(
             sunday, [d['date'] for d in resp.context['day_rows']])
 
     def test_sunday_with_grade_is_shown(self):
-        sunday = datetime.date(2025, 10, 5)
+        sunday = _sundays(D_Q1.year, 10)[0]
         post_grade(self.client, self.s1, score='7', date=sunday)
         resp = self._get()
         self.assertIn(
@@ -95,7 +106,7 @@ class MonthlyJournalTests(GoldenBase):
             student=self.s1, date=sunday).exists())
 
     def test_sunday_with_lesson_only_is_shown(self):
-        sunday = datetime.date(2025, 10, 12)
+        sunday = _sundays(D_Q1.year, 10)[1]
         make_lesson(self.cs_a, sunday, 1)
         resp = self._get()
         self.assertIn(
@@ -104,7 +115,7 @@ class MonthlyJournalTests(GoldenBase):
             sunday, [d['date'] for d in resp.context['day_rows']])
 
     def test_sunday_with_control_assessment_is_shown(self):
-        sunday = datetime.date(2025, 10, 19)
+        sunday = _sundays(D_Q1.year, 10)[2]
         make_control(self.cs_a, date=sunday)
         resp = self._get()
         self.assertIn(
@@ -238,13 +249,17 @@ class MonthlyJournalTests(GoldenBase):
         resp = self._get(month=NOV)
         status = {d['date']: d['status'] for d in resp.context['day_rows']}
         self.assertEqual(status[D_Q1_B], 'partial')
-        # November 2025 has 30 days, 5 of them Sundays.
-        self.assertEqual(len(resp.context['day_rows']), 25)
+        # 30 November days minus that year's Sundays.
+        self.assertEqual(
+            len(resp.context['day_rows']),
+            30 - len(_sundays(D_Q1.year, 11)))
 
     def test_prev_next_month_links(self):
         resp = self._get(month=OCT)
-        self.assertEqual(resp.context['prev_month'], datetime.date(2025, 9, 1))
-        self.assertEqual(resp.context['next_month'], datetime.date(2025, 11, 1))
+        self.assertEqual(
+            resp.context['prev_month'], datetime.date(D_Q1.year, 9, 1))
+        self.assertEqual(
+            resp.context['next_month'], datetime.date(D_Q1.year, 11, 1))
 
     def test_invalid_month_falls_back_to_current(self):
         resp = self.client.get(self.url, {'month': 'not-a-month'})
@@ -351,15 +366,17 @@ class JournalExcelExportTests(GoldenBase):
         self.assertEqual(len(rows), 2)  # header + one grade row
 
     def test_sunday_with_data_exports(self):
+        sunday = _sundays(D_Q1.year, 10)[0]
         post_grade(
             self.client, self.s1, score='7',
-            date=datetime.date(2025, 10, 5))   # Sunday with real data
+            date=sunday)   # Sunday with real data
         post_grade(self.client, self.s1, score='8', date=D_OCT_A)
         resp = self.client.get(self.url, {'month': OCT})
         rows = self._rows(resp)
         self.assertEqual(len(rows), 3)  # header + Sunday grade + weekday grade
         dates = sorted(r[2] for r in rows[1:])
-        self.assertEqual(dates, ['05.10.2025', '15.10.2025'])
+        self.assertEqual(dates, [
+            sunday.strftime('%d.%m.%Y'), D_OCT_A.strftime('%d.%m.%Y')])
 
     def test_empty_sunday_exports_nothing(self):
         # No grade is posted for the Sunday — the export must not fabricate

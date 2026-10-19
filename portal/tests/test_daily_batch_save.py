@@ -25,7 +25,7 @@ from portal.tests.helpers import (
 from portal.tests.test_phase4_lessons import make_control, make_lesson
 
 DAILY_SAVE_URL = reverse('daily_save')
-D = D_Q1  # 2025-10-15, quarter 1
+D = D_Q1  # October of the current academic year, quarter 1
 
 
 class DailyBatchSaveTests(GoldenBase):

@@ -24,8 +24,8 @@ Frozen expectations:
 from django.test import TestCase
 
 from portal.tests.helpers import (
-    CUSTOM_SUBJECT, D_Q1, D_Q1_B, MATH,
-    GoldenBase, make_class_subject, make_grade, make_quarter_grade,
+    CUSTOM_SUBJECT, D_PREV_Q1, D_Q1, D_Q1_B, MATH,
+    GoldenBase, _AY, make_class_subject, make_grade, make_quarter_grade,
     make_school, make_student,
 )
 from portal.views import (
@@ -136,21 +136,36 @@ class ClassRankingGoldenTests(RankingBase):
         self.assertNotIn((self.idora.id, '5-А'), data)
 
     def test_non_graded_quarter_grade_row_excluded(self):
-        # A QuarterGrade carrying non-graded class_name '1-А' must not create
-        # a '1-А' entry even though it belongs to a graded 7-А student.
-        make_quarter_grade(self.s1, '1-А', MATH, 1, grade=10)
+        # A prior-year QuarterGrade carrying non-graded class_name '1-А'
+        # must not create a '1-А' entry even though it belongs to a
+        # graded 7-А student.
+        make_quarter_grade(self.s1, '1-А', MATH, 1, grade=10,
+                           academic_year=_AY - 1)
         data = self._by_key(calculate_class_rankings())
         self.assertNotIn((self.school_a.id, '1-А'), data)
         self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.00)
 
-    def test_class_entry_from_quarter_only_resolves_school_name(self):
-        # '9-Д' has no students at School A — the QuarterGrade row alone
-        # creates the entry and its school_name is resolved.
-        make_quarter_grade(self.s1, '9-Д', MATH, 1, grade=6)
+    def test_prior_class_quarter_row_creates_no_ghost_entry(self):
+        # s1's QuarterGrade is stamped '9-Д' in the PRIOR academic year —
+        # explicit year identity, not the class label: it creates no
+        # '9-Д' entry and does not lift '7-А' either.
+        make_quarter_grade(self.s1, '9-Д', MATH, 1, grade=6,
+                           academic_year=_AY - 1)
         data = self._by_key(calculate_class_rankings())
-        entry = data[(self.school_a.id, '9-Д')]
-        self.assertEqual(entry['school_name'], 'Мактаб №1')
-        self.assertAlmostEqual(entry['gpa'], 6.0)
+        self.assertNotIn((self.school_a.id, '9-Д'), data)
+        self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.00)
+
+    def test_same_year_move_row_counts_under_its_own_class(self):
+        # A row stamped THIS year under another label is a mid-year move —
+        # it legitimately appears under the class it was earned in.
+        s8 = make_student(self.school_a, '9-Д', 'Ҳаракаткарда')
+        make_quarter_grade(s8, '9-Д', MATH, 1, grade=10)
+        # Move to 7-А — the 9-Д row keeps its year and its label.
+        s8.class_name = '7-А'
+        s8.save()
+        data = self._by_key(calculate_class_rankings())
+        self.assertIn((self.school_a.id, '9-Д'), data)
+        self.assertAlmostEqual(data[(self.school_a.id, '9-Д')]['gpa'], 10.00)
 
     def test_school_filter_by_id(self):
         data = calculate_class_rankings(school_filter=str(self.school_a.id))
@@ -161,6 +176,47 @@ class ClassRankingGoldenTests(RankingBase):
         data = self._by_key(calculate_class_rankings())
         self.assertAlmostEqual(data[(self.school_a.id, '7-А')]['gpa'], 8.00)
         self.assertAlmostEqual(data[(self.school_b.id, '7-Б')]['gpa'], 7.50)
+
+
+class RankingAcademicYearTests(RankingBase):
+    """The ranking pools are scoped to the current academic year:
+    prior-year Grade rows (by date) and QuarterGrade rows stamped with a
+    different academic_year must not feed current-year GPA."""
+
+    def test_prior_year_daily_grade_not_counted(self):
+        s7 = make_student(self.school_a, '7-А', 'Кӯҳна Хонанда')
+        make_grade(s7, MATH, 10, D_PREV_Q1)
+        data = {item['school'].id: item
+                for item in calculate_school_rankings()}
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.00)
+        top = {d['student_id']: d for d in calculate_top_students()}
+        self.assertNotIn(s7.id, top)
+
+    def test_prior_year_quarter_row_not_counted(self):
+        # A quarter row stamped with the prior academic year is history —
+        # it lifts neither the school GPA nor the student's own GPA,
+        # even under a matching class label.
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=6,
+                           academic_year=_AY - 1)
+        data = {item['school'].id: item
+                for item in calculate_school_rankings()}
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.00)
+        top = {d['student_id']: d for d in calculate_top_students()}
+        self.assertAlmostEqual(top[self.s1.id]['gpa'], 9.00)
+
+    def test_prior_year_attestation_row_not_counted(self):
+        make_quarter_grade(self.s1, '7-А', MATH, 0, att=6,
+                           academic_year=_AY - 1)
+        data = {item['school'].id: item
+                for item in calculate_school_rankings()}
+        self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.00)
+
+    def test_subject_ranking_ignores_prior_year_rows(self):
+        make_grade(self.s1, MATH, 10, D_PREV_Q1)
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=10,
+                           academic_year=_AY - 1)
+        data = {d['subject']: d for d in calculate_subject_rankings()}
+        self.assertAlmostEqual(data[MATH]['gpa'], 7.88)  # still 63/8
 
 
 class TopStudentsGoldenTests(RankingBase):

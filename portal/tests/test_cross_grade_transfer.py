@@ -23,9 +23,9 @@ from portal.models import (
     TeachingGroup,
 )
 from portal.tests.helpers import (
-    MATH, make_class_subject, make_deactivation_request, make_grade,
-    make_quarter_grade, make_school, make_student, make_teacher_profile,
-    make_user,
+    D_PREV_Q1, MATH, _AY, make_class_subject, make_deactivation_request,
+    make_grade, make_quarter_grade, make_school, make_student,
+    make_teacher_profile, make_user,
 )
 from portal.utils import ensure_class_subjects
 
@@ -417,6 +417,36 @@ class GradeHistoryTests(CrossGradeBase):
             Grade.objects.filter(student_id=old_id).count(), 0)
         self.assertEqual(
             QuarterGrade.objects.filter(student_id=old_id).count(), 0)
+
+    def test_prior_year_sources_keep_history_without_deriving(self):
+        """5-Д -> 6-Д where every source grade sits in the PRIOR academic
+        year (promotion): the stored '5-Д' quarter row keeps its own label
+        and year, and whatever the moved sources derive lands in their own
+        academic year — never the current one."""
+        st = make_student(self.school, '5-Д', 'Кӯҳна Хонанда')
+        ensure_class_subjects(self.school, '6-Д')
+        make_grade(st, subject=MATH, score=9, date=D_PREV_Q1)
+        q1 = make_quarter_grade(st, class_name='5-Д', subject=MATH,
+                                quarter=1, grade=9, academic_year=_AY - 1)
+
+        self.post_transfer('5-Д', '6-Д')
+
+        new_st = Student.objects.get(
+            school=self.school, class_name='6-Д')
+        q1.refresh_from_db()
+        self.assertEqual(q1.student_id, new_st.id)
+        self.assertEqual(q1.class_name, '5-Д')
+        self.assertEqual(q1.grade, 9)
+        self.assertEqual(q1.academic_year, _AY - 1)
+        # The moved prior-year sources can re-derive a row under the new
+        # label — but it is stamped with THEIR year and nothing lands in
+        # the current academic year.
+        self.assertFalse(QuarterGrade.objects.filter(
+            student=new_st, quarter=1, academic_year=_AY).exists())
+        derived = QuarterGrade.objects.get(
+            student=new_st, class_name='6-Д', quarter=1)
+        self.assertEqual(derived.academic_year, _AY - 1)
+        self.assertEqual(derived.grade, 9)
 
 
 # ----------------------------------------------------------------------

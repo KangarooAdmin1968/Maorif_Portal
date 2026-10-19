@@ -42,13 +42,19 @@ TAJIK = 'ЗАБОНИ ТОҶИКӢ'
 CUSTOM_SUBJECT = 'ФАНИ ФАЪОЛИЯТ'  # not in TJC_SUBJECTS — used for seeding tests
 PERIOD = 'Холҳои ҷорӣ (Онлайн)'
 
-# Dates inside each academic quarter (get_date_quarter: Sep-Nov=1, Dec-Feb=2,
-# Mar-May=3, Jun-Aug=4).
-D_Q1 = datetime.date(2025, 10, 15)
-D_Q1_B = datetime.date(2025, 11, 20)
-D_Q2 = datetime.date(2026, 1, 15)
-D_Q3 = datetime.date(2026, 4, 10)
-D_Q4 = datetime.date(2026, 6, 5)
+# Dates inside each academic quarter of the CURRENT academic year
+# (get_date_quarter: Sep-Nov=1, Dec-Feb=2, Mar-May=3, Jun-Aug=4). Resolved
+# dynamically: the runtime pipeline only counts source rows dated inside
+# the current Sep..Aug academic year, so fixtures must live in it too.
+_AY = (datetime.date.today().year if datetime.date.today().month >= 9
+       else datetime.date.today().year - 1)
+D_Q1 = datetime.date(_AY, 10, 15)
+D_Q1_B = datetime.date(_AY, 11, 20)
+D_Q2 = datetime.date(_AY + 1, 1, 15)
+D_Q3 = datetime.date(_AY + 1, 4, 10)
+D_Q4 = datetime.date(_AY + 1, 6, 5)
+# Same quarter slot one academic year earlier — for year-separation tests.
+D_PREV_Q1 = datetime.date(_AY - 1, 10, 15)
 
 
 def make_school(name, type='Мактаб', language='Тоҷикӣ'):
@@ -105,24 +111,28 @@ def make_grade(student, subject=MATH, score=None, date=D_Q1, attendance=None,
 
 
 def make_quarter_grade(student, class_name='7-А', subject=MATH, quarter=1,
-                       grade=None, att=None):
+                       grade=None, att=None, academic_year=_AY):
     # update_or_create: Grade signals may have already written a derived
-    # row for this (student, class, subject, quarter) — a plain create()
-    # would then raise IntegrityError on the unique_together key. The
-    # subject is normalized the same way Grade.save() stores it so the
-    # lookup hits the derived row.
+    # row for this (student, class, subject, quarter, year) — a plain
+    # create() would then raise IntegrityError on the unique_together
+    # key. The subject is normalized the same way Grade.save() stores it
+    # so the lookup hits the derived row. academic_year defaults to the
+    # current year; pass academic_year=None for a legacy row without an
+    # established year, or an explicit year for historical fixtures.
     obj, _ = QuarterGrade.objects.update_or_create(
         student=student, class_name=class_name,
         subject=normalize_subject(subject),
-        quarter=quarter, defaults={'grade': grade, 'att_grade': att},
+        quarter=quarter, academic_year=academic_year,
+        defaults={'grade': grade, 'att_grade': att},
     )
     return obj
 
 
-def lock_quarter(school, class_name='7-А', subject=MATH, quarter=1, locked=True):
+def lock_quarter(school, class_name='7-А', subject=MATH, quarter=1,
+                 locked=True, academic_year=_AY):
     return QuarterLock.objects.create(
         school=school, class_name=class_name, subject=subject,
-        quarter=quarter, locked=locked,
+        quarter=quarter, locked=locked, academic_year=academic_year,
     )
 
 

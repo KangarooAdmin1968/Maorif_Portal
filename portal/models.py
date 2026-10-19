@@ -508,11 +508,18 @@ class QuarterGrade(models.Model):
     class_name = models.CharField('Синф', max_length=20)
     subject = models.CharField('Фан', max_length=100)
     quarter = models.IntegerField('Чорак', choices=[(0, 'Аттестатсия'), (1, '1'), (2, '2'), (3, '3'), (4, '4')])
+    # September-start year of the academic year this result belongs to
+    # (2026 -> 2026-09-01..2027-08-31). NULL marks a legacy row whose year
+    # could not be attributed reliably — it is preserved for review but
+    # never presented as the current year's official grade.
+    academic_year = models.PositiveSmallIntegerField(
+        'Соли таҳсил', blank=True, null=True)
     grade = models.IntegerField('Хол', blank=True, null=True)
     att_grade = models.IntegerField('Холи атт.', blank=True, null=True)
 
     class Meta:
-        unique_together = ['student', 'class_name', 'subject', 'quarter']
+        unique_together = [
+            'student', 'class_name', 'subject', 'quarter', 'academic_year']
         verbose_name = 'Холи чоряк'
         verbose_name_plural = 'Холҳои чорякӣ'
 
@@ -527,11 +534,17 @@ class QuarterLock(models.Model):
     class_name = models.CharField('Синф', max_length=20)
     subject = models.CharField('Фан', max_length=100)
     quarter = models.IntegerField('Чорак', choices=[(0, 'Аттестатсия'), (1, '1'), (2, '2'), (3, '3'), (4, '4')])
+    # September-start academic year the lock applies to — a lock on Q1 of
+    # one year must never freeze Q1 of another. NULL is a legacy row;
+    # is_quarter_locked attributes it by its own locked_at date.
+    academic_year = models.PositiveSmallIntegerField(
+        'Соли таҳсил', blank=True, null=True)
     locked = models.BooleanField('Баста шудааст', default=True)
     locked_at = models.DateTimeField('Санаи бастан', auto_now_add=True)
 
     class Meta:
-        unique_together = [['school', 'class_name', 'subject', 'quarter']]
+        unique_together = [
+            ['school', 'class_name', 'subject', 'quarter', 'academic_year']]
         verbose_name = 'Бастани чоряк'
         verbose_name_plural = 'Бастани чорякҳо'
         ordering = ['-locked_at']

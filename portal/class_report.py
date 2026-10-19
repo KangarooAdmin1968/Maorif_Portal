@@ -171,11 +171,15 @@ def build_class_report_workbook(school, class_name, quarter, today=None):
             f'шаблони ҳисобот на зиёд аз {TJB_SUBJECT_LIMIT} фанро ҷой медиҳад.'
         )
 
+    # The report's header year is the academic year containing `today` —
+    # stored rows are read under that same year so a prior-year result
+    # under the same class label can never appear in this year's report.
+    report_year = int(_academic_year(today).split('-')[0])
     grades = {
         (sid, subj): grade
         for sid, subj, grade in QuarterGrade.objects.filter(
             student__in=students, class_name=class_name, quarter=quarter,
-            grade__isnull=False,
+            grade__isnull=False, academic_year=report_year,
         ).values_list('student_id', 'subject', 'grade')
     }
     teacher_name = class_teacher_name(school, class_name)

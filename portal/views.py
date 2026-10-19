@@ -171,6 +171,45 @@ def _current_quarter_bounds(today):
     return start, end
 
 
+def academic_year_start(today=None):
+    """September-start year of the academic year containing `today`.
+
+    The portal's academic calendar runs Sep..Aug: dates in Sep..Dec belong
+    to the academic year that starts that September, dates in Jan..Aug to
+    the one that started the previous September. Derived from the date —
+    never hard-coded, so future years need no code change.
+    """
+    today = today or datetime.date.today()
+    return today.year if today.month >= 9 else today.year - 1
+
+
+def academic_year_quarter_windows(year):
+    """Inclusive (start, end) dates per quarter of the Sep..Aug year.
+
+    `year` is the September-start year from academic_year_start()
+    (e.g. 2026 -> 2026-09-01..2027-08-31). February stays leap-safe via
+    calendar.monthrange.
+    """
+    feb_last = calendar.monthrange(year + 1, 2)[1]
+    return {
+        1: (datetime.date(year, 9, 1), datetime.date(year, 11, 30)),
+        2: (datetime.date(year, 12, 1), datetime.date(year + 1, 2, feb_last)),
+        3: (datetime.date(year + 1, 3, 1), datetime.date(year + 1, 5, 31)),
+        4: (datetime.date(year + 1, 6, 1), datetime.date(year + 1, 8, 31)),
+    }
+
+
+def academic_year_bounds(year=None):
+    """Inclusive (start, end) dates of one Sep..Aug academic year.
+
+    Defaults to the academic year containing today.
+    """
+    if year is None:
+        year = academic_year_start()
+    windows = academic_year_quarter_windows(year)
+    return windows[1][0], windows[4][1]
+
+
 def _quarter_progress(today):
     """Elapsed fraction of today's academic quarter, in (0, 1].
 
@@ -280,7 +319,7 @@ def grade_component_result(grade):
     return grade.score
 
 
-def _split_quarter_grades(grades, quarter):
+def _split_quarter_grades(grades, quarter, year=None):
     """Split one student's Grade rows for a subject into quarter pools.
 
     Returns (current_scores, ajm_results). Legacy rows (assessment NULL) and
@@ -290,17 +329,26 @@ def _split_quarter_grades(grades, quarter):
     linked to an АҶМ assessment are grouped by assessment_id so each
     assessment contributes exactly one result (the mean of its row results;
     normally a single row).
+
+    `year` (a September-start academic year from academic_year_start())
+    restricts the pool to rows dated inside that Sep..Aug window: a
+    prior-year row can never leak into this year's quarter just because
+    its month buckets the same way. The Grade row's own date decides —
+    the same rule the year-scoped audit applies — while
+    Assessment.quarter stays authoritative for the quarter bucket.
     """
     current_scores = []
     ajm_groups = {}
     for g in grades:
-        a = g.assessment
-        gq = a.quarter if a is not None else get_date_quarter(g.date)
+        g_year, gq = _grade_row_year_quarter(g)
         if gq != quarter:
+            continue
+        if year is not None and g_year != year:
             continue
         result = grade_component_result(g)
         if result is None:
             continue
+        a = g.assessment
         if a is not None and a.is_ajm:
             ajm_groups.setdefault(a.id, []).append(result)
         else:
@@ -309,11 +357,28 @@ def _split_quarter_grades(grades, quarter):
     return current_scores, ajm_results
 
 
-def collect_quarter_inputs(student, subject, quarter):
+def _grade_row_year_quarter(grade):
+    """(academic_year, quarter) a source Grade row belongs to.
+
+    Assessment-linked rows follow the assessment's own date and declared
+    quarter (both authoritative); unlinked rows follow the Grade row's
+    date. Pure attribution — no score evaluation — so failure paths where
+    grade_component_result itself raised can still use it.
+    """
+    a = grade.assessment
+    if a is not None:
+        return academic_year_start(a.date), a.quarter
+    return academic_year_start(grade.date), get_date_quarter(grade.date)
+
+
+def collect_quarter_inputs(student, subject, quarter, year=None):
     """Return (current_scores, ajm_results) for one student+subject+quarter.
 
     Uses the same scored-row pool as the existing daily calculations
-    (period='Холҳои ҷорӣ (Онлайн)').
+    (period='Холҳои ҷорӣ (Онлайн)'), restricted to the given academic year
+    (Sep..Aug; default: the year containing today) — a row of a different
+    year never feeds this quarter just because its month buckets the same
+    way.
     """
     grades = Grade.objects.filter(
         student=student,
@@ -321,7 +386,8 @@ def collect_quarter_inputs(student, subject, quarter):
         period='Холҳои ҷорӣ (Онлайн)',
         score__isnull=False,
     ).select_related('assessment')
-    return _split_quarter_grades(grades, quarter)
+    return _split_quarter_grades(
+        grades, quarter, year if year is not None else academic_year_start())
 
 
 def calc_quarter_value(current_scores, ajm_results):
@@ -344,25 +410,38 @@ def calc_quarter_value(current_scores, ajm_results):
     return ajm
 
 
-def recalculate_quarter_grade(student, subject, quarter):
-    """Persist the automatically-derived QuarterGrade for one quarter.
+def recalculate_quarter_grade(student, subject, quarter, year=None):
+    """Persist the automatically-derived QuarterGrade for one year+quarter.
 
     The single writer for quarter grades 1-4: every source Grade
     add/edit/delete funnels here via signals (and the manual Ҳисобкунӣ
-    button). Locked quarters are skipped — a locked period keeps its
-    stored value frozen. When no source scores remain the stored row is
-    removed, matching the live bridge which would also show nothing.
+    button). `year` is the September-start academic year of the cell being
+    refreshed (default: the year containing today); the stored row is
+    keyed on it, so a prior-year result can never be overwritten or read
+    back as this year's value. A lock is only honored within its own
+    year — locking Q1 of last year does not freeze Q1 of this year.
+    With no derivation for the year the year-keyed row is removed so the
+    live projection takes over; legacy NULL-year and other-year rows are
+    out of key range and stay untouched.
     """
     if quarter not in (1, 2, 3, 4):
         return
-    if is_quarter_locked(student.school, student.class_name, subject, quarter):
+    if year is None:
+        year = academic_year_start()
+    if is_quarter_locked(
+            student.school, student.class_name, subject, quarter, year):
         return
-    current_scores, ajm_results = collect_quarter_inputs(student, subject, quarter)
-    value = calc_quarter_value(current_scores, ajm_results)
+    grades = list(Grade.objects.filter(
+        student=student,
+        subject=subject,
+        period='Холҳои ҷорӣ (Онлайн)',
+        score__isnull=False,
+    ).select_related('assessment'))
+    value = calc_quarter_value(*_split_quarter_grades(grades, quarter, year))
     if value is None:
         QuarterGrade.objects.filter(
             student=student, class_name=student.class_name,
-            subject=subject, quarter=quarter,
+            subject=subject, quarter=quarter, academic_year=year,
         ).delete()
         return
     QuarterGrade.objects.update_or_create(
@@ -370,6 +449,7 @@ def recalculate_quarter_grade(student, subject, quarter):
         class_name=student.class_name,
         subject=subject,
         quarter=quarter,
+        academic_year=year,
         defaults={'grade': std_round(value)},
     )
 
@@ -377,14 +457,22 @@ def recalculate_quarter_grade(student, subject, quarter):
 def recalculate_quarter_grades_bulk(rows):
     """Bulk counterpart of recalculate_quarter_grade.
 
-    `rows` is an iterable of (student_id, subject, quarter) keys — typically
-    the set collected by defer_quarter_recalc() while a batch endpoint wrote
-    source grades. Lock checks, the source pool, and the existing
-    QuarterGrade rows are resolved with a handful of shared queries instead
-    of a full pass per student, and the writes go through bulk operations.
+    `rows` is an iterable of (student_id, subject, quarter[, year]) keys —
+    typically the set collected by defer_quarter_recalc() while a batch
+    endpoint wrote source grades. `year` is the September-start academic
+    year of the cell (default: the year containing today); every stored
+    row is keyed on it so cells of different years can never collide.
+    Lock checks, the source pool, and the existing QuarterGrade rows are
+    resolved with a handful of shared queries instead of a full pass per
+    student, and the writes go through bulk operations.
     """
-    keys = {(sid, subj, q) for sid, subj, q in rows
-            if sid and q in (1, 2, 3, 4)}
+    current_year = academic_year_start()
+    keys = set()
+    for row in rows:
+        sid, subj, q = row[0], row[1], row[2]
+        year = row[3] if len(row) > 3 and row[3] is not None else current_year
+        if sid and q in (1, 2, 3, 4):
+            keys.add((sid, subj, q, year))
     if not keys:
         return
     students = {
@@ -396,7 +484,7 @@ def recalculate_quarter_grades_bulk(rows):
     subjects = {k[1] for k in keys}
     # One query per distinct subject — a journal batch edits a single
     # subject, so this is normally exactly one fetch covering every
-    # quarter (quarter membership is decided in Python below anyway).
+    # quarter and year (membership is decided in Python below anyway).
     pools = {}
     for subj in subjects:
         for g in Grade.objects.filter(
@@ -408,44 +496,53 @@ def recalculate_quarter_grades_bulk(rows):
     # Every distinct lock key resolved in one query, then matched exactly.
     lock_keys = {
         (st.school_id, normalize_class_name(st.class_name),
-         normalize_subject(subj), q)
-        for sid, subj, q in keys for st in [students.get(sid)]
+         normalize_subject(subj), q, year)
+        for sid, subj, q, year in keys for st in [students.get(sid)]
         if st is not None
     }
+    lock_years = {k[4] for k in lock_keys}
     locked = {
         (row[0], normalize_class_name(row[1]),
-         normalize_subject(row[2]), row[3])
+         normalize_subject(row[2]), row[3],
+         row[4] if row[4] is not None
+         else (academic_year_start(timezone.localdate(row[5]))
+               if row[5] else None)): True
         for row in QuarterLock.objects.filter(
             school_id__in={k[0] for k in lock_keys},
             class_name__in={k[1] for k in lock_keys},
             subject__in={k[2] for k in lock_keys},
             quarter__in={k[3] for k in lock_keys},
             locked=True,
-        ).values_list('school_id', 'class_name', 'subject', 'quarter')
+        ).filter(_lock_year_q(lock_years)).values_list(
+            'school_id', 'class_name', 'subject', 'quarter',
+            'academic_year', 'locked_at')
     } if lock_keys else set()
     existing = {
         (qg.student_id, normalize_class_name(qg.class_name),
-         normalize_subject(qg.subject), qg.quarter): qg
+         normalize_subject(qg.subject), qg.quarter,
+         qg.academic_year): qg
         for qg in QuarterGrade.objects.filter(
             student_id__in=students, subject__in=subjects,
-            quarter__in={k[2] for k in keys})
+            quarter__in={k[2] for k in keys},
+            academic_year__in={k[3] for k in keys})
     }
     to_create, to_update, to_delete = [], [], []
-    for sid, subj, q in keys:
+    for sid, subj, q, year in keys:
         student = students.get(sid)
         if student is None:
             continue
         lock_key = (student.school_id, normalize_class_name(student.class_name),
-                    normalize_subject(subj), q)
+                    normalize_subject(subj), q, year)
         if lock_key in locked:
             continue
-        current_scores, ajm_results = _split_quarter_grades(
-            pools.get((sid, normalize_subject(subj)), []), q)
-        value = calc_quarter_value(current_scores, ajm_results)
+        pool = pools.get((sid, normalize_subject(subj)), [])
+        value = calc_quarter_value(*_split_quarter_grades(pool, q, year))
         qkey = (sid, normalize_class_name(student.class_name),
-                normalize_subject(subj), q)
+                normalize_subject(subj), q, year)
         qg = existing.get(qkey)
         if value is None:
+            # No derivation for THIS year — the year-keyed row (if any) is
+            # stale cache; other-year and legacy NULL rows stay untouched.
             if qg is not None:
                 to_delete.append(qg.pk)
             continue
@@ -453,7 +550,8 @@ def recalculate_quarter_grades_bulk(rows):
         if qg is None:
             to_create.append(QuarterGrade(
                 student=student, class_name=student.class_name,
-                subject=subj, quarter=q, grade=new_grade))
+                subject=subj, quarter=q, academic_year=year,
+                grade=new_grade))
         elif qg.grade != new_grade:
             qg.grade = new_grade
             to_update.append(qg)
@@ -463,18 +561,19 @@ def recalculate_quarter_grades_bulk(rows):
         try:
             QuarterGrade.objects.bulk_create(to_create)
         except IntegrityError:
-            # A concurrent write won the (student, class, subject, quarter)
-            # key — fall back to row-wise upserts for the conflicting set.
+            # A concurrent write won the (student, class, subject, quarter,
+            # year) key — fall back to row-wise upserts for the conflicts.
             for row in to_create:
                 QuarterGrade.objects.update_or_create(
                     student_id=row.student_id, class_name=row.class_name,
                     subject=row.subject, quarter=row.quarter,
+                    academic_year=row.academic_year,
                     defaults={'grade': row.grade})
     if to_update:
         QuarterGrade.objects.bulk_update(to_update, ['grade'])
 
 
-def drop_stale_quarter_grade(student, subject, quarter):
+def drop_stale_quarter_grade(student, subject, quarter, year=None):
     """Best-effort fallback when automatic recalculation fails.
 
     Every display prefers a stored QuarterGrade over the live projection,
@@ -483,34 +582,47 @@ def drop_stale_quarter_grade(student, subject, quarter):
     project the quarter from the source Grade rows instead (and flag it
     as a live value). Never called on the happy path.
 
-    A locked quarter keeps its frozen row — that stored value is still
-    the official one. If the lock check itself fails, the caller's
-    exception guard leaves the row rather than risk deleting a frozen
-    value.
+    The row is keyed by academic year, so only the exact
+    (student, class, subject, quarter, year) cell whose recalc failed is
+    dropped — prior-year and legacy NULL-year rows are out of key range
+    and can never be destroyed by a failed current-year refresh. A lock
+    only protects its own year: a locked year's frozen row is kept (and
+    if the lock check itself fails, the caller's exception guard leaves
+    the row rather than risk deleting a frozen value).
     """
     if quarter not in (1, 2, 3, 4):
         return
-    if is_quarter_locked(student.school, student.class_name, subject, quarter):
+    if year is None:
+        year = academic_year_start()
+    if is_quarter_locked(
+            student.school, student.class_name, subject, quarter, year):
         return
     QuarterGrade.objects.filter(
         student=student,
         class_name=normalize_class_name(student.class_name),
         subject=normalize_subject(subject),
         quarter=quarter,
+        academic_year=year,
     ).delete()
 
 
 def drop_stale_quarter_grades(keys):
     """Bulk variant of drop_stale_quarter_grade for batch failure paths.
 
-    `keys` is an iterable of (student_id, subject, quarter) — typically the
-    set collected by defer_quarter_recalc() when its bulk recalc failed.
-    Locked cells are resolved in one query and keep their frozen rows.
+    `keys` is an iterable of (student_id, subject, quarter[, year]) —
+    typically the set collected by defer_quarter_recalc() when its bulk
+    recalc failed. Only the exact year-keyed unlocked rows are dropped:
+    locks protect their own year only, and prior-year/legacy rows are out
+    of key range.
     """
-    keys = {
-        (sid, normalize_subject(subj), q)
-        for sid, subj, q in keys if sid and q in (1, 2, 3, 4)
-    }
+    current_year = academic_year_start()
+    normed = set()
+    for row in keys:
+        sid, subj, q = row[0], row[1], row[2]
+        year = row[3] if len(row) > 3 and row[3] is not None else current_year
+        if sid and q in (1, 2, 3, 4):
+            normed.add((sid, normalize_subject(subj), q, year))
+    keys = normed
     if not keys:
         return
     students = {
@@ -519,25 +631,31 @@ def drop_stale_quarter_grades(keys):
     }
     if not students:
         return
+    key_years = {k[3] for k in keys}
     locked = {
         (row[0], normalize_class_name(row[1]),
-         normalize_subject(row[2]), row[3])
+         normalize_subject(row[2]), row[3],
+         row[4] if row[4] is not None
+         else (academic_year_start(timezone.localdate(row[5]))
+               if row[5] else None))
         for row in QuarterLock.objects.filter(
             school_id__in={st.school_id for st in students.values()},
             locked=True,
-        ).values_list('school_id', 'class_name', 'subject', 'quarter')
+        ).filter(_lock_year_q(key_years)).values_list(
+            'school_id', 'class_name', 'subject', 'quarter',
+            'academic_year', 'locked_at')
     }
     drop_q = None
-    for sid, subj, q in keys:
+    for sid, subj, q, year in keys:
         st = students.get(sid)
         if st is None or (
-            st.school_id, normalize_class_name(st.class_name), subj, q
+            st.school_id, normalize_class_name(st.class_name), subj, q, year
         ) in locked:
             continue
         clause = Q(
             student_id=sid,
             class_name=normalize_class_name(st.class_name),
-            subject=subj, quarter=q)
+            subject=subj, quarter=q, academic_year=year)
         drop_q = clause if drop_q is None else drop_q | clause
     if drop_q is not None:
         QuarterGrade.objects.filter(drop_q).delete()
@@ -574,8 +692,11 @@ def _live_quarter_payload(student, subject, class_name):
     Used by AJAX responses so the page can sync quarter cells immediately
     after a save or assessment deletion without reloading.
     """
+    year = academic_year_start()
     official = {}
-    for qg in QuarterGrade.objects.filter(student=student, class_name=class_name, subject=subject):
+    for qg in QuarterGrade.objects.filter(
+            student=student, class_name=class_name, subject=subject,
+            academic_year=year):
         if qg.quarter == 0 and qg.att_grade is not None:
             official['att'] = qg.att_grade
         elif qg.grade is not None:
@@ -590,7 +711,8 @@ def _live_quarter_payload(student, subject, class_name):
         if q in official:
             qmap[q] = official[q]
         else:
-            current_scores, ajm_results = _split_quarter_grades(grades, q)
+            current_scores, ajm_results = _split_quarter_grades(
+                grades, q, year)
             value = calc_quarter_value(current_scores, ajm_results)
             if value is not None:
                 qmap[q] = std_round(value)
@@ -619,9 +741,11 @@ def _live_quarter_payloads(infos):
             score__isnull=False).select_related('assessment'):
         grade_pool.setdefault(
             (g.student_id, normalize_subject(g.subject)), []).append(g)
+    year = academic_year_start()
     qg_rows = {}
     for qg in QuarterGrade.objects.filter(
-            student__in=students, subject__in=subjects):
+            student__in=students, subject__in=subjects,
+            academic_year=year):
         qg_rows.setdefault(
             (qg.student_id, normalize_class_name(qg.class_name),
              normalize_subject(qg.subject)), {})[qg.quarter] = qg
@@ -642,7 +766,8 @@ def _live_quarter_payloads(infos):
             if q in official:
                 qmap[q] = official[q]
             else:
-                current_scores, ajm_results = _split_quarter_grades(pool, q)
+                current_scores, ajm_results = _split_quarter_grades(
+                    pool, q, year)
                 value = calc_quarter_value(current_scores, ajm_results)
                 if value is not None:
                     qmap[q] = std_round(value)
@@ -934,17 +1059,64 @@ def _grade_slot_label(grade):
     return grade.subject + (f" ({', '.join(parts)})" if parts else '')
 
 
-def is_quarter_locked(school, class_name, subject, quarter):
-    """Return True if the given quarter is administratively locked."""
+def _lock_year_q(years):
+    """Q matching locks effective for any of the given academic years.
+
+    A year-stamped lock matches only its own year; a legacy NULL-year lock
+    is pulled too and attributed by its locked_at date in Python — a
+    potentially valid lock is never silently ignored, but never applied
+    to an unrelated year either.
+    """
+    return Q(academic_year__in=set(years)) | Q(academic_year__isnull=True)
+
+
+def _locked_quarters_for_year(school, class_name, subject, year):
+    """Set of quarter numbers locked for `year` in one query.
+
+    Year-stamped locks match their own year; legacy NULL-year rows are
+    attributed by their locked_at date.
+    """
+    return {
+        q for q, ay, lat in QuarterLock.objects.filter(
+            school=school,
+            class_name=normalize_class_name(class_name),
+            subject=normalize_subject(subject),
+            locked=True,
+        ).filter(_lock_year_q({year})).values_list(
+            'quarter', 'academic_year', 'locked_at')
+        if ay == year or (
+            ay is None and lat is not None
+            and academic_year_start(timezone.localdate(lat)) == year)
+    }
+
+
+def is_quarter_locked(school, class_name, subject, quarter, year=None):
+    """Return True if the quarter is locked for that academic year.
+
+    `year` is the September-start academic year of the quarter in
+    question (default: the year containing today). A lock stamped for a
+    different year does not apply. Legacy NULL-year rows match only when
+    their own locked_at date falls inside the year being checked — the
+    lock freezes the year it was created in, not every future year.
+    """
     if quarter is None:
         return False
-    return QuarterLock.objects.filter(
-        school=school,
-        class_name=normalize_class_name(class_name),
-        subject=normalize_subject(subject),
-        quarter=quarter,
-        locked=True
-    ).exists()
+    if year is None:
+        year = academic_year_start()
+    for row in QuarterLock.objects.filter(
+            school=school,
+            class_name=normalize_class_name(class_name),
+            subject=normalize_subject(subject),
+            quarter=quarter,
+            locked=True,
+    ).filter(_lock_year_q({year})).values_list(
+            'academic_year', 'locked_at'):
+        if row[0] == year or (
+                row[0] is None and row[1] is not None
+                and academic_year_start(
+                    timezone.localdate(row[1])) == year):
+            return True
+    return False
 
 
 def get_or_create_unique(model, defaults=None, **lookup):
@@ -1153,20 +1325,31 @@ def _move_student(school, student, new_class_name, new_full_name=None,
         Student.objects.filter(id=old_id).delete()
         # QuerySet.update() bypasses the Grade signals, so the moved rows'
         # quarters are re-derived here through the same bulk pass journal
-        # batches use. Relabeled stored rows are refreshed or dropped in
-        # place; relabel_quarter_grades=False history rows keep their old
-        # class label and stay untouched (the new class gets its own
-        # derived row). Locked quarters keep their frozen value.
+        # batches use. Each source row re-derives the (quarter, year) cell
+        # it actually belongs to — a prior-year row refreshes the
+        # prior-year stored record, not this year's. Relabeled stored rows
+        # are refreshed or dropped in place; relabel_quarter_grades=False
+        # history rows keep their old class label AND year stamp and stay
+        # untouched (the new class gets its own derived row). Locked
+        # quarters keep their frozen value within their own year.
         affected = set()
-        for subj, date, a_quarter in Grade.objects.filter(
+        for subj, date, a_quarter, a_date in Grade.objects.filter(
                 student=new_student).values_list(
-                    'subject', 'date', 'assessment__quarter'):
-            q = a_quarter if a_quarter is not None else get_date_quarter(date)
+                    'subject', 'date', 'assessment__quarter',
+                    'assessment__date'):
+            if a_quarter in (1, 2, 3, 4) and a_date is not None:
+                q, y = a_quarter, academic_year_start(a_date)
+            else:
+                q, y = get_date_quarter(date), academic_year_start(date)
             if q in (1, 2, 3, 4):
-                affected.add((new_student.pk, subj, q))
-        for subj, q in QuarterGrade.objects.filter(
-                student=new_student).values_list('subject', 'quarter'):
-            affected.add((new_student.pk, subj, q))
+                affected.add((new_student.pk, subj, q, y))
+        for subj, q, y in QuarterGrade.objects.filter(
+                student=new_student).values_list(
+                    'subject', 'quarter', 'academic_year'):
+            # NULL-year legacy rows stay legacy; their current-year cell
+            # still gets re-derived under its own key.
+            affected.add((new_student.pk, subj, q,
+                          y if y is not None else academic_year_start()))
         recalculate_quarter_grades_bulk(affected)
 
     return new_student
@@ -1506,22 +1689,29 @@ def calculate_school_rankings():
 
 def _calculate_school_rankings_uncached():
     totals = {}
+    # Current academic year only: Grade rows by source date; stored quarter
+    # and attestation rows by their academic_year key — legacy NULL-year
+    # rows never count as this year's result.
+    ay_start, ay_end = academic_year_bounds()
+    ay = academic_year_start()
 
-    for row in Grade.objects.filter(score__isnull=False).values(
+    for row in Grade.objects.filter(
+            score__isnull=False,
+            date__range=(ay_start, ay_end)).values(
             'student__school_id', 'student__class_name').annotate(
             total=Sum('score'), count=Count('score')):
         if is_non_graded(row['student__class_name']):
             continue
         _add_score(totals, row['student__school_id'], row['total'], row['count'])
 
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values(
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values(
             'student__school_id', 'class_name').annotate(
             total=Sum('grade'), count=Count('grade')):
         if is_non_graded(row['class_name']):
             continue
         _add_score(totals, row['student__school_id'], row['total'], row['count'])
 
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values(
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False, academic_year=ay).values(
             'student__school_id', 'class_name').annotate(
             total=Sum('att_grade'), count=Count('att_grade')):
         if is_non_graded(row['class_name']):
@@ -1582,8 +1772,18 @@ def _calculate_class_rankings_uncached():
         key = (sid, cname)
         entries[key] = {'school_id': sid, 'school_name': schools_by_id[sid].name, 'class_name': cname, 'total': 0.0, 'count': 0}
 
+    # Current academic year only: Grade rows by source date; stored quarter
+    # and attestation rows by their academic_year key. A stored row counts
+    # toward the class it was earned in (its own class_name); legacy
+    # NULL-year rows never count.
+    ay_start, ay_end = academic_year_bounds()
+    ay = academic_year_start()
+
     # Daily grades
-    for row in Grade.objects.filter(score__isnull=False).values('student').annotate(total=Sum('score'), count=Count('score')):
+    for row in Grade.objects.filter(
+            score__isnull=False,
+            date__range=(ay_start, ay_end)).values('student').annotate(
+            total=Sum('score'), count=Count('score')):
         info = students.get(row['student'])
         if info is None or info[0] not in academic_school_ids:
             continue
@@ -1597,7 +1797,7 @@ def _calculate_class_rankings_uncached():
         entries[key]['count'] += int(row['count'])
 
     # Quarterly grades
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values('student', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
         info = students.get(row['student'])
         if info is None or info[0] not in academic_school_ids:
             continue
@@ -1611,7 +1811,7 @@ def _calculate_class_rankings_uncached():
         entries[key]['count'] += int(row['count'])
 
     # Attestation grades
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student', 'class_name').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False, academic_year=ay).values('student', 'class_name').annotate(total=Sum('att_grade'), count=Count('att_grade')):
         info = students.get(row['student'])
         if info is None or info[0] not in academic_school_ids:
             continue
@@ -1694,8 +1894,15 @@ def _calculate_top_students_uncached():
     )
     student_filter = Q(student__school_id__in=academic_school_ids) & non_graded_filter
 
+    # Current academic year only: Grade rows by source date; stored quarter
+    # and attestation rows by their academic_year key (legacy NULL-year
+    # rows never count).
+    ay_start, ay_end = academic_year_bounds()
+    ay = academic_year_start()
+
     grade_qs = Grade.objects.filter(
-        student_filter, score__isnull=False
+        student_filter, score__isnull=False,
+        date__range=(ay_start, ay_end)
     ).values('student').annotate(total=Sum('score'), count=Count('score'))
     for row in grade_qs:
         sid = row['student']
@@ -1703,16 +1910,20 @@ def _calculate_top_students_uncached():
         totals[sid][1] += int(row['count'])
 
     quarter_qs = QuarterGrade.objects.filter(
-        student_filter, quarter__in=(1, 2, 3, 4), grade__isnull=False
-    ).values('student').annotate(total=Sum('grade'), count=Count('grade'))
+        student_filter, quarter__in=(1, 2, 3, 4), grade__isnull=False,
+        academic_year=ay
+    ).values('student').annotate(
+        total=Sum('grade'), count=Count('grade'))
     for row in quarter_qs:
         sid = row['student']
         totals[sid][0] += float(row['total'] or 0)
         totals[sid][1] += int(row['count'])
 
     att_qs = QuarterGrade.objects.filter(
-        student_filter, quarter=0, att_grade__isnull=False
-    ).values('student').annotate(total=Sum('att_grade'), count=Count('att_grade'))
+        student_filter, quarter=0, att_grade__isnull=False,
+        academic_year=ay
+    ).values('student').annotate(
+        total=Sum('att_grade'), count=Count('att_grade'))
     for row in att_qs:
         sid = row['student']
         totals[sid][0] += float(row['total'] or 0)
@@ -1772,13 +1983,21 @@ def calculate_subject_rankings():
 
 def _calculate_subject_rankings_uncached():
     totals = {}
-    for row in Grade.objects.filter(score__isnull=False).values('subject').annotate(total=Sum('score'), count=Count('score')):
+    # Current academic year only: Grade rows by source date; stored quarter
+    # and attestation rows by their academic_year key (legacy NULL-year
+    # rows never count).
+    ay_start, ay_end = academic_year_bounds()
+    ay = academic_year_start()
+    for row in Grade.objects.filter(
+            score__isnull=False,
+            date__range=(ay_start, ay_end)).values('subject').annotate(
+            total=Sum('score'), count=Count('score')):
         subj = normalize_subject(row['subject'])
         _add_score(totals, subj, row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('subject').annotate(total=Sum('grade'), count=Count('grade')):
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values('subject').annotate(total=Sum('grade'), count=Count('grade')):
         subj = normalize_subject(row['subject'])
         _add_score(totals, subj, row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('subject').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False, academic_year=ay).values('subject').annotate(total=Sum('att_grade'), count=Count('att_grade')):
         subj = normalize_subject(row['subject'])
         _add_score(totals, subj, row['total'], row['count'])
 
@@ -2298,6 +2517,12 @@ def class_list(request, school_id=None):
 
     graded_stats = []
     non_graded_stats = []
+    # Current academic year only: Grade rows by source date; stored quarter
+    # and attestation rows by their academic_year key — a grade earned in
+    # this class this year counts toward this class; legacy NULL-year and
+    # prior-year rows never count (same rule as the ranking engines).
+    ay_start, ay_end = academic_year_bounds()
+    ay = academic_year_start()
     for cname in class_names:
         if is_non_graded(cname):
             label = 'Стикерҳо' if str(class_numeric_part(cname)) == '1' else 'Ғайрибаҳо'
@@ -2311,13 +2536,22 @@ def class_list(request, school_id=None):
 
         total = 0.0
         count = 0
-        for g in Grade.objects.filter(student__school=school, student__class_name=cname, score__isnull=False):
+        for g in Grade.objects.filter(
+                student__school=school, student__class_name=cname,
+                score__isnull=False,
+                date__range=(ay_start, ay_end)):
             total += float(g.score)
             count += 1
-        for q in QuarterGrade.objects.filter(student__school=school, class_name=cname, quarter__in=(1, 2, 3, 4), grade__isnull=False):
+        for q in QuarterGrade.objects.filter(
+                student__school=school, class_name=cname,
+                academic_year=ay,
+                quarter__in=(1, 2, 3, 4), grade__isnull=False):
             total += float(q.grade)
             count += 1
-        for q in QuarterGrade.objects.filter(student__school=school, class_name=cname, quarter=0, att_grade__isnull=False):
+        for q in QuarterGrade.objects.filter(
+                student__school=school, class_name=cname,
+                academic_year=ay,
+                quarter=0, att_grade__isnull=False):
             total += float(q.att_grade)
             count += 1
 
@@ -2584,7 +2818,9 @@ def sticker_entry(request, school_id, class_name):
         else:
             behavior_default[s.id] = 5
 
-    daily_quarter_locked = is_quarter_locked(school, class_name, subject, get_date_quarter(selected_date))
+    daily_quarter_locked = is_quarter_locked(
+        school, class_name, subject, get_date_quarter(selected_date),
+        academic_year_start(selected_date))
 
     return render(request, 'portal/sticker_entry.html', {
         'school': school,
@@ -2840,7 +3076,9 @@ def grade_entry(request, school_id, class_name, subject):
                 return HttpResponse('Дарс ба гурӯҳи шумо тааллуқ надорад.', status=400)
 
         daily_q = get_date_quarter(date)
-        daily_locked = is_quarter_locked(school, class_name, subject, daily_q)
+        daily_locked = is_quarter_locked(
+            school, class_name, subject, daily_q,
+            academic_year_start(date))
         # Mode exclusivity: a control assessment on this date makes it
         # Назорат-only — batch daily writes are skipped like a locked day.
         # Scoped per lesson: an assessment attached to a specific Lesson
@@ -2925,7 +3163,11 @@ def grade_entry(request, school_id, class_name, subject):
                     # Attestation entry (quarter 0) stays teacher-editable — it is a
                     # source mark for the final grade. Quarter grades 1-4 are derived
                     # automatically from Grade rows; posted q_* values are ignored.
-                    if not is_quarter_locked(school, class_name, subject, 0):
+                    # The mark is keyed to the CURRENT academic year — a
+                    # prior-year attestation under the same class label is a
+                    # different record.
+                    att_year = academic_year_start()
+                    if not is_quarter_locked(school, class_name, subject, 0, att_year):
                         qval = request.POST.get(f"att_{student.id}", '').strip()
                         if qval:
                             try:
@@ -2936,6 +3178,7 @@ def grade_entry(request, school_id, class_name, subject):
                                         class_name=class_name,
                                         subject=subject,
                                         quarter=0,
+                                        academic_year=att_year,
                                         defaults={'att_grade': int(qscore)}
                                     )
                             except ValueError:
@@ -2943,7 +3186,8 @@ def grade_entry(request, school_id, class_name, subject):
                         else:
                             QuarterGrade.objects.filter(
                                 student=student, class_name=class_name,
-                                subject=subject, quarter=0
+                                subject=subject, quarter=0,
+                                academic_year=att_year,
                             ).delete()
         finally:
             # Re-derive every (student, subject, quarter) the batch
@@ -3052,7 +3296,8 @@ def grade_entry(request, school_id, class_name, subject):
     q_grades = QuarterGrade.objects.filter(
         student__school=school,
         class_name=class_name,
-        subject=subject
+        subject=subject,
+        academic_year=academic_year_start(),
     ).select_related('student')
     qmap_by_student = {}
     for g in q_grades:
@@ -3080,6 +3325,7 @@ def grade_entry(request, school_id, class_name, subject):
     display_quarter_grades = {}
     live_quarter_flags = {}
     calculated = {}
+    ay_year = academic_year_start()
     for student in students:
         sid = student.id
         official = qmap_by_student.get(sid, {})
@@ -3093,7 +3339,7 @@ def grade_entry(request, school_id, class_name, subject):
                 display[q] = official_grade
             else:
                 current_scores, ajm_results = _split_quarter_grades(
-                    grades_by_student.get(sid, ()), q
+                    grades_by_student.get(sid, ()), q, ay_year
                 )
                 value = calc_quarter_value(current_scores, ajm_results)
                 if value is not None:
@@ -3111,15 +3357,11 @@ def grade_entry(request, school_id, class_name, subject):
 
     non_graded = is_non_graded(class_name)
 
-    locked_quarters = set(
-        QuarterLock.objects.filter(
-            school=school,
-            class_name=class_name,
-            subject=subject,
-            locked=True
-        ).values_list('quarter', flat=True)
-    )
-    daily_quarter_locked = is_quarter_locked(school, class_name, subject, get_date_quarter(selected_date))
+    locked_quarters = _locked_quarters_for_year(
+        school, class_name, subject, academic_year_start())
+    daily_quarter_locked = is_quarter_locked(
+        school, class_name, subject, get_date_quarter(selected_date),
+        academic_year_start(selected_date))
 
     # Control (Назорат) assessments for this ClassSubject, for the picker.
     control_assessments = []
@@ -3146,7 +3388,9 @@ def grade_entry(request, school_id, class_name, subject):
                 'work_type_label': work_type_label(a.work_type),
                 'summative_scope': a.summative_scope,
                 'semantics': result_semantics_for(a).get('semantics'),
-                'locked': is_quarter_locked(school, class_name, subject, a.quarter),
+                'locked': is_quarter_locked(
+                    school, class_name, subject, a.quarter,
+                    academic_year_start(a.date)),
             })
             # Mode lock is slot-scoped: with a lesson selected only that
             # lesson's assessments lock it; otherwise only the legacy
@@ -3331,11 +3575,8 @@ def monthly_journal(request, school_id, class_name, subject):
         ).order_by('full_name'))
 
     can_edit = can_edit_grade_journal(request.user, school, class_name, subject)
-    locked_quarters = set(
-        QuarterLock.objects.filter(
-            school=school, class_name=class_name, subject=subject, locked=True
-        ).values_list('quarter', flat=True)
-    )
+    locked_quarters = _locked_quarters_for_year(
+        school, class_name, subject, academic_year_start(month_start))
 
     # On grouped subjects a regular teacher sees only their own group's
     # lesson columns plus legacy group=NULL slots.
@@ -3722,11 +3963,12 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
             raise ValueError(outcome[1])
         lesson = outcome[1]
         qkey = ('qlock', student.school_id, class_name, subject,
-                get_date_quarter(date))
+                get_date_quarter(date), academic_year_start(date))
         locked = ctx.get(qkey, _MEMO_MISS)
         if locked is _MEMO_MISS:
             locked = is_quarter_locked(
-                student.school, class_name, subject, get_date_quarter(date))
+                student.school, class_name, subject, get_date_quarter(date),
+                academic_year_start(date))
             ctx[qkey] = locked
         if locked:
             raise ValueError('Ин чоряк баста шудааст.')
@@ -4548,7 +4790,9 @@ def save_grade_ajax(request):
                 except ValueError as e:
                     return JsonResponse({'success': False, 'message': str(e)}, status=200)
 
-            if is_quarter_locked(student.school, class_name, subject, lock_quarter):
+            if is_quarter_locked(
+                    student.school, class_name, subject, lock_quarter,
+                    academic_year_start(date)):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
 
             # Validate the score before creating the linked row so rejected
@@ -4665,7 +4909,9 @@ def save_grade_ajax(request):
             if quarter != 0:
                 return JsonResponse({'success': False, 'message': 'Холи чоряк автоматӣ ҳисоб мешавад.'}, status=200)
 
-            if is_quarter_locked(student.school, class_name, subject, quarter):
+            att_year = academic_year_start()
+            if is_quarter_locked(
+                    student.school, class_name, subject, quarter, att_year):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
 
             try:
@@ -4679,6 +4925,7 @@ def save_grade_ajax(request):
                     class_name=class_name,
                     subject=subject,
                     quarter=0,
+                    academic_year=att_year,
                     defaults={'att_grade': score}
                 )
             else:
@@ -4686,11 +4933,14 @@ def save_grade_ajax(request):
                     student=student,
                     class_name=class_name,
                     subject=subject,
-                    quarter=0
+                    quarter=0,
+                    academic_year=att_year,
                 ).delete()
 
             qmap = {}
-            for g in QuarterGrade.objects.filter(student=student, class_name=class_name, subject=subject):
+            for g in QuarterGrade.objects.filter(
+                    student=student, class_name=class_name, subject=subject,
+                    academic_year=att_year):
                 if g.quarter == 0 and g.att_grade is not None:
                     qmap['att'] = g.att_grade
                 elif g.grade is not None:
@@ -4723,11 +4973,16 @@ def calc_quarter_from_daily(request, school_id, class_name, subject):
     )
     # recalculate_quarter_grades_bulk shares the single derived-grade
     # formula and lock handling with the automatic path — a quarter with no
-    # remaining source scores loses its stored row.
+    # remaining source scores loses its stored row. The button re-derives
+    # the current academic year's cells.
     recalculate_quarter_grades_bulk(
-        (student.pk, subject, q)
+        (student.pk, subject, q, academic_year_start())
         for student in students for q in (1, 2, 3, 4)
     )
+    # Bulk writes bypass the QuarterGrade signals and no source Grade was
+    # saved on this path, so ranking caches need explicit invalidation.
+    from .signals import invalidate_ranking_caches  # local import
+    invalidate_ranking_caches(None)
     return redirect('grade_entry', school_id=school.id, class_name=class_name, subject=subject)
 
 
@@ -4789,13 +5044,16 @@ def assessment_save(request):
             return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
         quarter = get_date_quarter(date)
 
-        # Lock check covers both the quarter the assessment currently sits
-        # in and the quarter it is being moved to (edits change results).
-        quarters_to_check = {quarter}
+        # Lock check covers both the (quarter, year) cell the assessment
+        # currently sits in and the one it is being moved to (edits change
+        # results; a date can cross an academic-year boundary).
+        cells_to_check = {(quarter, academic_year_start(date))}
         if assessment is not None:
-            quarters_to_check.add(assessment.quarter)
-        for q in quarters_to_check:
-            if is_quarter_locked(cs.school, cs.class_name, cs.subject, q):
+            cells_to_check.add(
+                (assessment.quarter, academic_year_start(assessment.date)))
+        for q, q_year in cells_to_check:
+            if is_quarter_locked(
+                    cs.school, cs.class_name, cs.subject, q, q_year):
                 return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
 
         number = None
@@ -4943,7 +5201,9 @@ def assessment_delete(request):
             if (own_group is None or assessment.lesson_id is None
                     or assessment.lesson.group_id != own_group.id):
                 return JsonResponse({'success': False, 'message': 'Санҷиш ба гурӯҳи шумо тааллуқ надорад.'}, status=200)
-        if is_quarter_locked(cs.school, cs.class_name, cs.subject, assessment.quarter):
+        if is_quarter_locked(
+                cs.school, cs.class_name, cs.subject, assessment.quarter,
+                academic_year_start(assessment.date)):
             return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
         deleted_quarter = assessment.quarter
         affected_ids = list(
@@ -5028,7 +5288,9 @@ def lesson_save(request):
         except ValueError:
             return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
 
-        if is_quarter_locked(cs.school, cs.class_name, cs.subject, get_date_quarter(date)):
+        if is_quarter_locked(
+                cs.school, cs.class_name, cs.subject, get_date_quarter(date),
+                academic_year_start(date)):
             return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
 
         number = None
@@ -5092,7 +5354,10 @@ def lesson_delete(request):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
         if not _teacher_can_edit_lesson(request.user, lesson):
             return JsonResponse({'success': False, 'message': 'Дарс ба гурӯҳи шумо тааллуқ надорад.'}, status=403)
-        if is_quarter_locked(cs.school, cs.class_name, cs.subject, get_date_quarter(lesson.date)):
+        if is_quarter_locked(
+                cs.school, cs.class_name, cs.subject,
+                get_date_quarter(lesson.date),
+                academic_year_start(lesson.date)):
             return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
         if Grade.objects.filter(lesson=lesson).exists() or Assessment.objects.filter(lesson=lesson).exists():
             return JsonResponse({
@@ -5121,11 +5386,13 @@ def _student_subject_quarter_scores(student, quarter):
     scores, live_subjects = {}, set()
     if quarter not in (1, 2, 3, 4):
         return scores, live_subjects
+    ay_year = academic_year_start()
     official = {}
     for qg in QuarterGrade.objects.filter(
             student=student,
             class_name=normalize_class_name(student.class_name),
-            quarter=quarter, grade__isnull=False):
+            quarter=quarter, grade__isnull=False,
+            academic_year=ay_year):
         official[normalize_subject(qg.subject)] = qg.grade
     grade_pool = defaultdict(list)
     for g in Grade.objects.filter(
@@ -5135,7 +5402,8 @@ def _student_subject_quarter_scores(student, quarter):
     for subj, rows in grade_pool.items():
         if subj in official:
             continue
-        value = calc_quarter_value(*_split_quarter_grades(rows, quarter))
+        value = calc_quarter_value(
+            *_split_quarter_grades(rows, quarter, ay_year))
         if value is not None:
             scores[subj] = std_round(value)
             live_subjects.add(subj)
@@ -5144,13 +5412,30 @@ def _student_subject_quarter_scores(student, quarter):
 
 
 def _all_student_gpas():
-    """Return {student_id: overall_gpa} for every student using Grade and QuarterGrade."""
+    """Return {student_id: overall_gpa} for every student using Grade and QuarterGrade.
+
+    Scoped to the CURRENT academic year (Sep..Aug): Grade rows count by
+    source date; stored quarter/attestation rows by their academic_year
+    key — legacy NULL-year and prior-year rows never count (same rule as
+    the ranking engines).
+    """
+    ay_start, ay_end = academic_year_bounds()
+    ay = academic_year_start()
     totals = {}
-    for row in Grade.objects.filter(score__isnull=False).values('student_id').annotate(total=Sum('score'), count=Count('score')):
+    for row in Grade.objects.filter(
+            score__isnull=False,
+            date__range=(ay_start, ay_end)).values('student_id').annotate(
+            total=Sum('score'), count=Count('score')):
         _add_score(totals, row['student_id'], row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False).values('student_id').annotate(total=Sum('grade'), count=Count('grade')):
+    for row in QuarterGrade.objects.filter(
+            quarter__in=(1, 2, 3, 4), grade__isnull=False,
+            academic_year=ay).values('student_id').annotate(
+            total=Sum('grade'), count=Count('grade')):
         _add_score(totals, row['student_id'], row['total'], row['count'])
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False).values('student_id').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+    for row in QuarterGrade.objects.filter(
+            quarter=0, att_grade__isnull=False,
+            academic_year=ay).values('student_id').annotate(
+            total=Sum('att_grade'), count=Count('att_grade')):
         _add_score(totals, row['student_id'], row['total'], row['count'])
 
     gpas = {}

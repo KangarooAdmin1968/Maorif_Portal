@@ -186,9 +186,15 @@ def defer_quarter_recalc():
         _quarter_recalc_deferred.reset(token)
 
 
-def _grade_quarter(grade):
-    """Quarter a Grade row contributes to (assessment quarter wins)."""
-    from .views import get_date_quarter  # local import avoids cycles
+def _grade_year_quarter(grade):
+    """(quarter, academic_year) a Grade row contributes to.
+
+    Assessment-linked rows follow the assessment's declared quarter AND
+    the assessment's own date for the year — the same attribution the
+    calculation pipeline uses. An unlinked (or detach-path) row follows
+    its own date for both.
+    """
+    from .views import academic_year_start, get_date_quarter  # local import
 
     if grade.assessment_id:
         try:
@@ -196,22 +202,23 @@ def _grade_quarter(grade):
         except Assessment.DoesNotExist:
             assessment = None
         if assessment is not None:
-            return assessment.quarter
+            return assessment.quarter, academic_year_start(assessment.date)
         # The assessment is gone (post-delete detach path) — the row's own
         # date sits in the same quarter by the server-side invariant.
-    return get_date_quarter(grade.date)
+    return get_date_quarter(grade.date), academic_year_start(grade.date)
 
 
 def _recalc_student_quarter(instance):
     """Resolve the student and re-derive the stored quarter row."""
-    quarter = _grade_quarter(instance)
+    quarter, year = _grade_year_quarter(instance)
     if quarter is None:
         return
     defer = _quarter_recalc_deferred.get()
     if defer is not None:
         # Inside a batch write — the caller bulk-recalcs the collected keys.
         if instance.student_id is not None:
-            defer.add((instance.student_id, instance.subject, quarter))
+            defer.add(
+                (instance.student_id, instance.subject, quarter, year))
         return
     from .views import (
         drop_stale_quarter_grade, recalculate_quarter_grade,
@@ -226,14 +233,15 @@ def _recalc_student_quarter(instance):
     if student is None:
         return
     try:
-        recalculate_quarter_grade(student, instance.subject, quarter)
+        recalculate_quarter_grade(student, instance.subject, quarter, year)
     except Exception:
         logger.exception('Failed to recalculate quarter grade')
         try:
             # A stored row whose refresh failed is silently misleading —
             # every display prefers it over the live projection. Drop it
             # so the live bridge shows the projected value instead.
-            drop_stale_quarter_grade(student, instance.subject, quarter)
+            drop_stale_quarter_grade(
+                student, instance.subject, quarter, year)
         except Exception:
             logger.exception('Failed to drop stale quarter grade')
 
@@ -249,7 +257,7 @@ def _drop_stale_for_grade(row):
     try:
         if row is None or row.period != 'Холҳои ҷорӣ (Онлайн)':
             return
-        quarter = _grade_quarter(row)
+        quarter, year = _grade_year_quarter(row)
         if quarter is None:
             return
         student = row.student
@@ -259,7 +267,7 @@ def _drop_stale_for_grade(row):
         return
     try:
         from .views import drop_stale_quarter_grade
-        drop_stale_quarter_grade(student, row.subject, quarter)
+        drop_stale_quarter_grade(student, row.subject, quarter, year)
     except Exception:
         logger.exception('Failed to drop stale quarter grade')
 
@@ -385,31 +393,40 @@ def recalc_quarter_on_grade_delete(sender, instance, **kwargs):
 
 @receiver(pre_save, sender=Assessment)
 def capture_assessment_prior_quarter(sender, instance, **kwargs):
-    """Snapshot the stored quarter so a quarter move re-derives both cells.
+    """Snapshot the stored quarter+date so a move re-derives both cells.
 
-    The post-save recalc only sees the NEW quarter; without the snapshot
-    the quarter the assessment left would keep counting its linked grades
-    in a stale stored QuarterGrade."""
+    The post-save recalc only sees the NEW quarter/date; without the
+    snapshot the (quarter, year) cell the assessment left would keep
+    counting its linked grades in a stale stored QuarterGrade. A date
+    edit can cross an academic-year boundary, not just a quarter one."""
     try:
-        instance._prev_quarter = (
+        prev = (
             Assessment.objects.filter(pk=instance.pk)
-            .values_list('quarter', flat=True).first()
+            .values_list('quarter', 'date').first()
             if instance.pk else None
         )
+        instance._prev_quarter = prev[0] if prev else None
+        instance._prev_date = prev[1] if prev else None
     except Exception:
         instance._prev_quarter = None
+        instance._prev_date = None
 
 
 def _assessment_recalc(instance, fallback_rows=None):
     """Recalc quarter grades for every (student, subject) an assessment
     touched. `fallback_rows` supplies the linked set for post_delete, where
     the FK has already been detached by the collector."""
-    # A quarter move re-buckets every linked row: the quarter the
-    # assessment left loses those contributions and needs its own recalc,
-    # not just the quarter it moved into.
-    quarters = {q for q in (instance.quarter,
-                          getattr(instance, '_prev_quarter', None))
-                if q in (1, 2, 3, 4)}
+    from .views import academic_year_start  # local import avoids cycles
+
+    # A quarter/date move re-buckets every linked row: the (quarter, year)
+    # cell the assessment left loses those contributions and needs its own
+    # recalc, not just the cell it moved into.
+    cells = {(instance.quarter, academic_year_start(instance.date))}
+    prev_q = getattr(instance, '_prev_quarter', None)
+    prev_date = getattr(instance, '_prev_date', None) or instance.date
+    if prev_q in (1, 2, 3, 4):
+        cells.add((prev_q, academic_year_start(prev_date)))
+    cells = {c for c in cells if c[0] in (1, 2, 3, 4)}
     try:
         rows = fallback_rows
         if rows is None:
@@ -420,12 +437,12 @@ def _assessment_recalc(instance, fallback_rows=None):
         defer = _quarter_recalc_deferred.get()
         if defer is not None:
             for student_id, subject in rows:
-                for quarter in quarters:
-                    defer.add((student_id, subject, quarter))
+                for quarter, year in cells:
+                    defer.add((student_id, subject, quarter, year))
             return
         recalculate_quarter_grades_bulk(
-            (student_id, subject, quarter)
-            for student_id, subject in rows for quarter in quarters
+            (student_id, subject, quarter, year)
+            for student_id, subject in rows for quarter, year in cells
         )
     except Exception:
         logger.exception('Failed to recalculate quarter grade')
@@ -435,8 +452,8 @@ def _assessment_recalc(instance, fallback_rows=None):
             # so displays fall back to the live projection.
             from .views import drop_stale_quarter_grades
             drop_stale_quarter_grades(
-                (sid, subj, q) for sid, subj in (rows or ())
-                for q in quarters)
+                (sid, subj, q, y) for sid, subj in (rows or ())
+                for q, y in cells)
         except Exception:
             logger.exception('Failed to drop stale quarter grades')
 

@@ -1714,19 +1714,20 @@ def _calculate_school_rankings_uncached():
             continue
         _add_score(totals, row['student__school_id'], row['total'], row['count'])
 
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values(
+    # One scan for both stored pools: the quarter predicates are
+    # disjoint, so each row feeds exactly one aggregate. Sum/Count skip
+    # NULLs the same way the former __isnull=False filters did; a group
+    # where both aggregates are NULL is dropped by _add_score.
+    for row in QuarterGrade.objects.filter(academic_year=ay).values(
             'student__school_id', 'class_name').annotate(
-            total=Sum('grade'), count=Count('grade')):
+            total=Sum('grade', filter=Q(quarter__in=(1, 2, 3, 4))),
+            count=Count('grade', filter=Q(quarter__in=(1, 2, 3, 4))),
+            att_total=Sum('att_grade', filter=Q(quarter=0)),
+            att_count=Count('att_grade', filter=Q(quarter=0))):
         if is_non_graded(row['class_name']):
             continue
         _add_score(totals, row['student__school_id'], row['total'], row['count'])
-
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False, academic_year=ay).values(
-            'student__school_id', 'class_name').annotate(
-            total=Sum('att_grade'), count=Count('att_grade')):
-        if is_non_graded(row['class_name']):
-            continue
-        _add_score(totals, row['student__school_id'], row['total'], row['count'])
+        _add_score(totals, row['student__school_id'], row['att_total'], row['att_count'])
 
     schools = [s for s in School.objects.all() if is_academic_school(s)]
     data = []

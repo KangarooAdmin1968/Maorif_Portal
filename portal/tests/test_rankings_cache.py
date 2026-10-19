@@ -361,3 +361,38 @@ class RankingCacheTests(GoldenBase):
                 mock.patch.object(cache, 'set', side_effect=Exception('down')):
             data = calculate_school_rankings()
         self.assertIn(self.school_a.id, [d['school'].id for d in data])
+
+
+class SchoolRankingMergedQueryTests(GoldenBase):
+    """Coverage for the merged QuarterGrade aggregation inside
+    _calculate_school_rankings_uncached: one scan producing both the
+    quarter (1-4) and attestation (0) totals, preserving the NULL
+    semantics of the two former queries."""
+
+    def test_uncached_runs_three_queries(self):
+        # Grade scan + merged QuarterGrade scan + School list.
+        with self.assertNumQueries(3):
+            _calculate_school_rankings_uncached()
+
+    def test_quarter0_row_with_grade_only_is_ignored(self):
+        # A quarter=0 row carrying a non-null `grade` (rather than
+        # att_grade) matched neither former query and must contribute
+        # nothing to the merged one. School B pool: daily 7 + the
+        # signal-derived q1=7 -> 14/2 = 7.0.
+        make_grade(self.s3, MATH, 7, D_Q1)
+        make_quarter_grade(self.s3, '7-Б', MATH, 0, grade=10, att=None)
+        data = {d['school'].id: d
+                for d in _calculate_school_rankings_uncached()}
+        self.assertAlmostEqual(data[self.school_b.id]['gpa'], 7.0)
+
+    def test_null_grade_rows_are_ignored(self):
+        # quarter 1-4 rows with grade=NULL matched neither former query;
+        # a group holding only such rows produces a NULL aggregate row
+        # that _add_score must drop — no contribution, no crash.
+        make_grade(self.s3, MATH, 7, D_Q1)
+        s_new = make_student(self.school_b, '8-А', 'Нав Хонанда')
+        make_quarter_grade(s_new, '8-А', MATH, 1, grade=None)
+        make_quarter_grade(self.s3, '7-Б', MATH, 2, grade=None)
+        data = {d['school'].id: d
+                for d in _calculate_school_rankings_uncached()}
+        self.assertAlmostEqual(data[self.school_b.id]['gpa'], 7.0)

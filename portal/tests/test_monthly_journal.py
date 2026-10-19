@@ -8,6 +8,8 @@ import calendar
 import datetime
 import json
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal.models import Assessment, Grade
@@ -598,3 +600,53 @@ class MonthlySaveTests(GoldenBase):
         self.assertIn('quick-pick', html)
         self.assertIn('data-qp', html)
         self.assertIn('showQuickPick', html)
+
+
+class MonthlyJournalQueryTests(GoldenBase):
+    """Regression guard for deduplicated group/permission resolution.
+
+    Baseline before the dedup was 25 queries for a regular teacher; the
+    view now resolves the group context and the can_edit flag once. The
+    bound below keeps headroom for unrelated plumbing while failing on
+    a regression to the duplicated pattern.
+    """
+
+    QUERY_BOUND = 21
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('monthly_journal', kwargs={
+            'school_id': self.school_a.id, 'class_name': '7-А',
+            'subject': MATH,
+        })
+
+    def _measured_get(self):
+        # Warm-up creates the session row so the measured request is
+        # steady-state.
+        self.client.get(self.url, {'month': OCT})
+        with CaptureQueriesContext(connection) as ctx:
+            resp = self.client.get(self.url, {'month': OCT})
+        return resp, ctx
+
+    def test_teacher_view_bounded_and_still_editable(self):
+        self.client.force_login(self.teacher_a)
+        l1 = make_lesson(self.cs_a, D_OCT_A, 1)
+        post_grade(self.client, self.s1, score='8', lesson=l1)
+        resp, ctx = self._measured_get()
+        self.assertEqual(resp.status_code, 200)
+        self.assertLessEqual(
+            len(ctx.captured_queries), self.QUERY_BOUND,
+            f'monthly journal ran {len(ctx.captured_queries)} queries')
+        # Teacher edit permission must survive the can_edit dedup.
+        self.assertTrue(resp.context['can_edit'])
+        self.assertTrue(
+            any(c['editable'] for c in resp.context['columns']))
+
+    def test_principal_view_bounded_and_editable(self):
+        self.client.force_login(self.principal_a)
+        resp, ctx = self._measured_get()
+        self.assertEqual(resp.status_code, 200)
+        self.assertLessEqual(
+            len(ctx.captured_queries), self.QUERY_BOUND,
+            f'monthly journal ran {len(ctx.captured_queries)} queries')
+        self.assertTrue(resp.context['can_edit'])

@@ -1474,23 +1474,34 @@ def _class_subject_for(school, class_name, subject):
     ).order_by('pk').first()
 
 
-def visible_students_for(user, cs):
+# Sentinel: caller did not precompute the group, resolve it inside.
+_GROUP_UNSET = object()
+
+
+def visible_students_for(user, cs, group=_GROUP_UNSET, has_groups=None):
     """Students visible to `user` for this ClassSubject (ordered by name).
 
     No active groups -> the whole class (legacy). Grouped -> all students
     for privileged roles; only own-group members for regular teachers.
     Students without membership in an active group stay invisible to
     teachers until the Admin/Zavuch assigns them in the group UI.
+
+    `group` (a teacher_group_for result) and `has_groups` (the active-group
+    existence flag) may be passed by a caller that already resolved them
+    for the same (user, cs) pair, avoiding duplicate queries in a request.
     """
     students = Student.objects.filter(
         school=cs.school, class_name=cs.class_name
     ).order_by('full_name')
     if not _is_regular_teacher(user):
         return students
-    group = teacher_group_for(user, cs)
+    if group is _GROUP_UNSET:
+        group = teacher_group_for(user, cs)
     if group is None:
         # Grouped CS without an own group -> nothing; ungrouped -> legacy.
-        if cs.groups.filter(is_active=True).exists():
+        if has_groups is None:
+            has_groups = cs.groups.filter(is_active=True).exists()
+        if has_groups:
             return students.none()
         return students
     return students.filter(
@@ -1548,22 +1559,24 @@ def _teacher_can_edit_lesson(user, lesson):
     ).exists()
 
 
-def _visible_lessons_q(user, cs):
+def _visible_lessons_q(user, cs, group=_GROUP_UNSET):
     """Q for lessons a regular teacher may select on a grouped CS.
 
     Own-group lessons plus legacy group=NULL rows. (On an ungrouped CS
     every lesson has group=NULL, so this filter is a no-op there.)
     """
-    group = teacher_group_for(user, cs)
+    if group is _GROUP_UNSET:
+        group = teacher_group_for(user, cs)
     if group is None:
         return Q(group__isnull=True)
     return Q(group=group) | Q(group__isnull=True)
 
 
-def _visible_assessments_q(user, cs):
+def _visible_assessments_q(user, cs, group=_GROUP_UNSET):
     """Q for control assessments a regular teacher may use on a grouped CS:
     own-group lesson assessments plus lesson-less (admin-managed) ones."""
-    group = teacher_group_for(user, cs)
+    if group is _GROUP_UNSET:
+        group = teacher_group_for(user, cs)
     if group is None:
         return Q(lesson__isnull=True)
     return Q(lesson__isnull=True) | Q(lesson__group=group)
@@ -3578,24 +3591,39 @@ def monthly_journal(request, school_id, class_name, subject):
     next_month = (month_end + datetime.timedelta(days=1)).replace(day=1)
 
     class_subject = _class_subject_for(school, class_name, subject)
+    # Resolve the regular teacher's group context once: active-group
+    # existence and own membership are shared by the student list, the
+    # `grouped` flag and the lesson/assessment filters below instead of
+    # being re-queried by each helper.
+    is_regular = _is_regular_teacher(request.user)
+    has_groups = False
+    teacher_group = None
+    if class_subject is not None and is_regular:
+        has_groups = class_subject.groups.filter(is_active=True).exists()
+        if has_groups:
+            teacher_group = teacher_group_for(request.user, class_subject)
     if class_subject is not None:
-        students = list(visible_students_for(request.user, class_subject))
+        students = list(visible_students_for(
+            request.user, class_subject,
+            group=teacher_group, has_groups=has_groups))
     else:
         students = list(Student.objects.filter(
             school=school, class_name=class_name
         ).order_by('full_name'))
 
-    can_edit = can_edit_grade_journal(request.user, school, class_name, subject)
+    # A regular teacher who reached this point passed the can_view gate
+    # above, which for ROLE_TEACHER delegates to can_edit_grade_journal —
+    # the edit result is already proven and need not be re-queried.
+    can_edit = (
+        True if is_regular
+        else can_edit_grade_journal(request.user, school, class_name, subject)
+    )
     locked_quarters = _locked_quarters_for_year(
         school, class_name, subject, academic_year_start(month_start))
 
     # On grouped subjects a regular teacher sees only their own group's
     # lesson columns plus legacy group=NULL slots.
-    grouped = (
-        class_subject is not None
-        and _is_regular_teacher(request.user)
-        and class_subject.groups.filter(is_active=True).exists()
-    )
+    grouped = class_subject is not None and is_regular and has_groups
 
     lessons_by_date = defaultdict(list)
     if class_subject is not None:
@@ -3604,7 +3632,9 @@ def monthly_journal(request, school_id, class_name, subject):
             date__range=(month_start, month_end),
         ).select_related('group')
         if grouped:
-            lesson_qs = lesson_qs.filter(_visible_lessons_q(request.user, class_subject))
+            lesson_qs = lesson_qs.filter(
+                _visible_lessons_q(request.user, class_subject,
+                                   group=teacher_group))
         for l in lesson_qs.order_by('date', 'lesson_number'):
             lessons_by_date[l.date].append(l)
 
@@ -3619,7 +3649,8 @@ def monthly_journal(request, school_id, class_name, subject):
         )
         if grouped:
             assessment_qs = assessment_qs.filter(
-                _visible_assessments_q(request.user, class_subject)
+                _visible_assessments_q(request.user, class_subject,
+                                       group=teacher_group)
             )
         for a in assessment_qs:
             control_slots.add((a.date, a.lesson_id))

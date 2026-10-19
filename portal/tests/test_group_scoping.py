@@ -182,6 +182,33 @@ class GroupStudentScopeTests(GroupedFixture):
         self.assertContains(resp, self.s1.full_name)
         self.assertNotContains(resp, self.s2.full_name)
 
+    def test_monthly_journal_lesson_and_assessment_scope(self):
+        # The month grid shares one resolved group across its lesson and
+        # assessment filters — both must stay own-group scoped.
+        l_g1 = Lesson.objects.create(
+            class_subject=self.cs_math, date=D_Q1,
+            lesson_number=1, group=self.g1)
+        l_g2 = Lesson.objects.create(
+            class_subject=self.cs_math, date=D_Q1,
+            lesson_number=2, group=self.g2)
+        Assessment.objects.create(
+            class_subject=self.cs_math, date=D_Q1, quarter=1,
+            category='control', number=1, lesson=l_g1)
+        Assessment.objects.create(
+            class_subject=self.cs_math, date=D_Q1, quarter=1,
+            category='control', number=2, lesson=l_g2)
+        self.client.force_login(self.teacher_a)
+        resp = self.client.get(reverse(
+            'monthly_journal',
+            args=[self.school_a.id, '7-А', MATH]))
+        self.assertEqual(resp.status_code, 200)
+        lesson_ids = {c['lesson_id'] for c in resp.context['columns']}
+        self.assertIn(l_g1.id, lesson_ids)
+        self.assertNotIn(l_g2.id, lesson_ids)
+        ctl = {c['lesson_id'] for c in resp.context['columns']
+               if c['control']}
+        self.assertEqual(ctl, {l_g1.id})
+
     def test_export_scoped_to_own_group(self):
         # The export writes one row per Grade record, so seed grades for
         # both groups' students before exporting as the group-1 teacher.

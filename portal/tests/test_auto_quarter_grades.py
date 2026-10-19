@@ -1332,3 +1332,124 @@ class AcademicYearBackfillMigrationTests(GoldenBase):
         self.assertEqual(prior.grade, 9)
         self.assertEqual(legacy.grade, 7)
 
+
+# ---------------------------------------------------------------------------
+# reconcile_quarter_grades — controlled year reconciliation
+# ---------------------------------------------------------------------------
+
+
+class ReconcileQuarterGradesCommandTests(GoldenBase):
+    """reconcile_quarter_grades: dry-run by default; --apply touches only
+    unlocked, unambiguous STALE/MISSING cells of the selected year.
+    Everything else is review-only and preserved verbatim."""
+
+    def _run(self, *args):
+        out = io.StringIO()
+        call_command(
+            'reconcile_quarter_grades', '--year', str(_AY), *args,
+            stdout=out)
+        return out.getvalue()
+
+    def _stale_cell(self):
+        # Sources derive 6, the stored row says 3 (as if it predates the
+        # auto-recalc system). .update() bypasses signals on purpose —
+        # this is exactly the pre-reconciliation state.
+        make_grade(self.s1, score=3, date=D_Q1)
+        make_grade(self.s1, score=8, date=D_Q1_B)
+        QuarterGrade.objects.filter(
+            student=self.s1, quarter=1, academic_year=_AY).update(grade=3)
+
+    def test_dry_run_writes_nothing(self):
+        self._stale_cell()
+        QuarterGrade.objects.filter(
+            student=self.s1, quarter=1, academic_year=_AY).update(grade=3)
+        before = list(QuarterGrade.objects.values_list(
+            'pk', 'grade', 'att_grade', 'academic_year'))
+        out = self._run('--no-lines')
+        after = list(QuarterGrade.objects.values_list(
+            'pk', 'grade', 'att_grade', 'academic_year'))
+        self.assertEqual(before, after)
+        self.assertIn('DRY-RUN', out)
+        self.assertIn('PLAN-STALE (аз нав ҳисоб): 1', out)
+
+    def test_apply_updates_stale_and_creates_missing(self):
+        self._stale_cell()
+        # MISSING: s2 has derivable sources but no stored row.
+        make_grade(self.s2, score=9, date=D_Q1)
+        QuarterGrade.objects.filter(
+            student=self.s2, quarter=1, academic_year=_AY).delete()
+        self._run('--apply', '--no-lines')
+        self.assertEqual(qg(self.s1, 1).grade, 6)
+        self.assertEqual(qg(self.s2, 1).grade, 9)
+
+    def test_apply_is_idempotent(self):
+        self._stale_cell()
+        self._run('--apply', '--no-lines')
+        self.assertEqual(qg(self.s1, 1).grade, 6)
+        out = self._run('--apply', '--no-lines')
+        self.assertIn('PLAN-STALE (аз нав ҳисоб): 0', out)
+        self.assertIn('ТАТБИҚШУДА: 0', out)
+
+    def test_orphan_and_ambiguous_never_repaired(self):
+        # ORPHAN: year-stamped row with no same-year source support.
+        orphan = make_quarter_grade(self.s1, subject=TAJIK, quarter=2,
+                                    grade=7, academic_year=_AY)
+        # AMBIGUOUS: NULL-year legacy row.
+        legacy = make_quarter_grade(self.s1, subject=TAJIK, quarter=1,
+                                    grade=8, academic_year=None)
+        # AMBIGUOUS-ATTESTATION: NULL-year attestation mark.
+        att = make_quarter_grade(self.s1, subject=TAJIK, quarter=0,
+                                 att=9, academic_year=None)
+        self._run('--apply', '--no-lines')
+        orphan.refresh_from_db()
+        legacy.refresh_from_db()
+        att.refresh_from_db()
+        self.assertEqual(orphan.grade, 7)
+        self.assertEqual(legacy.grade, 8)
+        self.assertIsNone(legacy.academic_year)
+        self.assertEqual(att.att_grade, 9)
+        self.assertIsNone(att.academic_year)
+
+    def test_frozen_conflict_never_altered(self):
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1,
+                     academic_year=_AY)
+        make_quarter_grade(self.s1, quarter=1, grade=10,
+                           academic_year=_AY)
+        make_grade(self.s1, score=5, date=D_Q1)
+        out = self._run('--apply', '--no-lines')
+        self.assertEqual(qg(self.s1, 1).grade, 10)
+        self.assertIn('REVIEW-FROZEN-CONFLICT: 1', out)
+        self.assertIn('PLAN-STALE (аз нав ҳисоб): 0', out)
+
+    def test_prior_year_rows_out_of_scope(self):
+        # A prior-year stored row and prior-year-only sources are never
+        # proposed for a current-year reconciliation.
+        make_quarter_grade(self.s1, quarter=1, grade=4,
+                           academic_year=_AY - 1)
+        make_grade(self.s1, score=9, date=D_PREV_Q1)
+        out = self._run('--no-lines')
+        self.assertIn('PLAN-STALE (аз нав ҳисоб): 0', out)
+        self.assertIn('PLAN-MISSING (эҷод): 0', out)
+
+    def test_nematov_example_derives_6(self):
+        # The confirmed production case: daily 3 (Sep 2) + 8 (Oct 2),
+        # no AJM -> mean 5.5 -> 6. Stored 3 is STALE in dry-run and
+        # becomes 6 under --apply.
+        school = self.school_a
+        st = self.s1
+        Grade.objects.create(
+            student=st, subject=MATH, score=3, period=PERIOD,
+            date=datetime.date(_AY, 9, 2))
+        Grade.objects.create(
+            student=st, subject=MATH, score=8, period=PERIOD,
+            date=datetime.date(_AY, 10, 2))
+        QuarterGrade.objects.filter(
+            student=st, quarter=1, academic_year=_AY).update(grade=3)
+        out = io.StringIO()
+        call_command('reconcile_quarter_grades', '--year', str(_AY),
+                     stdout=out)
+        self.assertIn('ҳисобшуда=6', out.getvalue())
+        self.assertEqual(qg(st, 1).grade, 3)        # dry-run wrote nothing
+        self._run('--apply', '--no-lines')
+        self.assertEqual(qg(st, 1).grade, 6)
+

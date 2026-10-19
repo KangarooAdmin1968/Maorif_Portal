@@ -85,6 +85,193 @@ def _quarter_windows(year):
     return academic_year_quarter_windows(year)
 
 
+def scan_school_year(school, year, quarters=QUARTERS, live_year=None,
+                     windows=None):
+    """Read-only scan of one school's stored rows vs source data for `year`.
+
+    Shared classification source of truth for the audit command and the
+    reconciliation tool — re-derives every (student, subject, quarter)
+    cell through the same _split_quarter_grades / calc_quarter_value
+    pipeline the signals and the journal live-projection use. Returns a
+    dict of categorized findings; performs no writes.
+    """
+    from portal.views import (  # local import: same pipeline as runtime
+        _grade_row_year_quarter, _split_quarter_grades,
+        calc_quarter_value, std_round,
+    )
+    if live_year is None:
+        live_year = _default_academic_year()
+    if windows is None:
+        windows = _quarter_windows(year)
+
+    students = {
+        s.pk: s for s in
+        Student.objects.filter(school=school)
+        .only('id', 'class_name')
+    }
+
+    # Locks effective for the audited year: year-stamped rows match only
+    # their own year; legacy NULL-year rows are attributed by their own
+    # locked_at date.
+    locked = {
+        (normalize_class_name(c), normalize_subject(s), q)
+        for c, s, q, ay, lat in QuarterLock.objects.filter(
+            school=school, locked=True,
+        ).values_list(
+            'class_name', 'subject', 'quarter',
+            'academic_year', 'locked_at')
+        if ay == year or (
+            ay is None and lat is not None
+            and academic_year_start(timezone.localdate(lat)) == year)
+    }
+
+    # Year-keyed comparison: stored[(sid, subj, q)] is the row stamped
+    # with the audited year regardless of its class label — a prior-year
+    # row legitimately keeps the class it was earned in, so the label is
+    # NOT part of the match for year-keyed rows (only for duplicate and
+    # stale-label detection).
+    stored = {}
+    stored_keys = set()
+    stale_label = []
+    duplicates = []
+    legacy = []
+    legacy_attestation = []
+    for qg in QuarterGrade.objects.filter(
+            student__school=school,
+    ).iterator():
+        st = students.get(qg.student_id)
+        if st is None:
+            continue
+        cls = normalize_class_name(qg.class_name)
+        if qg.academic_year is None:
+            # Legacy row: its year cannot be established — flagged for
+            # manual attribution, never compared as this year.
+            # Attestation rows are teacher-entered, so no source
+            # evidence can ever resolve their year — they get a
+            # dedicated category so the review list is complete.
+            if qg.quarter == 0:
+                legacy_attestation.append(qg)
+            else:
+                legacy.append(qg)
+            continue
+        if qg.quarter not in QUARTERS:
+            # Year-stamped attestation rows carry no derivable
+            # counterpart — there is nothing to compare.
+            continue
+        if qg.academic_year != year:
+            # A record of a different year — that year's audit covers
+            # it; it is not this year's stored value.
+            continue
+        if (year == live_year
+                and cls != normalize_class_name(st.class_name)):
+            stale_label.append(qg)
+            continue
+        subj_n = normalize_subject(qg.subject)
+        full_key = (qg.student_id, cls, subj_n, qg.quarter)
+        if full_key in stored_keys:
+            # Raw unique_together passed (save() normalization is
+            # bypassed by bulk writes) but the recalc key sees one row —
+            # flag the pair, keep the first for comparison.
+            duplicates.append(
+                (full_key, stored.get(
+                    (qg.student_id, subj_n, qg.quarter)), qg.grade))
+            continue
+        stored_keys.add(full_key)
+        stored.setdefault((qg.student_id, subj_n, qg.quarter), qg.grade)
+
+    # Assessments conflicting with the year: own date outside its
+    # declared quarter window, or linked rows whose attributed year
+    # disagrees with the assessment's own year.
+    # {assessment_id: [assessment, out_of_window_linked_rows]}
+    conflicts = {}
+    for a in Assessment.objects.filter(
+            class_subject__school=school,
+    ).select_related('class_subject').iterator():
+        w = windows.get(a.quarter)
+        if w is None or not (w[0] <= a.date <= w[1]):
+            conflicts.setdefault(a.id, [a, 0])
+
+    year_pools = defaultdict(list)  # rows attributed to this year
+    out_of_year = 0
+    for g in Grade.objects.filter(
+            student__school=school, period=SOURCE_PERIOD,
+            score__isnull=False,
+    ).select_related('assessment').iterator(chunk_size=2000):
+        key = (g.student_id, normalize_subject(g.subject))
+        row_year, row_quarter = _grade_row_year_quarter(g)
+        if row_year == year:
+            year_pools[key].append(g)
+        else:
+            out_of_year += 1
+        a = g.assessment if g.assessment_id else None
+        if a is not None:
+            # The row inherits (quarter, year) from its assessment —
+            # flag it when its OWN date disagrees: outside the
+            # assessment's quarter window or in a different academic
+            # year than the assessment.
+            w = windows.get(a.quarter)
+            a_year = academic_year_start(a.date)
+            if (academic_year_start(g.date) != a_year
+                    or w is None
+                    or not (w[0] <= a.date <= w[1])):
+                entry = conflicts.setdefault(a.id, [a, 0])
+                entry[1] += 1
+
+    # Cells to check: every (student, subject) with year-matched source
+    # rows or a stored row under the audited year.
+    cells = set(year_pools)
+    cells.update((sid, subj) for sid, subj, q in stored)
+
+    findings = []
+    for sid, subj in cells:
+        st = students.get(sid)
+        if st is None:
+            continue
+        cls = normalize_class_name(st.class_name)
+        rows = year_pools.get((sid, subj), ())
+        for q in quarters:
+            value = calc_quarter_value(
+                *_split_quarter_grades(rows, q, year))
+            expected = std_round(value) if value is not None else None
+            got = stored.get((sid, subj, q))
+            is_locked = (cls, subj, q) in locked
+            if got == expected:
+                continue
+            if got is None:
+                # A locked cell with no stored row projects live by
+                # design; unlocked it is a missing cache row.
+                if is_locked:
+                    continue
+                kind = 'MISSING'
+            elif expected is None:
+                # Year-stamped row with no same-year derivation —
+                # nothing in its claimed year backs it.
+                if is_locked:
+                    kind = 'FROZEN-EMPTY'
+                else:
+                    kind = 'ORPHAN'
+            elif is_locked:
+                kind = 'FROZEN-CONFLICT'
+            else:
+                kind = 'STALE'
+            findings.append({
+                'kind': kind, 'student_id': sid, 'class_name': cls,
+                'subject': subj, 'quarter': q,
+                'stored': got, 'expected': expected,
+            })
+
+    return {
+        'students': students,
+        'findings': findings,
+        'duplicates': duplicates,
+        'stale_label': stale_label,
+        'legacy': legacy,
+        'legacy_attestation': legacy_attestation,
+        'conflicts': conflicts,
+        'out_of_year': out_of_year,
+    }
+
+
 class Command(BaseCommand):
     help = ('Танҳо-хондан: фарқиятҳои ҳолҳои чорякии захирашуда бо '
             'маълумоти ҷории журналро гузориш медиҳад.')
@@ -106,11 +293,6 @@ class Command(BaseCommand):
             help='Print only the summary counts, not each discrepancy.')
 
     def handle(self, *args, **options):
-        from portal.views import (  # local import: same pipeline as runtime
-            _grade_row_year_quarter, _split_quarter_grades,
-            calc_quarter_value, std_round,
-        )
-
         quarters = (options['quarter'],) if options['quarter'] else QUARTERS
         schools = School.objects.order_by('id')
         if options['school'] is not None:
@@ -126,169 +308,27 @@ class Command(BaseCommand):
         totals = defaultdict(int)
 
         for school in schools.iterator():
-            students = {
-                s.pk: s for s in
-                Student.objects.filter(school=school)
-                .only('id', 'class_name')
-            }
+            scan = scan_school_year(
+                school, year, quarters=quarters,
+                live_year=live_year, windows=windows)
+            students = scan['students']
             if not students:
                 continue
+            no_lines = options['no_lines']
 
-            # Locks effective for the audited year: year-stamped rows match
-            # only their own year; legacy NULL-year rows are attributed by
-            # their own locked_at date.
-            locked = {
-                (normalize_class_name(c), normalize_subject(s), q)
-                for c, s, q, ay, lat in QuarterLock.objects.filter(
-                    school=school, locked=True,
-                ).values_list(
-                    'class_name', 'subject', 'quarter',
-                    'academic_year', 'locked_at')
-                if ay == year or (
-                    ay is None and lat is not None
-                    and academic_year_start(timezone.localdate(lat)) == year)
-            }
+            for f in scan['findings']:
+                totals[f['kind']] += 1
+                if not no_lines:
+                    self.stdout.write(
+                        f"{f['kind']}  мактаб={school.pk} "
+                        f"хонанда={f['student_id']} синф={f['class_name']} "
+                        f"фан={f['subject']} чорак={f['quarter']} "
+                        f"захирашуда={f['stored']} ҳисобшуда={f['expected']}"
+                    )
 
-            # Year-keyed comparison: stored[(sid, subj, q)] is the row
-            # stamped with the audited year regardless of its class label —
-            # a prior-year row legitimately keeps the class it was earned
-            # in, so the label is NOT part of the match for year-keyed
-            # rows (only for duplicate and stale-label detection).
-            stored = {}
-            stored_keys = set()
-            stale_label = []
-            duplicates = []
-            legacy = []
-            legacy_attestation = []
-            for qg in QuarterGrade.objects.filter(
-                    student__school=school,
-            ).iterator():
-                st = students.get(qg.student_id)
-                if st is None:
-                    continue
-                cls = normalize_class_name(qg.class_name)
-                if qg.academic_year is None:
-                    # Legacy row: its year cannot be established — flagged
-                    # for manual attribution, never compared as this year.
-                    # Attestation rows are teacher-entered, so no source
-                    # evidence can ever resolve their year — they get a
-                    # dedicated category so the review list is complete.
-                    if qg.quarter == 0:
-                        legacy_attestation.append(qg)
-                    else:
-                        legacy.append(qg)
-                    continue
-                if qg.quarter not in QUARTERS:
-                    # Year-stamped attestation rows carry no derivable
-                    # counterpart — there is nothing to compare.
-                    continue
-                if qg.academic_year != year:
-                    # A record of a different year — that year's audit
-                    # covers it; it is not this year's stored value.
-                    continue
-                if (year == live_year
-                        and cls != normalize_class_name(st.class_name)):
-                    stale_label.append(qg)
-                    continue
-                subj_n = normalize_subject(qg.subject)
-                full_key = (qg.student_id, cls, subj_n, qg.quarter)
-                if full_key in stored_keys:
-                    # Raw unique_together passed (save() normalization is
-                    # bypassed by bulk writes) but the recalc key sees one
-                    # row — flag the pair, keep the first for comparison.
-                    duplicates.append(
-                        (full_key, stored.get(
-                            (qg.student_id, subj_n, qg.quarter)), qg.grade))
-                    continue
-                stored_keys.add(full_key)
-                stored.setdefault(
-                    (qg.student_id, subj_n, qg.quarter), qg.grade)
-
-            # Assessments conflicting with the year: own date outside its
-            # declared quarter window, or linked rows whose attributed
-            # year disagrees with the assessment's own year.
-            # {assessment_id: [assessment, out_of_window_linked_rows]}
-            conflicts = {}
-            for a in Assessment.objects.filter(
-                    class_subject__school=school,
-            ).select_related('class_subject').iterator():
-                w = windows.get(a.quarter)
-                if w is None or not (w[0] <= a.date <= w[1]):
-                    conflicts.setdefault(a.id, [a, 0])
-
-            year_pools = defaultdict(list)  # rows attributed to this year
-            out_of_year = 0
-            for g in Grade.objects.filter(
-                    student__school=school, period=SOURCE_PERIOD,
-                    score__isnull=False,
-            ).select_related('assessment').iterator(chunk_size=2000):
-                key = (g.student_id, normalize_subject(g.subject))
-                row_year, row_quarter = _grade_row_year_quarter(g)
-                if row_year == year:
-                    year_pools[key].append(g)
-                else:
-                    out_of_year += 1
-                a = g.assessment if g.assessment_id else None
-                if a is not None:
-                    # The row inherits (quarter, year) from its
-                    # assessment — flag it when its OWN date disagrees:
-                    # outside the assessment's quarter window or in a
-                    # different academic year than the assessment.
-                    w = windows.get(a.quarter)
-                    a_year = academic_year_start(a.date)
-                    if (academic_year_start(g.date) != a_year
-                            or w is None
-                            or not (w[0] <= a.date <= w[1])):
-                        entry = conflicts.setdefault(a.id, [a, 0])
-                        entry[1] += 1
-
-            # Cells to check: every (student, subject) with year-matched
-            # source rows or a stored row under the audited year.
-            cells = set(year_pools)
-            cells.update((sid, subj) for sid, subj, q in stored)
-
-            for sid, subj in cells:
-                st = students.get(sid)
-                if st is None:
-                    continue
-                cls = normalize_class_name(st.class_name)
-                rows = year_pools.get((sid, subj), ())
-                for q in quarters:
-                    value = calc_quarter_value(
-                        *_split_quarter_grades(rows, q, year))
-                    expected = std_round(value) if value is not None else None
-                    got = stored.get((sid, subj, q))
-                    is_locked = (cls, subj, q) in locked
-                    if got == expected:
-                        continue
-                    if got is None:
-                        # A locked cell with no stored row projects live
-                        # by design; unlocked it is a missing cache row.
-                        if is_locked:
-                            continue
-                        kind = 'MISSING'
-                    elif expected is None:
-                        # Year-stamped row with no same-year derivation —
-                        # nothing in its claimed year backs it.
-                        if is_locked:
-                            kind = 'FROZEN-EMPTY'
-                        else:
-                            kind = 'ORPHAN'
-                    elif is_locked:
-                        kind = 'FROZEN-CONFLICT'
-                    else:
-                        kind = 'STALE'
-                    totals[kind] += 1
-                    if not options['no_lines']:
-                        self.stdout.write(
-                            f'{kind}  мактаб={school.pk} хонанда={sid} '
-                            f'синф={cls} фан={subj} чорак={q} '
-                            f'захирашуда={got} ҳисобшуда={expected}'
-                        )
-
-            for key, first_grade, dup_grade in duplicates:
+            for key, first_grade, dup_grade in scan['duplicates']:
                 totals['DUPLICATE'] += 1
-                if not options['no_lines']:
+                if not no_lines:
                     sid, cls, subj, q = key
                     self.stdout.write(
                         f'DUPLICATE  мактаб={school.pk} хонанда={sid} '
@@ -296,9 +336,9 @@ class Command(BaseCommand):
                         f'ҳолҳо={first_grade}/{dup_grade}'
                     )
 
-            for qg in stale_label:
+            for qg in scan['stale_label']:
                 totals['STALE-LABEL'] += 1
-                if not options['no_lines']:
+                if not no_lines:
                     st = students.get(qg.student_id)
                     self.stdout.write(
                         f'STALE-LABEL  мактаб={school.pk} '
@@ -309,9 +349,9 @@ class Command(BaseCommand):
                         f'чорак={qg.quarter} захирашуда={qg.grade}'
                     )
 
-            for qg in legacy:
+            for qg in scan['legacy']:
                 totals['AMBIGUOUS'] += 1
-                if not options['no_lines']:
+                if not no_lines:
                     st = students.get(qg.student_id)
                     self.stdout.write(
                         f'AMBIGUOUS  мактаб={school.pk} '
@@ -323,9 +363,9 @@ class Command(BaseCommand):
                         f'— соли таҳсил номуъайян (legacy)'
                     )
 
-            for qg in legacy_attestation:
+            for qg in scan['legacy_attestation']:
                 totals['AMBIGUOUS-ATTESTATION'] += 1
-                if not options['no_lines']:
+                if not no_lines:
                     st = students.get(qg.student_id)
                     self.stdout.write(
                         f'AMBIGUOUS-ATTESTATION  мактаб={school.pk} '
@@ -337,9 +377,9 @@ class Command(BaseCommand):
                         f'— соли таҳсил номуъайян (legacy)'
                     )
 
-            for a, bad_rows in conflicts.values():
+            for a, bad_rows in scan['conflicts'].values():
                 totals['CONFLICT-ASSESSMENT'] += 1
-                if not options['no_lines']:
+                if not no_lines:
                     cs = a.class_subject
                     self.stdout.write(
                         f'CONFLICT-ASSESSMENT  мактаб={school.pk} '
@@ -350,14 +390,14 @@ class Command(BaseCommand):
                         f'сатрҳои_конфликт={bad_rows}'
                     )
 
-            if out_of_year:
-                totals['OUT-OF-YEAR-ROWS'] += out_of_year
-                if not options['no_lines']:
+            if scan['out_of_year']:
+                totals['OUT-OF-YEAR-ROWS'] += scan['out_of_year']
+                if not no_lines:
                     self.stdout.write(
-                        f'OUT-OF-YEAR-ROWS  мактаб={school.pk} '
-                        f'сатрҳо={out_of_year} — сана берун аз соли '
-                        f'таҳсили интихобшуда ({ay_start}..{ay_end}) аст '
-                        f'ва аз ҳисоби соли ҷорӣ хориҷ карда шуд'
+                        f"OUT-OF-YEAR-ROWS  мактаб={school.pk} "
+                        f"сатрҳо={scan['out_of_year']} — сана берун аз соли "
+                        f"таҳсили интихобшуда ({ay_start}..{ay_end}) аст "
+                        f"ва аз ҳисоби соли ҷорӣ хориҷ карда шуд"
                     )
 
         self.stdout.write('')

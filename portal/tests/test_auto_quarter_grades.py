@@ -15,6 +15,8 @@ import re
 from unittest.mock import patch
 
 from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal.models import Assessment, Grade, QuarterGrade, QuarterLock
@@ -60,6 +62,36 @@ class AutoQuarterWriteTests(GoldenBase):
         self.assertEqual(qg(self.s1, 1).grade, 8)
         post_grade(self.client, self.s1, score='10', date=D_Q1)
         self.assertEqual(qg(self.s1, 1).grade, 10)
+
+    def test_unchanged_quarter_result_skips_qg_write(self):
+        post_grade(self.client, self.s1, score='8', date=D_Q1)
+        post_grade(self.client, self.s1, score='10', date=D_Q1_B)
+        self.assertEqual(qg(self.s1, 1).grade, 9)
+        # A third source leaving the rounded result at 9 must not issue
+        # any write against portal_quartergrade — the redundant UPDATE
+        # was the biggest avoidable write-lock hit in the per-cell path.
+        with CaptureQueriesContext(connection) as queries:
+            post_grade(self.client, self.s1, score='9',
+                       date=D_Q1 - datetime.timedelta(days=10))
+        writes = [
+            q['sql'] for q in queries
+            if 'portal_quartergrade' in q['sql']
+            and q['sql'].lstrip().upper().startswith(
+                ('UPDATE', 'INSERT', 'DELETE'))]
+        self.assertEqual(writes, [])
+        self.assertEqual(qg(self.s1, 1).grade, 9)
+
+    def test_changed_quarter_result_still_writes_qg(self):
+        post_grade(self.client, self.s1, score='8', date=D_Q1)
+        self.assertEqual(qg(self.s1, 1).grade, 8)
+        with CaptureQueriesContext(connection) as queries:
+            post_grade(self.client, self.s1, score='10', date=D_Q1_B)
+        writes = [
+            q['sql'] for q in queries
+            if 'portal_quartergrade' in q['sql']
+            and q['sql'].lstrip().upper().startswith('UPDATE')]
+        self.assertTrue(writes)
+        self.assertEqual(qg(self.s1, 1).grade, 9)
 
     def test_deleting_last_source_removes_quarter_row(self):
         post_grade(self.client, self.s1, score='8', date=D_Q1)

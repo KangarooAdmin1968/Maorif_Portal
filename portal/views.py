@@ -444,14 +444,24 @@ def recalculate_quarter_grade(student, subject, quarter, year=None):
             subject=subject, quarter=quarter, academic_year=year,
         ).delete()
         return
-    QuarterGrade.objects.update_or_create(
+    new_grade = std_round(value)
+    # get_or_create + conditional save instead of update_or_create: most
+    # source edits (attendance, behavior, stickers, scores that do not move
+    # the rounded average) leave the stored value unchanged, and skipping
+    # the redundant UPDATE removes a write-lock round-trip per save — the
+    # biggest avoidable write in the per-cell signal path. get_or_create
+    # keeps the same concurrent-insert retry as update_or_create.
+    obj, _ = QuarterGrade.objects.get_or_create(
         student=student,
         class_name=student.class_name,
         subject=subject,
         quarter=quarter,
         academic_year=year,
-        defaults={'grade': std_round(value)},
+        defaults={'grade': new_grade},
     )
+    if obj.grade != new_grade:
+        obj.grade = new_grade
+        obj.save(update_fields=['grade'])
 
 
 def recalculate_quarter_grades_bulk(rows):

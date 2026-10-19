@@ -1431,6 +1431,34 @@ class ReconcileQuarterGradesCommandTests(GoldenBase):
         self.assertIn('PLAN-STALE (аз нав ҳисоб): 0', out)
         self.assertIn('PLAN-MISSING (эҷод): 0', out)
 
+    def test_apply_invalidates_ranking_caches(self):
+        # Bulk quarter-grade writes bypass model signals — the apply path
+        # must invalidate ranking caches itself so rankings/GPAs re-read
+        # the refreshed rows. Seed a warm entry + cleared dirty stamp
+        # AFTER the source writes (so no earlier signal invalidation can
+        # mask a missing one), then apply must clear it and re-stamp.
+        from django.core.cache import cache as dj_cache
+        from portal.views import RANKING_CACHE_KEYS, RANKING_DIRTY_KEY
+        self._stale_cell()
+        dj_cache.set(RANKING_CACHE_KEYS[0], 'warm-sentinel', 60)
+        dj_cache.delete(RANKING_DIRTY_KEY)
+        self._run('--apply', '--no-lines')
+        self.assertIsNone(dj_cache.get(RANKING_CACHE_KEYS[0]))
+        self.assertIsNotNone(dj_cache.get(RANKING_DIRTY_KEY))
+        self.assertEqual(qg(self.s1, 1).grade, 6)
+
+    def test_dry_run_leaves_ranking_caches_untouched(self):
+        # Dry-run scans only — no invalidation side effects either.
+        from django.core.cache import cache as dj_cache
+        from portal.views import RANKING_CACHE_KEYS, RANKING_DIRTY_KEY
+        self._stale_cell()
+        dj_cache.set(RANKING_CACHE_KEYS[0], 'warm-sentinel', 60)
+        dj_cache.delete(RANKING_DIRTY_KEY)
+        self._run('--no-lines')
+        self.assertEqual(dj_cache.get(RANKING_CACHE_KEYS[0]),
+                         'warm-sentinel')
+        self.assertIsNone(dj_cache.get(RANKING_DIRTY_KEY))
+
     def test_nematov_example_derives_6(self):
         # The confirmed production case: daily 3 (Sep 2) + 8 (Oct 2),
         # no AJM -> mean 5.5 -> 6. Stored 3 is STALE in dry-run and

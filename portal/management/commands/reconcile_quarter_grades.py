@@ -146,6 +146,13 @@ class Command(BaseCommand):
             if options['apply'] and keys:
                 from portal.views import recalculate_quarter_grades_bulk
                 recalculate_quarter_grades_bulk(keys)
+                # Bulk writes bypass model signals — invalidate ranking
+                # caches after every completed batch so an interrupted
+                # run never leaves readers serving pre-apply rankings.
+                # Under autocommit the on_commit dirty re-stamp inside
+                # invalidate_ranking_caches fires immediately.
+                from portal.signals import invalidate_ranking_caches
+                invalidate_ranking_caches(None)
                 applied += len(keys)
 
             self.stdout.write(
@@ -161,10 +168,6 @@ class Command(BaseCommand):
         for kind in REPORT_KINDS:
             self.stdout.write(f'  REVIEW-{kind}: {report.get(kind, 0)}')
         if options['apply']:
-            # Bulk writes bypass model signals — invalidate ranking
-            # caches so rankings/GPAs re-read the refreshed rows.
-            from portal.signals import invalidate_ranking_caches
-            invalidate_ranking_caches(None)
             self.stdout.write(f'  ТАТБИҚШУДА: {applied} ҳолҳо')
             # After-summary: re-scan the same schools to show the
             # remaining discrepancies (bounded by the same filters).

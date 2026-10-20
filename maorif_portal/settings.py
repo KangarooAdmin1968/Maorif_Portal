@@ -59,10 +59,41 @@ TEMPLATES = [
 WSGI_APPLICATION = 'maorif_portal.wsgi.application'
 ASGI_APPLICATION = 'maorif_portal.asgi.application'
 
+# Shared ranking cache (504 mitigation, phase 1). The default LocMemCache
+# is per-process: with 4 gunicorn workers each worker kept its own copy,
+# so every worker re-ran the full ranking aggregation on its own TTL
+# window and a grade save invalidated only the saver's worker. A shared
+# file-based backend gives all workers one cache: one compute per refresh
+# window total, and invalidate_ranking_caches' dirty stamp lands for every
+# worker.
+#
+# Location: a dedicated directory under the writable runtime area — never
+# inside static/, media/, or any nginx-served path, and git-ignored.
+# Override with DJANGO_CACHE_DIR if a different mount is preferred.
+#
+# Known limitation: FileBasedCache.add() is a get+set pair, so the
+# single-flight lock at views._ranking_lock_acquire is best-effort across
+# processes — a lost race means two workers compute once. That is no worse
+# than today and cannot corrupt results; entries are (computed_at, data)
+# tuples checked against the dirty stamp either way.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache',
+        'LOCATION': os.environ.get(
+            'DJANGO_CACHE_DIR', str(BASE_DIR / 'data' / 'cache')),
+    }
+}
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
+        # SQLite busy timeout: a contended writer waits up to 30s for the
+        # WAL write lock instead of failing fast with "database is locked"
+        # during grade-entry bursts. Transaction semantics are unchanged —
+        # only the lock wait is longer. Gunicorn's 60s timeout still caps
+        # the worst case per request.
+        'OPTIONS': {'timeout': 30},
     }
     # Production example (PostgreSQL):
     # 'default': {

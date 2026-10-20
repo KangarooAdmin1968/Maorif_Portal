@@ -7,10 +7,13 @@ bounded-refresh behaviour (dirty stamp, stale shadow, single-flight
 lock, refresh-interval rate limit).
 """
 import time
+from pathlib import Path
 from unittest import mock
 
+from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.test import TestCase
 
 from portal.models import Assessment, Grade
 from portal.tests.helpers import (
@@ -181,9 +184,14 @@ class RankingCacheTests(GoldenBase):
             calculate_subject_rankings()
             calculate_top_students()
         # Each refresh stores the main entry (60s) plus the shadow copy
-        # that survives invalidation for rate-limited serving.
-        self.assertEqual(spy.call_count, 8)
-        for call in spy.call_args_list:
+        # that survives invalidation for rate-limited serving. Lock writes
+        # (key:computing, via cache.add -> backend-internal set on
+        # FileBasedCache) are a separate mechanism — filtered out.
+        data_keys = set(RANKING_CACHE_KEYS) | {
+            k + ':stale' for k in RANKING_CACHE_KEYS}
+        calls = [c for c in spy.call_args_list if c.args[0] in data_keys]
+        self.assertEqual(len(calls), 8)
+        for call in calls:
             key = call.args[0]
             expected = (RANKING_CACHE_TTL if key in RANKING_CACHE_KEYS
                         else RANKING_STALE_TTL)
@@ -396,3 +404,57 @@ class SchoolRankingMergedQueryTests(GoldenBase):
         data = {d['school'].id: d
                 for d in _calculate_school_rankings_uncached()}
         self.assertAlmostEqual(data[self.school_b.id]['gpa'], 7.0)
+
+
+class SharedCacheBackendTests(TestCase):
+    """Phase-1 504 mitigation: the ranking cache must live in a backend
+    shared by every gunicorn worker, in a location that is never served
+    publicly and never committed.
+
+    Known limitation (documented, not silently relied on):
+    FileBasedCache.add() is a get+set pair, so views._ranking_lock_acquire
+    is only a best-effort cross-process guard — a lost race means a second
+    worker recomputes once. That duplicates work but never corrupts data:
+    entries are (computed_at, data) tuples validated against the dirty
+    stamp, so both writers store equivalent fresh results. In-process
+    single-flight (the case these tests exercise) remains atomic.
+    """
+
+    def test_default_cache_is_file_based(self):
+        # Per-process LocMemCache is the regression this phase removes.
+        self.assertIn(
+            'FileBasedCache', settings.CACHES['default']['BACKEND'])
+
+    def test_cache_location_is_private_runtime_dir(self):
+        loc = Path(settings.CACHES['default']['LOCATION']).resolve()
+        self.assertIn(settings.BASE_DIR, loc.parents)
+        public_roots = [
+            Path(settings.STATIC_ROOT).resolve(),
+            Path(settings.MEDIA_ROOT).resolve(),
+            *[Path(d).resolve() for d in settings.STATICFILES_DIRS],
+        ]
+        for root in public_roots:
+            self.assertFalse(
+                loc == root or root in loc.parents,
+                f'cache dir must not be under {root}')
+        # And it must never be a public root itself.
+        self.assertNotIn(loc, public_roots)
+
+    def test_expiry_is_honored(self):
+        cache.set('phase1:expiry', 'x', timeout=0)
+        self.assertIsNone(cache.get('phase1:expiry'))
+        cache.set('phase1:expiry', 'x', timeout=60)
+        self.assertEqual(cache.get('phase1:expiry'), 'x')
+        cache.delete('phase1:expiry')
+
+    def test_add_semantics_still_work(self):
+        # In-process add() is atomic; the cross-process caveat above only
+        # weakens the dedup guarantee, never the stored data.
+        self.assertTrue(cache.add('phase1:lock', 1, 60))
+        self.assertFalse(cache.add('phase1:lock', 2, 60))
+        cache.delete('phase1:lock')
+
+    def test_delete_many_clears_every_ranking_key(self):
+        _clear_ranking_cache()
+        for k in RANKING_ALL_CACHE_KEYS:
+            self.assertIsNone(cache.get(k))

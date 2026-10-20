@@ -35,6 +35,7 @@ from .utils import (
     academic_school_ids, official_subjects,
     official_subjects_for, canonical_subject_for,
     registry_subjects_for, reactivate_class_subjects,
+    canonical_grade_rows, canonical_grade_values,
 )
 from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
@@ -270,15 +271,13 @@ def _journal_norm_status(class_name, subject, class_subject, students, today):
     q_start, q_end = _current_quarter_bounds(today)
     norm = quarter_min_norm(class_name, subject, class_subject)
     student_ids = [s.id for s in students]
-    per_student = {
-        r['student_id']: r['n']
-        for r in Grade.objects.filter(
+    per_student = defaultdict(int)
+    for g in canonical_grade_rows(Grade.objects.filter(
             student_id__in=student_ids,
             subject=subject,
             date__range=(q_start, q_end),
-            score__isnull=False,
-        ).values('student_id').annotate(n=Count('id'))
-    }
+            score__isnull=False).iterator()):
+        per_student[g.student_id] += 1
     done = sum(per_student.values())
     met = sum(1 for sid in student_ids if per_student.get(sid, 0) >= norm)
     required = norm * len(student_ids)
@@ -339,7 +338,7 @@ def _split_quarter_grades(grades, quarter, year=None):
     """
     current_scores = []
     ajm_groups = {}
-    for g in grades:
+    for g in canonical_grade_rows(grades):
         g_year, gq = _grade_row_year_quarter(g)
         if gq != quarter:
             continue
@@ -1718,14 +1717,15 @@ def _calculate_school_rankings_uncached():
     ay_start, ay_end = academic_year_bounds()
     ay = academic_year_start()
 
-    for row in Grade.objects.filter(
+    for r in canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
             date__range=(ay_start, ay_end)).values(
-            'student__school_id', 'student__class_name').annotate(
-            total=Sum('score'), count=Count('score')):
-        if is_non_graded(row['student__class_name']):
+            'pk', 'student_id', 'subject', 'period', 'date',
+            'assessment_id', 'lesson_id', 'score',
+            'student__school_id', 'student__class_name').iterator()):
+        if is_non_graded(r['student__class_name']):
             continue
-        _add_score(totals, row['student__school_id'], row['total'], row['count'])
+        _add_score(totals, r['student__school_id'], r['score'], 1)
 
     # One scan for both stored pools: the quarter predicates are
     # disjoint, so each row feeds exactly one aggregate. Sum/Count skip
@@ -1804,11 +1804,12 @@ def _calculate_class_rankings_uncached():
     ay = academic_year_start()
 
     # Daily grades
-    for row in Grade.objects.filter(
+    for r in canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
-            date__range=(ay_start, ay_end)).values('student').annotate(
-            total=Sum('score'), count=Count('score')):
-        info = students.get(row['student'])
+            date__range=(ay_start, ay_end)).values(
+            'pk', 'student_id', 'subject', 'period', 'date',
+            'assessment_id', 'lesson_id', 'score').iterator()):
+        info = students.get(r['student_id'])
         if info is None or info[0] not in academic_school_ids:
             continue
         cname = normalize_class_name(info[1])
@@ -1817,8 +1818,8 @@ def _calculate_class_rankings_uncached():
         key = (info[0], cname)
         if key not in entries:
             entries[key] = {'school_id': info[0], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
-        entries[key]['total'] += float(row['total'] or 0)
-        entries[key]['count'] += int(row['count'])
+        entries[key]['total'] += float(r['score'])
+        entries[key]['count'] += 1
 
     # Quarterly grades
     for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values('student', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
@@ -1927,11 +1928,11 @@ def _calculate_top_students_uncached():
     grade_qs = Grade.objects.filter(
         student_filter, score__isnull=False,
         date__range=(ay_start, ay_end)
-    ).values('student').annotate(total=Sum('score'), count=Count('score'))
-    for row in grade_qs:
-        sid = row['student']
-        totals[sid][0] += float(row['total'] or 0)
-        totals[sid][1] += int(row['count'])
+    ).values('pk', 'student_id', 'subject', 'period', 'date',
+             'assessment_id', 'lesson_id', 'score')
+    for r in canonical_grade_values(grade_qs.iterator()):
+        totals[r['student_id']][0] += float(r['score'] or 0)
+        totals[r['student_id']][1] += 1
 
     quarter_qs = QuarterGrade.objects.filter(
         student_filter, quarter__in=(1, 2, 3, 4), grade__isnull=False,
@@ -2012,12 +2013,13 @@ def _calculate_subject_rankings_uncached():
     # rows never count).
     ay_start, ay_end = academic_year_bounds()
     ay = academic_year_start()
-    for row in Grade.objects.filter(
+    for r in canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
-            date__range=(ay_start, ay_end)).values('subject').annotate(
-            total=Sum('score'), count=Count('score')):
-        subj = normalize_subject(row['subject'])
-        _add_score(totals, subj, row['total'], row['count'])
+            date__range=(ay_start, ay_end)).values(
+            'pk', 'student_id', 'subject', 'period', 'date',
+            'assessment_id', 'lesson_id', 'score').iterator()):
+        subj = normalize_subject(r['subject'])
+        _add_score(totals, subj, r['score'], 1)
     for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values('subject').annotate(total=Sum('grade'), count=Count('grade')):
         subj = normalize_subject(row['subject'])
         _add_score(totals, subj, row['total'], row['count'])
@@ -2560,10 +2562,10 @@ def class_list(request, school_id=None):
 
         total = 0.0
         count = 0
-        for g in Grade.objects.filter(
+        for g in canonical_grade_rows(Grade.objects.filter(
                 student__school=school, student__class_name=cname,
                 score__isnull=False,
-                date__range=(ay_start, ay_end)):
+                date__range=(ay_start, ay_end))):
             total += float(g.score)
             count += 1
         for q in QuarterGrade.objects.filter(
@@ -3276,12 +3278,15 @@ def grade_entry(request, school_id, class_name, subject):
         # never leak into the Ҷорӣ daily cells for the same date.
         assessment__isnull=True,
         lesson=selected_lesson,
-    ):
-        if g.score is not None:
+    ).order_by('pk'):
+        # First-pk-wins per field — the same survivor get_or_create_grade
+        # keeps (and the fill order its merge applies) when same-cell
+        # duplicates exist, so the shown value is the one calculations use.
+        if g.score is not None and g.student_id not in daily_grades:
             daily_grades[g.student_id] = int(g.score) if g.score.is_integer() else g.score
-        if g.attendance:
+        if g.attendance and g.student_id not in daily_attendance:
             daily_attendance[g.student_id] = g.attendance
-        if g.behavior_score is not None:
+        if g.behavior_score is not None and g.student_id not in daily_behavior:
             daily_behavior[g.student_id] = g.behavior_score
 
     # Most recent prior behavior score per student for THIS subject only —
@@ -3482,15 +3487,21 @@ def grade_entry(request, school_id, class_name, subject):
             student__in=students,
             subject=subject,
             assessment_id__in=[a['id'] for a in control_assessments],
-        ).select_related('assessment'):
-            assessment_grade_map.setdefault(g.assessment_id, {})[g.student_id] = result_display(
-                g, sem_by_id.get(g.assessment_id)
-            )
+        ).select_related('assessment').order_by('pk'):
+            # First-pk-wins per (assessment, student): the same survivor
+            # canonical_grade_rows and get_or_create_grade keep.
+            display_map = assessment_grade_map.setdefault(g.assessment_id, {})
+            if g.student_id not in display_map:
+                display_map[g.student_id] = result_display(
+                    g, sem_by_id.get(g.assessment_id)
+                )
             if g.attendance or g.behavior_score is not None:
-                assessment_marks.setdefault(g.assessment_id, {})[g.student_id] = {
-                    'att': g.attendance or '',
-                    'beh': g.behavior_score if g.behavior_score is not None else '',
-                }
+                marks = assessment_marks.setdefault(g.assessment_id, {})
+                if g.student_id not in marks:
+                    marks[g.student_id] = {
+                        'att': g.attendance or '',
+                        'beh': g.behavior_score if g.behavior_score is not None else '',
+                    }
         # Behavior display chain for control mode, same semantics as Ҷорӣ:
         # stored mark on THIS assessment -> latest subject behavior before
         # the assessment's own date -> neutral 5. Display-only: the value
@@ -3665,7 +3676,7 @@ def monthly_journal(request, school_id, class_name, subject):
             period='Холҳои ҷорӣ (Онлайн)',
             date__range=(month_start, month_end),
         ).select_related('assessment')
-        for g in month_grades:
+        for g in canonical_grade_rows(month_grades):
             if g.assessment_id and g.assessment_id not in sem_cache:
                 sem_cache[g.assessment_id] = result_semantics_for(g.assessment)
             text = result_display(g, sem_cache.get(g.assessment_id))
@@ -5464,11 +5475,12 @@ def _all_student_gpas():
     ay_start, ay_end = academic_year_bounds()
     ay = academic_year_start()
     totals = {}
-    for row in Grade.objects.filter(
+    for r in canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
-            date__range=(ay_start, ay_end)).values('student_id').annotate(
-            total=Sum('score'), count=Count('score')):
-        _add_score(totals, row['student_id'], row['total'], row['count'])
+            date__range=(ay_start, ay_end)).values(
+            'pk', 'student_id', 'subject', 'period', 'date',
+            'assessment_id', 'lesson_id', 'score').iterator()):
+        _add_score(totals, r['student_id'], r['score'], 1)
     for row in QuarterGrade.objects.filter(
             quarter__in=(1, 2, 3, 4), grade__isnull=False,
             academic_year=ay).values('student_id').annotate(
@@ -6883,18 +6895,18 @@ def school_readiness_rating(request):
     pair_grade_counts = defaultdict(int)
     pair_scored_counts = defaultdict(int)
     pair_student_scored = defaultdict(dict)
-    for r in Grade.objects.filter(
+    for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
             date__range=(q_start, q_end)).values(
-            'student__school_id', 'student__class_name', 'subject',
-            'student_id').annotate(
-            n=Count('id'),
-            scored=Count('id', filter=Q(score__isnull=False))):
+            'pk', 'student_id', 'subject', 'period', 'date',
+            'assessment_id', 'lesson_id', 'score',
+            'student__school_id', 'student__class_name').iterator()):
         key = (r['student__school_id'], r['student__class_name'], r['subject'])
-        pair_grade_counts[key] += r['n']
-        pair_scored_counts[key] += r['scored']
-        if r['scored']:
-            pair_student_scored[key][r['student_id']] = r['scored']
+        pair_grade_counts[key] += 1
+        if r['score'] is not None:
+            pair_scored_counts[key] += 1
+            sid = r['student_id']
+            pair_student_scored[key][sid] = pair_student_scored[key].get(sid, 0) + 1
     # Group attribution maps. Grade has no teacher FK, so attribution is
     # derived: Grade.lesson.group wins when set (concrete teaching event);
     # legacy lesson-less / group-less rows fall back to the student's
@@ -6911,41 +6923,42 @@ def school_readiness_rating(request):
     group_size = {key: len(ids) for key, ids in group_members.items()}
     group_grade_counts = defaultdict(int)
     group_student_scored = defaultdict(lambda: defaultdict(int))
-    for row in Grade.objects.filter(
+    for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
             lesson__group__is_active=True,
             date__range=(q_start, q_end),
-    ).values('lesson__class_subject_id', 'lesson__group_id', 'student_id'
-             ).annotate(n=Count('id'),
-                        scored=Count('id', filter=Q(score__isnull=False))):
-        gkey = (row['lesson__class_subject_id'], row['lesson__group_id'])
-        group_grade_counts[gkey] += row['n']
-        if row['scored']:
-            group_student_scored[gkey][row['student_id']] += row['scored']
-    for row in Grade.objects.filter(
+    ).values('pk', 'student_id', 'subject', 'period', 'date',
+             'assessment_id', 'lesson_id', 'score',
+             'lesson__class_subject_id', 'lesson__group_id').iterator()):
+        gkey = (r['lesson__class_subject_id'], r['lesson__group_id'])
+        group_grade_counts[gkey] += 1
+        if r['score'] is not None:
+            group_student_scored[gkey][r['student_id']] += 1
+    for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
             date__range=(q_start, q_end),
     ).exclude(lesson__group__is_active=True).values(
-            'subject',
-            'student_id',
+            'pk', 'student_id', 'subject', 'period', 'date',
+            'assessment_id', 'lesson_id', 'score',
             'student__subject_group_memberships__class_subject_id',
             'student__subject_group_memberships__class_subject__subject',
             'student__subject_group_memberships__group_id',
             'student__subject_group_memberships__group__is_active',
-    ).annotate(n=Count('id'),
-               scored=Count('id', filter=Q(score__isnull=False))):
-        if not row['student__subject_group_memberships__group__is_active']:
+    ).iterator(), extra_key=lambda r: (
+            r['student__subject_group_memberships__class_subject_id'],
+            r['student__subject_group_memberships__group_id'])):
+        if not r['student__subject_group_memberships__group__is_active']:
             continue
-        cs_subject = row['student__subject_group_memberships__class_subject__subject']
-        if normalize_subject(row['subject']) != normalize_subject(cs_subject):
+        cs_subject = r['student__subject_group_memberships__class_subject__subject']
+        if normalize_subject(r['subject']) != normalize_subject(cs_subject):
             continue
         gkey = (
-            row['student__subject_group_memberships__class_subject_id'],
-            row['student__subject_group_memberships__group_id'],
+            r['student__subject_group_memberships__class_subject_id'],
+            r['student__subject_group_memberships__group_id'],
         )
-        group_grade_counts[gkey] += row['n']
-        if row['scored']:
-            group_student_scored[gkey][row['student_id']] += row['scored']
+        group_grade_counts[gkey] += 1
+        if r['score'] is not None:
+            group_student_scored[gkey][r['student_id']] += 1
     # Use the exact same school-GPA formula as the academic leaderboard
     # (calculate_school_rankings) so all leaderboards show identical values.
     gpa_map = {

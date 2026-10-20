@@ -462,7 +462,7 @@ class CalcQuarterFromDailyGoldenTests(GoldenBase):
         # exist in current code, so nothing is weighted or halved.
         make_grade(self.s1, score=8, date=D_Q1)
         make_grade(self.s1, score=8, date=D_Q1_B)
-        make_grade(self.s1, score=10, date=D_Q1_B)
+        make_grade(self.s1, score=10, date=D_Q1.replace(day=1))
         self.client.force_login(self.admin)
         self.client.post(self.url)
         # (8+8+10)/3 = 8.67 -> 9

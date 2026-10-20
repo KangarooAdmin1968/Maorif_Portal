@@ -57,8 +57,8 @@ class StudentQuarterChartTests(GoldenBase):
     # --- АТ only: no assessment -> quarter value is АТ unchanged ----------
 
     def test_daily_only_uses_at_unchanged(self):
-        for score in (8, 9, 10):
-            mk_grade(self.s1, score=score)
+        for score, d in ((8, D_Q1), (9, D_Q1_B), (10, D_Q1.replace(day=1))):
+            mk_grade(self.s1, score=score, date=d)
         ctx = self._ctx(quarter=1)
         self.assertEqual(self._subject_scores(ctx)[MATH], 9)
 
@@ -87,7 +87,7 @@ class StudentQuarterChartTests(GoldenBase):
         mk_grade(self.s1, score=10)
         a = make_ajm_assessment(self.cs_a, date=D_Q1_B)
         mk_grade(self.s1, score=8, assessment=a)
-        mk_grade(self.s1, score=10, assessment=a)
+        mk_grade(self.s1, score=10, date=D_Q1_B, assessment=a)
         ctx = self._ctx(quarter=1)
         # One assessment result: mean(8, 10) = 9 -> АҶЧ = (10 + 9) / 2 = 9.5 -> 10
         self.assertEqual(self._subject_scores(ctx)[MATH], 10)

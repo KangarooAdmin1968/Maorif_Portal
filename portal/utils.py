@@ -2,7 +2,7 @@ import re
 import os
 import io
 import pandas as pd
-from django.db.models import Avg, Count, Q
+from django.db.models import Q
 from django.conf import settings
 from .models import (
     School, Student, Grade, ClassSubject, Subject, SubjectAvailability,
@@ -46,6 +46,65 @@ def academic_schools():
 def academic_school_ids():
     """Return the id set of eligible general-education schools."""
     return {s.id for s in School.objects.all() if is_academic_school(s)}
+
+
+def grade_cell_key(grade):
+    """Logical grade-cell identity — the same key get_or_create_grade uses.
+
+    (student, subject, period, date, assessment, lesson): two rows sharing
+    every component are unintended duplicates of one journal cell; rows
+    differing in any component — including NULL-vs-set lesson/assessment
+    slots — are separate legitimate records and must never collapse.
+    """
+    return (grade.student_id, grade.subject, grade.period,
+            grade.date, grade.assessment_id, grade.lesson_id)
+
+
+def canonical_grade_rows(rows):
+    """Return one surviving Grade row per logical cell, as a list.
+
+    The survivor is the lowest primary key — the same row
+    get_or_create_grade keeps when it merges same-key duplicates.
+    Read-side canonicalization only: nothing is deleted or rewritten;
+    duplicate rows are simply counted once wherever the source pool
+    feeds a calculation or display.
+    """
+    survivors = {}
+    for g in rows:
+        key = grade_cell_key(g)
+        prev = survivors.get(key)
+        if prev is None or (g.pk or 0) < (prev.pk or 0):
+            survivors[key] = g
+    return list(survivors.values())
+
+
+def canonical_grade_values(rows, extra_key=None):
+    """First-pk survivor per logical cell, over .values() dict rows.
+
+    Same rule as canonical_grade_rows — the exact cell key
+    get_or_create_grade uses — but for lightweight dict rows, so
+    district-wide scans avoid instantiating Grade objects. Each row must
+    carry pk, student_id, subject, period, date, assessment_id and
+    lesson_id. `extra_key` appends query-specific columns (e.g. a
+    group-membership fan-out) to the cell key when the source queryset
+    already widened it.
+    """
+    survivors = {}
+    for r in rows:
+        key = (r['student_id'], r['subject'], r['period'], r['date'],
+               r['assessment_id'], r['lesson_id'])
+        if extra_key is not None:
+            key += extra_key(r)
+        prev = survivors.get(key)
+        if prev is None or r['pk'] < prev['pk']:
+            survivors[key] = r
+    return list(survivors.values())
+
+
+def _avg_canonical_score(qs):
+    """Mean Grade.score over canonical rows (first pk per logical cell)."""
+    rows = canonical_grade_rows(qs.iterator())
+    return round(sum(g.score for g in rows) / len(rows), 2) if rows else 0.0
 
 
 def official_subjects():
@@ -328,22 +387,20 @@ def reactivate_class_subjects(school, class_name, require_students=True):
 
 
 def school_gpa(school):
-    avg = Grade.objects.filter(student__school=school, score__isnull=False).aggregate(avg=Avg('score'))['avg']
-    return round(avg, 2) if avg else 0.0
+    return _avg_canonical_score(Grade.objects.filter(
+        student__school=school, score__isnull=False))
 
 
 def class_gpa(school_name, class_name):
-    avg = Grade.objects.filter(
+    return _avg_canonical_score(Grade.objects.filter(
         student__school__name=school_name,
         student__class_name=class_name,
-        score__isnull=False
-    ).aggregate(avg=Avg('score'))['avg']
-    return round(avg, 2) if avg else 0.0
+        score__isnull=False))
 
 
 def subject_gpa(subject):
-    avg = Grade.objects.filter(subject=subject, score__isnull=False).aggregate(avg=Avg('score'))['avg']
-    return round(avg, 2) if avg else 0.0
+    return _avg_canonical_score(Grade.objects.filter(
+        subject=subject, score__isnull=False))
 
 
 def schools_leaderboard():
@@ -391,10 +448,9 @@ def subjects_leaderboard():
     data = []
     for row in subjects:
         subj = row['subject']
-        avg = Grade.objects.filter(subject=subj, score__isnull=False).aggregate(avg=Avg('score'))['avg']
         data.append({
             'subject': subj,
-            'gpa': round(avg, 2) if avg else 0.0,
+            'gpa': subject_gpa(subj),
         })
     data.sort(key=lambda x: x['gpa'], reverse=True)
     for idx, item in enumerate(data, 1):

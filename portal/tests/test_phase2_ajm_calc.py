@@ -84,8 +84,8 @@ class ComponentResultTests(GoldenBase):
 
 class QuarterPoolTests(GoldenBase):
     def test_legacy_null_assessment_rows_are_current(self):
-        for score in (8, 9, 10):
-            mk_grade(self.s1, score=score)
+        for score, d in ((8, D_Q1), (9, D_Q1_B), (10, D_Q1.replace(day=1))):
+            mk_grade(self.s1, score=score, date=d)
         current, ajm = collect_quarter_inputs(self.s1, MATH, 1)
         self.assertEqual(sorted(current), [8.0, 9.0, 10.0])
         self.assertEqual(ajm, [])
@@ -119,7 +119,7 @@ class QuarterPoolTests(GoldenBase):
         # single per-assessment result (the mean of its row results).
         a = make_assessment(self.cs_a, is_ajm=True)
         mk_grade(self.s1, score=8, assessment=a)
-        mk_grade(self.s1, score=10, assessment=a)
+        mk_grade(self.s1, score=10, date=D_Q1_B, assessment=a)
         _, ajm = collect_quarter_inputs(self.s1, MATH, 1)
         self.assertEqual(ajm, [9.0])
 
@@ -144,8 +144,8 @@ class QuarterPoolTests(GoldenBase):
 class QuarterValueTests(GoldenBase):
     # TEST 1
     def test_at_only_no_ajm(self):
-        for score in (8, 9, 10):
-            mk_grade(self.s1, score=score)
+        for score, d in ((8, D_Q1), (9, D_Q1_B), (10, D_Q1.replace(day=1))):
+            mk_grade(self.s1, score=score, date=d)
         current, ajm = collect_quarter_inputs(self.s1, MATH, 1)
         self.assertEqual(calc_quarter_value(current, ajm), 9.0)
 
@@ -299,8 +299,8 @@ class CalcWriteIntegrationTests(GoldenBase):
         self.assertEqual(qg.grade, 9)  # std_round(8.75)
 
     def test_calc_quarter_from_daily_no_ajm_unchanged(self):
-        for score in (8, 9, 10):
-            mk_grade(self.s1, score=score)
+        for score, d in ((8, D_Q1), (9, D_Q1_B), (10, D_Q1.replace(day=1))):
+            mk_grade(self.s1, score=score, date=d)
         resp = self._post_calc()
         self.assertEqual(resp.status_code, 302)
         qg = QuarterGrade.objects.get(student=self.s1, quarter=1)

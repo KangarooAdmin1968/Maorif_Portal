@@ -102,8 +102,9 @@ class JournalNormStatusHelperTests(GoldenBase):
     def test_raw_total_at_required_but_one_student_zero(self):
         # The core regression: 14 rows all on s1 -> met=1/2 -> Қисман,
         # even though done == required.
-        for _ in range(14):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(14):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         j = self._status()
         self.assertEqual(j['done'], 14)
         self.assertEqual(j['students_met'], 1)
@@ -111,8 +112,9 @@ class JournalNormStatusHelperTests(GoldenBase):
 
     def test_all_students_at_norm_is_complete(self):
         for s in (self.s1, self.s2):
-            for _ in range(7):
-                make_grade(s, subject=MATH, score=9, date=TODAY)
+            for i in range(7):
+                make_grade(s, subject=MATH, score=9,
+                           date=Q_START + datetime.timedelta(days=i))
         j = self._status()
         self.assertEqual(j['students_met'], 2)
         self.assertEqual(j['status'], 'complete')
@@ -120,8 +122,8 @@ class JournalNormStatusHelperTests(GoldenBase):
     def test_counts_only_current_quarter(self):
         for _ in range(7):
             make_grade(self.s1, subject=MATH, score=8, date=PREV_Q)
-        for _ in range(2):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for d in (Q_START, TODAY):
+            make_grade(self.s1, subject=MATH, score=9, date=d)
         j = self._status()
         self.assertEqual(j['done'], 2)
         self.assertEqual(j['status'], 'partial')
@@ -160,8 +162,9 @@ class JournalNormStatusHelperTests(GoldenBase):
 
     def test_scores_plus_absences_count_scores_only(self):
         # 3 real scores + 10 absence marks -> done=3, not 13.
-        for _ in range(3):
-            make_grade(self.s1, subject=MATH, score=8, date=TODAY)
+        for i in range(3):
+            make_grade(self.s1, subject=MATH, score=8,
+                       date=Q_START + datetime.timedelta(days=i))
         for _ in range(10):
             make_grade(self.s1, subject=MATH, attendance='-', date=TODAY)
         j = self._status()
@@ -172,8 +175,9 @@ class JournalNormStatusHelperTests(GoldenBase):
     def test_full_norm_scores_with_absences_still_complete(self):
         # 7 scored rows each, plus many absence marks -> still Пурра.
         for s in (self.s1, self.s2):
-            for _ in range(7):
-                make_grade(s, subject=MATH, score=9, date=TODAY)
+            for i in range(7):
+                make_grade(s, subject=MATH, score=9,
+                           date=Q_START + datetime.timedelta(days=i))
             for _ in range(10):
                 make_grade(s, subject=MATH, attendance='+', date=TODAY)
         j = self._status()
@@ -222,8 +226,9 @@ class MonthlyJournalStatusTests(GoldenBase):
 
     def test_partial(self):
         # 4 grades for one of two students -> some progress, norm unmet.
-        for _ in range(4):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(4):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         j = self._journal(self.client.get(self.url))
         self.assertEqual(j['status'], 'partial')
         self.assertEqual(j['done'], 4)
@@ -232,8 +237,9 @@ class MonthlyJournalStatusTests(GoldenBase):
     def test_full_total_on_one_student_is_partial(self):
         # s1 alone reaches/exceeds the whole class requirement in rows;
         # s2 has none -> Қисман, never Пурра.
-        for _ in range(14):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(14):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         j = self._journal(self.client.get(self.url))
         self.assertEqual(j['done'], 14)
         self.assertEqual(j['students_met'], 1)
@@ -242,8 +248,9 @@ class MonthlyJournalStatusTests(GoldenBase):
     def test_complete(self):
         # Every student at the full norm (7 each) -> Пурра.
         for s in (self.s1, self.s2):
-            for _ in range(7):
-                make_grade(s, subject=MATH, score=9, date=TODAY)
+            for i in range(7):
+                make_grade(s, subject=MATH, score=9,
+                           date=Q_START + datetime.timedelta(days=i))
         j = self._journal(self.client.get(self.url))
         self.assertEqual(j['status'], 'complete')
         self.assertEqual(j['done'], 14)
@@ -274,8 +281,9 @@ class MonthlyJournalStatusTests(GoldenBase):
                                  teacher=self.teacher_a)
         cs8.hours_per_week = 3
         cs8.save()
-        for _ in range(7):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(7):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         url8 = reverse('monthly_journal', kwargs={
             'school_id': self.school_a.id, 'class_name': '8-А',
             'subject': 'АЛГЕБРА',
@@ -377,8 +385,9 @@ class ReadinessJournalStatusTests(GoldenBase):
 
     def test_full_norm_gives_complete_entry(self):
         for s in (self.s1, self.s2):
-            for _ in range(7):
-                make_grade(s, subject=MATH, score=9, date=TODAY)
+            for i in range(7):
+                make_grade(s, subject=MATH, score=9,
+                           date=Q_START + datetime.timedelta(days=i))
         _, t = self._teacher()
         entry = next(j for j in t['journal'] if j['class_name'] == '7-А')
         self.assertEqual(entry['status'], 'complete')
@@ -388,8 +397,9 @@ class ReadinessJournalStatusTests(GoldenBase):
     def test_raw_total_on_one_student_is_partial(self):
         # 14 rows all on s1: required total met numerically, but s2 is at
         # zero — the per-student rule keeps the entry Қисман.
-        for _ in range(14):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(14):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         _, t = self._teacher()
         entry = next(j for j in t['journal'] if j['class_name'] == '7-А')
         self.assertEqual(entry['status'], 'partial')
@@ -399,10 +409,12 @@ class ReadinessJournalStatusTests(GoldenBase):
     def test_absence_only_rows_do_not_satisfy_norm(self):
         # s1: 7 'н' rows, 0 scores; s2: 3 real scores. The norm numerator
         # counts academic rows only — 3, not 10.
-        for _ in range(7):
-            make_grade(self.s1, subject=MATH, attendance='-', date=TODAY)
-        for _ in range(3):
-            make_grade(self.s2, subject=MATH, score=8, date=TODAY)
+        for i in range(7):
+            make_grade(self.s1, subject=MATH, attendance='-',
+                       date=Q_START + datetime.timedelta(days=i))
+        for i in range(3):
+            make_grade(self.s2, subject=MATH, score=8,
+                       date=Q_START + datetime.timedelta(days=i))
         _, t = self._teacher()
         entry = next(j for j in t['journal'] if j['class_name'] == '7-А')
         self.assertEqual(entry['status'], 'partial')

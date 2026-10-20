@@ -14,7 +14,7 @@ from django.db import transaction
 
 from portal.models import Assessment, Grade
 from portal.tests.helpers import (
-    D_Q1, MATH, GoldenBase, make_class_subject, make_grade,
+    D_Q1, D_Q1_B, MATH, GoldenBase, make_class_subject, make_grade,
     make_quarter_grade, make_school, make_student,
 )
 from portal.views import (
@@ -196,7 +196,7 @@ class RankingCacheTests(GoldenBase):
 
     def test_grade_save_reflects_within_refresh_window(self):
         calculate_school_rankings()  # warm cache
-        g = make_grade(self.s1, MATH, 10, D_Q1)
+        g = make_grade(self.s1, MATH, 10, D_Q1_B)
         # Direct read path used by journal/student pages sees the row now.
         self.assertEqual(Grade.objects.get(pk=g.pk).score, 10)
         # The normal ORM save still drops the main key instantly.
@@ -235,7 +235,7 @@ class RankingCacheTests(GoldenBase):
 
     def test_single_flight_lock_serves_shadow_instead_of_duplicating(self):
         first = calculate_school_rankings()  # warm cache
-        make_grade(self.s1, MATH, 10, D_Q1)
+        make_grade(self.s1, MATH, 10, D_Q1_B)
         # Age the shadow past the interval so a refresh WOULD run, then
         # hold the single-flight lock: readers still get the shadow.
         cache.add('rank:v1:school:computing', 1, 60)
@@ -254,7 +254,7 @@ class RankingCacheTests(GoldenBase):
         # Simulates a save committing mid-refresh: the stored entry's
         # start stamp predates the dirty mark, so it cannot look fresh.
         cache.set('rank:v1:school', (time.time() - 5, ['sentinel']), 60)
-        make_grade(self.s1, MATH, 10, D_Q1)
+        make_grade(self.s1, MATH, 10, D_Q1_B)
         data = calculate_school_rankings()
         self.assertNotEqual(data, ['sentinel'])
         by_school = {d['school'].id: d for d in data}
@@ -293,7 +293,7 @@ class RankingCacheTests(GoldenBase):
 
     def test_corrupt_shadow_not_served_while_refresh_runs(self):
         calculate_school_rankings()  # warm -> shadow exists
-        make_grade(self.s1, MATH, 10, D_Q1)
+        make_grade(self.s1, MATH, 10, D_Q1_B)
         # A malformed shadow must never be indexed/served: with the
         # interval elapsed and the single-flight lock held, the reader
         # falls through to a direct compute instead of returning it.
@@ -325,7 +325,7 @@ class RankingCacheTests(GoldenBase):
         # mid-transaction (pre-commit reads) cannot mark its result fresh.
         with self.captureOnCommitCallbacks(execute=True) as callbacks:
             with transaction.atomic():
-                make_grade(self.s1, MATH, 10, D_Q1)
+                make_grade(self.s1, MATH, 10, D_Q1_B)
                 in_txn_dirty = cache.get(RANKING_DIRTY_KEY)
                 # Simulate a refresh entry stamped while the txn was open.
                 mid_txn_at = time.time()

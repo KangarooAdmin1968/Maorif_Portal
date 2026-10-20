@@ -164,10 +164,12 @@ class ReadinessTimeAwareTests(GoldenBase):
 
     def test_only_current_quarter_grades_count(self):
         # 7 previous-quarter grades + 2 current-quarter grades.
-        for _ in range(7):
-            make_grade(self.s1, subject=MATH, score=8, date=PREV_Q)
-        for _ in range(2):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(7):
+            make_grade(self.s1, subject=MATH, score=8,
+                       date=PREV_Q - datetime.timedelta(days=i))
+        for i in range(2):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         row, t = self._readiness()
         # Previous-quarter rows must not inflate the count.
         self.assertEqual(t['grades_done'], 2)
@@ -183,8 +185,9 @@ class ReadinessTimeAwareTests(GoldenBase):
         ) * 2
 
     def test_fulfillment_uses_elapsed_share(self):
-        for _ in range(2):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(2):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         row, t = self._readiness()
         # Teacher: 2 students -> full-quarter target 14; elapsed share only.
         self.assertEqual(
@@ -196,8 +199,10 @@ class ReadinessTimeAwareTests(GoldenBase):
             _norm_fulfillment(2, self._school_expected_min(), Q_PROGRESS))
 
     def test_full_norm_reached_early_caps_at_100(self):
-        for _ in range(14):  # 7 norm x 2 students, all inside the quarter
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        # 7 norm x 2 students, all inside the quarter on distinct dates.
+        for i in range(14):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         row, t = self._readiness()
         self.assertEqual(t['fulfillment'], 100.0)
         self.assertEqual(
@@ -206,8 +211,9 @@ class ReadinessTimeAwareTests(GoldenBase):
 
     def test_early_100_does_not_block_grading(self):
         # Metric at 100% — a normal daily save must still succeed.
-        for _ in range(14):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        for i in range(14):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
         _, t = self._readiness()
         self.assertEqual(t['fulfillment'], 100.0)
         self.client.force_login(self.admin)

@@ -19,9 +19,12 @@ from portal.tests.helpers import (
     D_Q1, MATH, GoldenBase, make_grade, make_student,
     make_teacher_profile, make_user,
 )
-from portal.views import _norm_fulfillment, _quarter_progress
+from portal.views import (
+    _current_quarter_bounds, _norm_fulfillment, _quarter_progress,
+)
 
 TODAY = datetime.date.today()
+Q_START, Q_END = _current_quarter_bounds(TODAY)
 
 
 class AttributionFixture(GoldenBase):
@@ -102,8 +105,9 @@ class ReadinessAttributionTests(AttributionFixture):
         self.assertIn('Гурӯҳи 2', teachers['Омӯзгор Б']['subjects'][0])
 
     def test_grades_done_scoped_per_group(self):
-        make_grade(self.s1, subject=MATH, score=8, date=TODAY)
-        make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        make_grade(self.s1, subject=MATH, score=8, date=Q_START)
+        make_grade(self.s1, subject=MATH, score=9,
+                   date=Q_START + datetime.timedelta(days=1))
         make_grade(self.s2, subject=MATH, score=7, date=TODAY)
         teachers = self._teachers()
         self.assertEqual(teachers['Омӯзгор А']['grades_done'], 2)
@@ -118,8 +122,9 @@ class ReadinessAttributionTests(AttributionFixture):
 
     def test_fulfillment_group_scoped(self):
         make_grade(self.s1, subject=MATH, score=8, date=TODAY)
-        make_grade(self.s2, subject=MATH, score=7, date=TODAY)
-        make_grade(self.s2, subject=MATH, score=9, date=TODAY)
+        make_grade(self.s2, subject=MATH, score=7, date=Q_START)
+        make_grade(self.s2, subject=MATH, score=9,
+                   date=Q_START + datetime.timedelta(days=1))
         norm = quarter_min_norm('7-А', MATH, self.cs)
         progress = _quarter_progress(TODAY)
         teachers = self._teachers()

@@ -23,11 +23,18 @@ from portal.models import Assessment, Grade, QuarterGrade, QuarterLock
 from portal.tests.helpers import (
     D_PREV_Q1, D_Q1, D_Q1_B, D_Q2, MATH, PERIOD, TAJIK, GoldenBase,
     lock_quarter, make_class_subject, make_grade, make_quarter_grade,
+    make_teacher_profile,
 )
 from portal.tests.test_phase4_lessons import (
-    make_control, post_assessment, post_grade,
+    make_control, make_lesson, post_assessment, post_grade,
 )
-from portal.views import _live_quarter_payload, academic_year_start
+from portal.views import (
+    _all_student_gpas, _calculate_school_rankings_uncached,
+    _journal_norm_status, _live_quarter_payload,
+    academic_year_start, calculate_class_rankings,
+    calculate_subject_rankings, calculate_top_students,
+    collect_quarter_inputs,
+)
 
 AJAX_URL = reverse('save_grade_ajax')
 DAILY_SAVE_URL = reverse('daily_save')
@@ -655,7 +662,7 @@ class RecalcGapTests(GoldenBase):
 
     def test_grade_reassigned_changes_both_pools(self):
         g = make_grade(self.s1, score=8)
-        make_grade(self.s2, score=6)
+        make_grade(self.s2, score=6, date=D_Q1_B)
         self.assertEqual(qg(self.s1, 1).grade, 8)
         self.assertEqual(qg(self.s2, 1).grade, 6)
         g.student = self.s2
@@ -1512,4 +1519,199 @@ class ReconcileQuarterGradesCommandTests(GoldenBase):
         self.assertEqual(qg(st, 1).grade, 3)        # dry-run wrote nothing
         self._run('--apply', '--no-lines')
         self.assertEqual(qg(st, 1).grade, 6)
+
+
+# ---------------------------------------------------------------------------
+# Same-cell duplicate Grade rows — canonical (lowest-pk) contribution
+# ---------------------------------------------------------------------------
+
+
+class DuplicateCellCanonicalizationTests(GoldenBase):
+    """Two Grade rows sharing the logical cell key (student, subject,
+    period, date, assessment, lesson) are unintended duplicates of one
+    journal cell. Every calculation may count only the canonical row —
+    the lowest pk, the same survivor get_or_create_grade keeps when it
+    merges duplicates. Rows differing in lesson or assessment are
+    separate legitimate records and must never collapse.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.teacher_a)
+
+    def test_same_cell_duplicate_counts_canonical_row(self):
+        make_grade(self.s1, score=3, date=D_Q1)          # canonical
+        make_grade(self.s1, score=8, date=D_Q1)          # same-cell duplicate
+        make_grade(self.s1, score=5, date=D_Q1_B)
+        self.assertEqual(qg(self.s1, 1).grade, 4)        # mean(3,5), not 5
+
+    def test_same_cell_duplicate_canonical_high(self):
+        make_grade(self.s1, score=8, date=D_Q1)          # canonical
+        make_grade(self.s1, score=3, date=D_Q1)          # same-cell duplicate
+        make_grade(self.s1, score=5, date=D_Q1_B)
+        self.assertEqual(qg(self.s1, 1).grade, 7)        # mean(8,5), not 5
+
+    def test_collect_inputs_returns_canonical_rows(self):
+        make_grade(self.s1, score=8, date=D_Q1)
+        make_grade(self.s1, score=3, date=D_Q1)          # same-cell duplicate
+        current, ajm = collect_quarter_inputs(
+            self.s1, MATH, 1, academic_year_start())
+        self.assertEqual(current, [8.0])
+        self.assertEqual(ajm, [])
+
+    def test_edit_replaces_value_same_cell(self):
+        post_grade(self.client, self.s1, score='8', date=D_Q1)
+        post_grade(self.client, self.s1, score='3', date=D_Q1)
+        self.assertEqual(Grade.objects.filter(
+            student=self.s1, subject=MATH, date=D_Q1).count(), 1)
+        self.assertEqual(qg(self.s1, 1).grade, 3)
+
+    def test_deleting_canonical_row_promotes_next(self):
+        first = make_grade(self.s1, score=8, date=D_Q1)
+        make_grade(self.s1, score=3, date=D_Q1)          # same-cell duplicate
+        make_grade(self.s1, score=5, date=D_Q1_B)
+        first.delete()
+        # The remaining same-cell row becomes canonical: mean(3,5) -> 4.
+        self.assertEqual(qg(self.s1, 1).grade, 4)
+
+    def test_cleared_cell_contributes_nothing(self):
+        post_grade(self.client, self.s1, score='8', date=D_Q1)
+        post_grade(self.client, self.s1, score='', date=D_Q1)
+        self.assertFalse(Grade.objects.filter(
+            student=self.s1, subject=MATH, date=D_Q1).exists())
+        self.assertIsNone(qg(self.s1, 1))
+
+    def test_same_date_different_lessons_stay_separate(self):
+        l1 = make_lesson(self.cs_a, lesson_number=1)
+        l2 = make_lesson(self.cs_a, lesson_number=2)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD, score=8,
+            date=D_Q1, lesson=l1)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD, score=4,
+            date=D_Q1, lesson=l2)
+        self.assertEqual(qg(self.s1, 1).grade, 6)        # mean(8,4)
+
+    def test_same_date_different_assessments_stay_separate(self):
+        a1 = make_control(self.cs_a, date=D_Q1, quarter=1, number=1)
+        a2 = make_control(self.cs_a, date=D_Q1, quarter=1, number=2)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD, score=8,
+            date=D_Q1, assessment=a1)
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD, score=4,
+            date=D_Q1, assessment=a2)
+        self.assertEqual(qg(self.s1, 1).grade, 6)        # mean(8,4)
+
+    def test_components_canonical_row_contribution(self):
+        Grade.objects.create(
+            student=self.s1, subject=MATH, period=PERIOD, score=8.5,
+            components=[8, 9], date=D_Q1)
+        make_grade(self.s1, score=2, date=D_Q1)          # same-cell duplicate
+        current, _ = collect_quarter_inputs(
+            self.s1, MATH, 1, academic_year_start())
+        self.assertEqual(current, [8.5])
+
+    def test_gpa_counts_duplicate_once(self):
+        make_grade(self.s1, score=8, date=D_Q1)
+        make_grade(self.s1, score=3, date=D_Q1)          # same-cell duplicate
+        gpas = _all_student_gpas()
+        # Canonical daily 8 + derived stored quarter 8 -> (8+8)/2 = 8.0
+        self.assertEqual(gpas[self.s1.id], 8.0)
+
+    def test_norm_counts_duplicate_once(self):
+        make_grade(self.s1, score=8, date=D_Q1)
+        make_grade(self.s1, score=3, date=D_Q1)          # same-cell duplicate
+        make_grade(self.s1, score=9, date=D_Q1_B)
+        status = _journal_norm_status(
+            '7-А', MATH, self.cs_a, [self.s1], D_Q1_B)
+        self.assertEqual(status['done'], 2)
+
+    def test_daily_cell_shows_canonical_row(self):
+        make_grade(self.s1, score=8, date=D_Q1)          # canonical
+        make_grade(self.s1, score=3, date=D_Q1)          # same-cell duplicate
+        url = reverse('grade_entry',
+                      args=[self.school_a.id, '7-А', MATH])
+        html = self.client.get(
+            url + f'?date={D_Q1.isoformat()}').content.decode()
+        m = re.search(
+            r'<input[^>]*name="score_%s"[^>]*>' % self.s1.id, html)
+        self.assertIsNotNone(m)
+        self.assertIn('value="8"', m.group(0))
+
+    def test_monthly_cell_shows_canonical_row(self):
+        make_grade(self.s1, score=8, date=D_Q1)          # canonical
+        make_grade(self.s1, score=3, date=D_Q1)          # same-cell duplicate
+        resp = self.client.get(reverse(
+            'monthly_journal', args=[self.school_a.id, '7-А', MATH])
+            + f'?month={D_Q1.strftime("%Y-%m")}')
+        s1_row = next(r for r in resp.context['table_rows']
+                      if r['student'].id == self.s1.id)
+        items = [
+            item for c in s1_row['cells']
+            if c['date'] == D_Q1 and c['lesson_id'] is None
+            for item in c['items']]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['text'], '8')
+
+    def test_locked_quarter_keeps_stored_with_duplicates(self):
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        make_quarter_grade(self.s1, quarter=1, grade=7)
+        make_grade(self.s1, score=8, date=D_Q1)
+        make_grade(self.s1, score=3, date=D_Q1)
+        self.assertEqual(qg(self.s1, 1).grade, 7)
+
+    def test_ranking_engines_count_duplicate_once(self):
+        # school_a pool: s1 {daily 9, derived q1=9} + s2 {daily 6,
+        # derived q1=6} = 30/4 = 7.5. The same-cell 7 must not enter —
+        # counting it would give 37/5 = 7.4 everywhere.
+        make_grade(self.s1, score=9, date=D_Q1)
+        make_grade(self.s1, score=7, date=D_Q1)          # same-cell duplicate
+        make_grade(self.s2, score=6, date=D_Q1)
+        schools = {d['school'].id: d
+                   for d in _calculate_school_rankings_uncached()}
+        self.assertAlmostEqual(schools[self.school_a.id]['gpa'], 7.5)
+        classes = {(d['school_id'], d['class_name']): d
+                   for d in calculate_class_rankings()}
+        self.assertAlmostEqual(
+            classes[(self.school_a.id, '7-А')]['gpa'], 7.5)
+        subjects = {d['subject']: d for d in calculate_subject_rankings()}
+        self.assertAlmostEqual(subjects[MATH]['gpa'], 7.5)
+        top = {d['student_id']: d for d in calculate_top_students()}
+        # s1 = (daily 9 + derived q1 9) / 2 = 9.0; the duplicate's 7
+        # would pull it to 25/3 = 8.33.
+        self.assertAlmostEqual(top[self.s1.id]['gpa'], 9.0)
+
+    def test_class_list_gpa_counts_duplicate_once(self):
+        make_grade(self.s1, score=9, date=D_Q1)
+        make_grade(self.s1, score=7, date=D_Q1)          # same-cell duplicate
+        make_grade(self.s2, score=6, date=D_Q1)
+        self.client.force_login(self.admin)
+        resp = self.client.get(
+            reverse('class_list', args=[self.school_a.id]))
+        stats = {s['class_name']: s
+                 for s in resp.context['class_stats']}
+        self.assertAlmostEqual(stats['7-А']['gpa'], 7.5)
+
+    def test_readiness_norm_pace_counts_duplicate_once(self):
+        # 7 same-cell scored rows are ONE graded cell: the teacher's
+        # entered count and per-student norm progress must say so —
+        # counting all rows would show 7 done and s1 at norm.
+        self.cs_a.hours_per_week = 3                     # norm 7/student
+        self.cs_a.save()
+        make_teacher_profile(self.teacher_a, self.school_a)
+        today = datetime.date.today()
+        for _ in range(7):
+            make_grade(self.s1, score=9, date=today)
+        self.client.force_login(self.admin)
+        resp = self.client.get(reverse('school_readiness_rating'))
+        self.assertEqual(resp.status_code, 200)
+        entry = next(a for a in resp.context['activity']
+                     if a['school'].id == self.school_a.id)
+        teacher = next(t for t in entry['teachers']
+                       if t['name'] == 'Омӯзгор Санъатбар')
+        journal = next(j for j in teacher['journal']
+                       if j['subject'] == MATH)
+        self.assertEqual(teacher['grades_done'], 1)
+        self.assertEqual(journal['students_met'], 0)
 

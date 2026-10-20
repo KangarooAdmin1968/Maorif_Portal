@@ -1593,11 +1593,13 @@ def _add_score(totals, key, total, count):
 # TTL stays even with signal invalidation: out-of-band scripts and
 # QuerySet.update()/raw SQL can bypass model signals.
 RANKING_CACHE_TTL = 60
+RANKING_GPAS_CACHE_KEY = 'rank:v1:gpas'
 RANKING_CACHE_KEYS = (
     'rank:v1:school',
     'rank:v1:class:unfiltered',
     'rank:v1:subject',
     'rank:v1:top:prelimit',
+    RANKING_GPAS_CACHE_KEY,  # all_student_gpas() — the student_detail GPA/rank map
 )
 # Bounded refresh (Oct 2026 504 mitigation): invalidation still deletes
 # the main keys on every ranking-input save, but readers recompute at
@@ -5499,6 +5501,21 @@ def _all_student_gpas():
     return gpas
 
 
+def all_student_gpas():
+    """Return {student_id: overall_gpa} through the bounded-refresh cache.
+
+    The map is user-independent, so every gunicorn worker shares the one
+    file-cached entry instead of each re-running the district-wide
+    aggregation per student_detail request. Same semantics as the
+    dashboard rankings: a ranking-input save drops the main key and
+    stamps dirty, readers serve the shadow copy inside
+    RANKING_REFRESH_INTERVAL, and recomputation goes through the
+    best-effort single-flight lock. FileBasedCache.add() is not atomic
+    across processes, so two workers may occasionally both recompute;
+    that duplicates work but stores equivalent results."""
+    return _ranking_cached(RANKING_GPAS_CACHE_KEY, _all_student_gpas)
+
+
 def student_detail(request, student_id):
     student = get_object_or_404(Student, id=student_id)
     if request.user.is_authenticated and not has_school_access(request.user, student.school):
@@ -5538,7 +5555,7 @@ def student_detail(request, student_id):
         school_rank = None
         district_rank = None
     else:
-        all_gpas = _all_student_gpas()
+        all_gpas = all_student_gpas()
         student_gpa = all_gpas.get(student.id, 0.0)
 
         class_gpas = []

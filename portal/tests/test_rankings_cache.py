@@ -14,6 +14,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 from django.test import TestCase
+from django.urls import reverse
 
 from portal.models import Assessment, Grade
 from portal.tests.helpers import (
@@ -23,7 +24,8 @@ from portal.tests.helpers import (
 from portal.views import (
     RANKING_ALL_CACHE_KEYS, RANKING_CACHE_KEYS, RANKING_CACHE_TTL,
     RANKING_DIRTY_KEY, RANKING_STALE_TTL,
-    _calculate_school_rankings_uncached,
+    _all_student_gpas, _calculate_school_rankings_uncached,
+    all_student_gpas,
     calculate_class_rankings, calculate_school_rankings,
     calculate_subject_rankings, calculate_top_students,
 )
@@ -127,6 +129,7 @@ class RankingCacheTests(GoldenBase):
         calculate_class_rankings()
         calculate_subject_rankings()
         calculate_top_students()
+        all_student_gpas()
         self.assertTrue(
             all(cache.get(k) is not None for k in RANKING_CACHE_KEYS))
 
@@ -369,6 +372,47 @@ class RankingCacheTests(GoldenBase):
                 mock.patch.object(cache, 'set', side_effect=Exception('down')):
             data = calculate_school_rankings()
         self.assertIn(self.school_a.id, [d['school'].id for d in data])
+
+    # --- I: student_detail GPA map -----------------------------------------
+    # 'rank:v1:gpas' caches the district-wide {student_id: gpa} map that
+    # student_detail needs per request. Same bounded-refresh scheme as the
+    # dashboard rankings: signal invalidation drops the main key, readers
+    # serve the shadow copy inside the refresh window, and one worker
+    # recomputes under the single-flight lock.
+
+    def test_gpas_miss_then_hit_zero_queries(self):
+        self.assertIsNone(cache.get('rank:v1:gpas'))
+        first = all_student_gpas()
+        self.assertIsNotNone(cache.get('rank:v1:gpas'))
+        with self.assertNumQueries(0):
+            second = all_student_gpas()
+        self.assertEqual(first, second)
+
+    def test_gpas_cached_matches_uncached(self):
+        self.assertEqual(all_student_gpas(), _all_student_gpas())
+
+    def test_gpas_reflect_within_refresh_window(self):
+        first = all_student_gpas()  # warm cache
+        make_grade(self.s1, MATH, 10, D_Q1_B)
+        # The save drops the main key instantly; inside the window the
+        # rate-limited shadow is served, after the window the recompute
+        # picks up the new row.
+        self.assertIsNone(cache.get('rank:v1:gpas'))
+        self.assertEqual(all_student_gpas(), first)
+        with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0):
+            self.assertEqual(all_student_gpas(), _all_student_gpas())
+
+    def test_student_detail_serves_gpas_from_cache(self):
+        url = reverse('student_detail', args=[self.s1.id])
+        first = self.client.get(url)  # cold: computes once
+        self.assertEqual(first.status_code, 200)
+        # Warm cache: the repeat request must not recompute the map.
+        with mock.patch(
+                'portal.views._all_student_gpas',
+                wraps=_all_student_gpas) as spy:
+            resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(spy.call_count, 0)
 
 
 class SchoolRankingMergedQueryTests(GoldenBase):

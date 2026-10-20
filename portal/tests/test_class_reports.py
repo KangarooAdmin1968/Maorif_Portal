@@ -5,7 +5,6 @@ Covers: the Documents-area tab and class picker, school isolation and the
 template cells, formula/layout preservation, Таблица1 resizing, and the
 one-page A4 landscape print setup.
 """
-import datetime
 import io
 import re
 
@@ -21,7 +20,7 @@ from portal.class_report import (
 from portal.curriculum_hours import UNGRADED_SUBJECTS
 from portal.models import normalize_class_name
 from portal.tests.helpers import (
-    MATH, TAJIK, GoldenBase, make_class_subject, make_quarter_grade,
+    D_Q1, MATH, TAJIK, GoldenBase, make_class_subject, make_quarter_grade,
     make_school, make_student, make_teacher_profile, make_user,
 )
 
@@ -82,7 +81,7 @@ class ClassReportBuilderTests(GoldenBase):
     def _build(self, school=None, class_name='7-А', quarter=1):
         return load_workbook(build_class_report_workbook(
             school or self.school_a, class_name, quarter,
-            today=datetime.date(2025, 10, 15)))
+            today=D_Q1))
 
     def setUp(self):
         super().setUp()
@@ -139,7 +138,9 @@ class ClassReportBuilderTests(GoldenBase):
         ws = self._build().worksheets[0]
         self.assertIn('чоряки 1-ум дар синфи', ws['A2'].value)
         self.assertIn('мактаб №1', ws['A2'].value.lower())
-        self.assertIn('2025-2026', ws['A2'].value)
+        # Header year is the academic year containing `today` (D_Q1):
+        # resolved dynamically so the suite survives year rollover.
+        self.assertIn(f'{D_Q1.year}-{D_Q1.year + 1}', ws['A2'].value)
         # Template A3's INDIRECT evaluates to #REF! — replaced by the row
         # header label instead of copying a broken formula.
         self.assertEqual(ws['A3'].value, '№')
@@ -394,7 +395,7 @@ class Band13FormulaTests(GoldenBase):
     def _build(self, class_name='7-А', quarter=1):
         return load_workbook(build_class_report_workbook(
             self.school_a, class_name, quarter,
-            today=datetime.date(2025, 10, 15))).worksheets[0]
+            today=D_Q1)).worksheets[0]
 
     def test_band13_counts_failing_students_only(self):
         # s1: 9,7 -> 7-8 | s2: 5,10 -> 4-6 | s3: 2 (one subject) -> 1-3
@@ -519,7 +520,7 @@ class InstitutionLabelTests(GoldenBase):
         make_student(school, '10-А', 'Аҳмад Зайнуллоев')
         ws = load_workbook(build_class_report_workbook(
             school, '10-А', 1,
-            today=datetime.date(2025, 10, 15))).worksheets[0]
+            today=D_Q1)).worksheets[0]
         sig = ws.cell(row=ws.max_row, column=1).value
         self.assertIn('Директори Литсей №3', sig)
         self.assertNotIn('МТМУ', sig)
@@ -621,7 +622,7 @@ class OverallAverageAuditTests(GoldenBase):
         make_quarter_grade(s3, '7-А', TAJIK, quarter=1, grade=10)
         return load_workbook(build_class_report_workbook(
             self.school_a, '7-А', 1,
-            today=datetime.date(2025, 10, 15))).worksheets[0]
+            today=D_Q1)).worksheets[0]
 
     def test_both_cells_pool_the_same_range(self):
         ws = self._sparse_sheet()
@@ -704,7 +705,7 @@ class OverallAverageAuditTests(GoldenBase):
         make_quarter_grade(self.s2, '7-А', TAJIK, quarter=1, grade=6)
         ws = load_workbook(build_class_report_workbook(
             self.school_a, '7-А', 1,
-            today=datetime.date(2025, 10, 15))).worksheets[0]
+            today=D_Q1)).worksheets[0]
         avg_row = _label_row(ws, 'Холи миёна')
         z = _eval_avg_formula(ws, ws.cell(row=avg_row, column=26).value)
         ag = _eval_avg_formula(ws, ws.cell(row=avg_row, column=33).value)

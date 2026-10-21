@@ -278,7 +278,7 @@
     </div>
 </section>
 
-{% if not non_graded %}
+{% if not non_graded and not gpa_pending %}
 {% if gpa >= 9.0 %}
     <div class="dynamic-badge badge-green">🌟 АЪЛОЧӢ</div>
 {% elif gpa >= 7.0 %}
@@ -323,7 +323,7 @@
         {% if non_graded %}
             <div class="badge-value">Ғайрибаҳо</div>
         {% else %}
-            <div class="badge-value">{{ gpa|floatformat:1 }}</div>
+            <div class="badge-value">{% if gpa_pending %}{{ gpa }}{% else %}{{ gpa|floatformat:1 }}{% endif %}</div>
         {% endif %}
     </div>
 </section>

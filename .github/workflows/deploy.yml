@@ -10,7 +10,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Pre-deploy gate: the ranking cache single-flight lock uses fcntl.flock
+  # on Linux (msvcrt on Windows dev machines); this runs the Linux path,
+  # including the cross-process and worker-death lock tests.
+  test-ranking-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Assert the fcntl lock path is active
+        run: |
+          DJANGO_SETTINGS_MODULE=maorif_portal.settings python -c "import django; django.setup(); from portal import views; assert views.fcntl is not None, 'fcntl lock path not active'; print('ranking lock backend:', views.fcntl.__name__)"
+      - name: Ranking cache tests
+        run: python manage.py test portal.tests.test_rankings_cache -v 2
+
   deploy:
+    needs: test-ranking-cache
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Server via SSH

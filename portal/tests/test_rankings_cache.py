@@ -6,6 +6,9 @@ TTL=60, cache-failure fallback, journal/grade read freshness, and the
 bounded-refresh behaviour (dirty stamp, stale shadow, single-flight
 lock, refresh-interval rate limit).
 """
+import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 from unittest import mock
@@ -13,7 +16,7 @@ from unittest import mock
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from portal.models import Assessment, Grade
@@ -23,8 +26,12 @@ from portal.tests.helpers import (
 )
 from portal.views import (
     RANKING_ALL_CACHE_KEYS, RANKING_CACHE_KEYS, RANKING_CACHE_TTL,
-    RANKING_DIRTY_KEY, RANKING_STALE_TTL,
+    RANKING_GPAS_CACHE_KEY,
+    RANKING_DIRTY_KEY, RANKING_LOCK_SUFFIX, RANKING_STALE_SUFFIX,
+    RANKING_STALE_TTL, RankingRefreshBusy,
     _all_student_gpas, _calculate_school_rankings_uncached,
+    _ranking_cached, _ranking_flock_release, _ranking_flock_try,
+    _ranking_lock_path,
     all_student_gpas,
     calculate_class_rankings, calculate_school_rankings,
     calculate_subject_rankings, calculate_top_students,
@@ -305,15 +312,22 @@ class RankingCacheTests(GoldenBase):
     def test_corrupt_shadow_not_served_while_refresh_runs(self):
         calculate_school_rankings()  # warm -> shadow exists
         make_grade(self.s1, MATH, 10, D_Q1_B)
-        # A malformed shadow must never be indexed/served: with the
-        # interval elapsed and the single-flight lock held, the reader
-        # falls through to a direct compute instead of returning it.
+        # A malformed shadow must never be indexed/served. With the
+        # interval elapsed and the refresh blocked, the reader neither
+        # returns it nor computes without the lock: it waits, then raises.
         cache.set('rank:v1:school:stale', 'corrupt', 60)
         cache.add('rank:v1:school:computing', 1, 60)
         with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0), \
-                mock.patch('time.sleep'):  # skip the cold-start spin
-            data = {d['school'].id: d for d in calculate_school_rankings()}
+                mock.patch('portal.views.RANKING_LOCK_WAIT', 0.2), \
+                mock.patch(
+                    'portal.views._calculate_school_rankings_uncached',
+                    side_effect=AssertionError('unlocked compute')):
+            with self.assertRaises(RankingRefreshBusy):
+                calculate_school_rankings()
         cache.delete('rank:v1:school:computing')
+        # Once unblocked, the next reader takes the lock and recomputes.
+        with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0):
+            data = {d['school'].id: d for d in calculate_school_rankings()}
         self.assertAlmostEqual(data[self.school_a.id]['gpa'], 8.20)
 
     def test_refresh_failure_with_corrupt_shadow_raises_original(self):
@@ -372,6 +386,78 @@ class RankingCacheTests(GoldenBase):
                 mock.patch.object(cache, 'set', side_effect=Exception('down')):
             data = calculate_school_rankings()
         self.assertIn(self.school_a.id, [d['school'].id for d in data])
+
+    # --- H3: dashboard while a cold refresh runs in another worker -------
+
+    def test_dashboard_renders_empty_block_when_refresh_busy(self):
+        # Cold school ranking, OS lock held elsewhere past the wait: the
+        # dashboard renders that block with its {% empty %} row; it never
+        # computes without the lock, and the other rankings still render.
+        handle = _ranking_flock_try('rank:v1:school')
+        self.assertIsInstance(handle, int)
+        try:
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.1), \
+                    mock.patch(
+                        'portal.views._calculate_school_rankings_uncached',
+                        side_effect=AssertionError('unlocked compute')):
+                resp = self.client.get(reverse('dashboard'))
+        finally:
+            _ranking_flock_release(handle)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['school_ranking'], [])
+        self.assertContains(resp, 'Маълумот мавҷуд нест')
+        self.assertTrue(resp.context['subject_ranking'])
+        self.assertTrue(resp.context['top_students'])
+
+    def test_ranking_ajax_returns_empty_list_when_refresh_busy(self):
+        handle = _ranking_flock_try('rank:v1:top:prelimit')
+        self.assertIsInstance(handle, int)
+        try:
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.1), \
+                    mock.patch(
+                        'portal.views._calculate_top_students_uncached',
+                        side_effect=AssertionError('unlocked compute')):
+                resp = self.client.get(reverse('top_students_ajax'))
+        finally:
+            _ranking_flock_release(handle)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), [])
+
+    def test_student_detail_shows_placeholders_when_gpa_refresh_busy(self):
+        handle = _ranking_flock_try(RANKING_GPAS_CACHE_KEY)
+        self.assertIsInstance(handle, int)
+        try:
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.1), \
+                    mock.patch('portal.views._all_student_gpas',
+                               side_effect=AssertionError('unlocked compute')):
+                resp = self.client.get(
+                    reverse('student_detail', args=[self.s1.id]))
+        finally:
+            _ranking_flock_release(handle)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context['gpa_pending'])
+        for name in ('gpa', 'class_rank', 'school_rank', 'district_rank'):
+            self.assertEqual(resp.context[name], '—')
+        # No performance badge is claimed while the GPA is unknown.
+        self.assertNotContains(resp, 'class="dynamic-badge')
+        self.assertNotContains(resp, 'None')
+
+    def test_readiness_rating_blank_gpa_when_school_refresh_busy(self):
+        self.client.force_login(self.admin)
+        handle = _ranking_flock_try('rank:v1:school')
+        self.assertIsInstance(handle, int)
+        try:
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.1), \
+                    mock.patch(
+                        'portal.views._calculate_school_rankings_uncached',
+                        side_effect=AssertionError('unlocked compute')):
+                resp = self.client.get(reverse('school_readiness_rating'))
+        finally:
+            _ranking_flock_release(handle)
+        self.assertEqual(resp.status_code, 200)
+        activity = resp.context['activity']
+        self.assertTrue(activity)
+        self.assertTrue(all(a['gpa'] is None for a in activity))
 
     # --- I: student_detail GPA map -----------------------------------------
     # 'rank:v1:gpas' caches the district-wide {student_id: gpa} map that
@@ -450,18 +536,265 @@ class SchoolRankingMergedQueryTests(GoldenBase):
         self.assertAlmostEqual(data[self.school_b.id]['gpa'], 7.0)
 
 
+SF_KEY = 'rank:v1:test:singleflight'
+SF_KEYS = (SF_KEY, SF_KEY + RANKING_STALE_SUFFIX, SF_KEY + RANKING_LOCK_SUFFIX)
+
+# Child process: try the same non-blocking OS lock the view uses and
+# print LOCKED (held elsewhere) or FREE. No Django import needed.
+_CHILD_LOCK_PROBE = r'''
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)
+try:
+    try:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:
+        import msvcrt
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    print("FREE")
+except OSError:
+    print("LOCKED")
+'''
+
+# Child process: take the OS lock, report HELD, then sleep until killed
+# (process death without an explicit unlock, like a crashed worker).
+_CHILD_LOCK_HOLD = r'''
+import os, sys, time
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)
+try:
+    import fcntl
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except ImportError:
+    import msvcrt
+    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+print("HELD", flush=True)
+time.sleep(1.0)
+os._exit(0)
+'''
+
+
+class RankingSingleFlightTests(SimpleTestCase):
+    """Cross-worker single-flight for _ranking_cached (504 follow-up).
+
+    Each thread opens its own lock descriptor, exactly like separate
+    gunicorn workers, so these exercise the OS lock rather than an
+    in-process mutex."""
+
+    def setUp(self):
+        cache.delete_many(SF_KEYS)
+        cache.delete(RANKING_DIRTY_KEY)
+
+    def tearDown(self):
+        cache.delete_many(SF_KEYS)
+
+    def _counting_compute(self, duration=0.0, result='fresh'):
+        calls = []
+        guard = threading.Lock()
+
+        def compute():
+            with guard:
+                calls.append(1)
+            time.sleep(duration)
+            return result
+        return compute, calls
+
+    def test_concurrent_cold_misses_compute_once(self):
+        # 2.5s > the former 2s cold-start wait, after which every loser
+        # used to call compute() itself.
+        compute, calls = self._counting_compute(duration=2.5)
+        barrier = threading.Barrier(6)
+        results, errors = [], []
+
+        def worker():
+            try:
+                barrier.wait()
+                results.append(_ranking_cached(SF_KEY, compute))
+            except Exception as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(errors, [])
+        self.assertEqual(results, ['fresh'] * 6)
+        self.assertEqual(len(calls), 1)
+
+    def test_lock_holder_elsewhere_serves_stale_without_compute(self):
+        cache.set(SF_KEY + RANKING_STALE_SUFFIX,
+                  (time.time() - 100, 'stale'), RANKING_STALE_TTL)
+        handle = _ranking_flock_try(SF_KEY)
+        self.assertIsInstance(handle, int)
+        try:
+            compute, calls = self._counting_compute()
+            self.assertEqual(_ranking_cached(SF_KEY, compute), 'stale')
+            self.assertEqual(calls, [])
+        finally:
+            _ranking_flock_release(handle)
+
+    def test_stale_within_interval_served_without_lock(self):
+        cache.set(SF_KEY + RANKING_STALE_SUFFIX,
+                  (time.time(), 'stale'), RANKING_STALE_TTL)
+        compute, calls = self._counting_compute()
+        with mock.patch('portal.views._ranking_lock_acquire') as acquire:
+            self.assertEqual(_ranking_cached(SF_KEY, compute), 'stale')
+        acquire.assert_not_called()
+        self.assertEqual(calls, [])
+
+    def test_lock_released_after_exception_without_stale(self):
+        def boom():
+            raise RuntimeError('db down')
+        with self.assertRaises(RuntimeError):
+            _ranking_cached(SF_KEY, boom)
+        # OS lock is free again and no backoff marker was left behind.
+        handle = _ranking_flock_try(SF_KEY)
+        self.assertIsInstance(handle, int)
+        _ranking_flock_release(handle)
+        self.assertIsNone(cache.get(SF_KEY + RANKING_LOCK_SUFFIX))
+        compute, calls = self._counting_compute()
+        self.assertEqual(_ranking_cached(SF_KEY, compute), 'fresh')
+        self.assertEqual(len(calls), 1)
+
+    def test_exception_with_stale_backs_off_and_releases_os_lock(self):
+        cache.set(SF_KEY + RANKING_STALE_SUFFIX,
+                  (time.time() - 100, 'stale'), RANKING_STALE_TTL)
+
+        def boom():
+            raise RuntimeError('db down')
+        self.assertEqual(_ranking_cached(SF_KEY, boom), 'stale')
+        self.assertIsNotNone(cache.get(SF_KEY + RANKING_LOCK_SUFFIX))
+        handle = _ranking_flock_try(SF_KEY)
+        self.assertIsInstance(handle, int)
+        _ranking_flock_release(handle)
+        # During the backoff readers keep the shadow; no retry runs.
+        compute, calls = self._counting_compute()
+        self.assertEqual(_ranking_cached(SF_KEY, compute), 'stale')
+        self.assertEqual(calls, [])
+
+    def test_waiter_takes_over_when_owner_fails(self):
+        # Cold start: the owner raises; a waiting reader must take the
+        # lock and compute exactly once instead of erroring.
+        started = threading.Event()
+
+        def failing():
+            started.set()
+            time.sleep(0.5)
+            raise RuntimeError('owner failed')
+        compute, calls = self._counting_compute()
+        owner_err, waiter_res = [], []
+
+        def owner():
+            try:
+                _ranking_cached(SF_KEY, failing)
+            except RuntimeError as exc:
+                owner_err.append(exc)
+        t = threading.Thread(target=owner)
+        t.start()
+        started.wait(5)
+        waiter_res.append(_ranking_cached(SF_KEY, compute))
+        t.join(10)
+        self.assertEqual(len(owner_err), 1)
+        self.assertEqual(waiter_res, ['fresh'])
+        self.assertEqual(len(calls), 1)
+
+    def test_waiter_never_duplicates_when_holder_exceeds_wait(self):
+        # Holder computes for 1.5s; the waiter's threshold is 0.3s. The
+        # waiter must give up with RankingRefreshBusy — never call
+        # compute() itself — and the holder's single result still lands.
+        compute, calls = self._counting_compute(duration=1.5)
+        holder_started = threading.Event()
+
+        def holder_compute():
+            holder_started.set()
+            return compute()
+        holder_res = []
+        t = threading.Thread(
+            target=lambda: holder_res.append(
+                _ranking_cached(SF_KEY, holder_compute)))
+        t.start()
+        self.assertTrue(holder_started.wait(5))
+        with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.3):
+            with self.assertRaises(RankingRefreshBusy):
+                _ranking_cached(SF_KEY, compute)
+        t.join(10)
+        self.assertEqual(holder_res, ['fresh'])
+        self.assertEqual(len(calls), 1)
+        # After the holder finished, readers get its entry, no recompute.
+        self.assertEqual(_ranking_cached(SF_KEY, compute), 'fresh')
+        self.assertEqual(len(calls), 1)
+
+    def test_waiter_takes_over_after_holder_process_dies(self):
+        # A child process takes the OS lock and exits without releasing
+        # it (simulated worker death); the kernel frees the lock and the
+        # waiting reader computes exactly once.
+        path = _ranking_lock_path(SF_KEY)
+        child = subprocess.Popen(
+            [sys.executable, '-c', _CHILD_LOCK_HOLD, path],
+            stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(child.stdout.readline().strip(), 'HELD')
+            compute, calls = self._counting_compute()
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 10):
+                self.assertEqual(_ranking_cached(SF_KEY, compute), 'fresh')
+            self.assertEqual(len(calls), 1)
+        finally:
+            child.kill()
+            child.wait(10)
+            child.stdout.close()
+
+    def test_unopenable_lock_file_never_computes(self):
+        compute, calls = self._counting_compute()
+        with mock.patch('portal.views.os.makedirs',
+                        side_effect=PermissionError('read-only')), \
+                mock.patch('portal.views.RANKING_LOCK_WAIT', 0.2):
+            with self.assertRaises(RankingRefreshBusy):
+                _ranking_cached(SF_KEY, compute)
+            cache.set(SF_KEY + RANKING_STALE_SUFFIX,
+                      (time.time() - 100, 'stale'), RANKING_STALE_TTL)
+            self.assertEqual(_ranking_cached(SF_KEY, compute), 'stale')
+        self.assertEqual(calls, [])
+
+    def test_sibling_result_reused_after_acquiring_lock(self):
+        # A sibling stored a fresh entry between our lookup and lock
+        # acquisition: it must be reused, not recomputed.
+        from portal import views
+        real_acquire = views._ranking_lock_acquire
+
+        def acquire_after_sibling(key):
+            cache.set(SF_KEY, (time.time(), 'sibling'), 60)
+            return real_acquire(key)
+        compute, calls = self._counting_compute()
+        with mock.patch('portal.views._ranking_lock_acquire',
+                        side_effect=acquire_after_sibling):
+            self.assertEqual(_ranking_cached(SF_KEY, compute), 'sibling')
+        self.assertEqual(calls, [])
+
+    def test_os_lock_is_exclusive_across_processes(self):
+        path = _ranking_lock_path(SF_KEY)
+
+        def probe():
+            return subprocess.run(
+                [sys.executable, '-c', _CHILD_LOCK_PROBE, path],
+                capture_output=True, text=True, timeout=30,
+            ).stdout.strip()
+        handle = _ranking_flock_try(SF_KEY)
+        self.assertIsInstance(handle, int)
+        try:
+            self.assertEqual(probe(), 'LOCKED')
+        finally:
+            _ranking_flock_release(handle)
+        self.assertEqual(probe(), 'FREE')
+
+
 class SharedCacheBackendTests(TestCase):
     """Phase-1 504 mitigation: the ranking cache must live in a backend
     shared by every gunicorn worker, in a location that is never served
     publicly and never committed.
 
-    Known limitation (documented, not silently relied on):
-    FileBasedCache.add() is a get+set pair, so views._ranking_lock_acquire
-    is only a best-effort cross-process guard — a lost race means a second
-    worker recomputes once. That duplicates work but never corrupts data:
-    entries are (computed_at, data) tuples validated against the dirty
-    stamp, so both writers store equivalent fresh results. In-process
-    single-flight (the case these tests exercise) remains atomic.
+    FileBasedCache.add() is a get+set pair and is therefore NOT used as
+    the refresh lock; cross-process single-flight is an OS file lock
+    (views._ranking_flock_try, covered by RankingSingleFlightTests).
     """
 
     def test_default_cache_is_file_based(self):

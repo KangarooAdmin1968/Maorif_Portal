@@ -8,6 +8,7 @@ from django.core.cache import cache
 import calendar
 import io
 import json
+import os
 import re
 import threading
 import time
@@ -1612,9 +1613,19 @@ RANKING_CACHE_KEYS = (
 RANKING_REFRESH_INTERVAL = 30
 RANKING_STALE_TTL = 600
 RANKING_STALE_SUFFIX = ':stale'
-# Single-flight: readers that lose the add() keep serving the shadow
-# while one thread refreshes, instead of stampeding the same query set.
+# Single-flight: one refresh per key at a time across every gunicorn
+# worker and thread, enforced by an OS file lock (see _ranking_flock_try).
+# The key+':computing' cache entry is only the post-failure backoff
+# marker: while it exists nobody starts a refresh and readers keep the
+# shadow.
 RANKING_LOCK_SUFFIX = ':computing'
+# Cold start (no shadow yet) while another worker holds the lock: wait
+# for its result up to RANKING_LOCK_WAIT seconds, taking the lock over
+# if the holder releases it or dies; kept below the 60s nginx/gunicorn
+# timeout. compute() never runs without the OS lock — a waiter that
+# times out raises RankingRefreshBusy instead of duplicating the work.
+RANKING_LOCK_WAIT = 45
+RANKING_LOCK_POLL = 0.05
 # Timestamp of the latest invalidation. Entries are stamped at refresh
 # START, so a save that commits while a refresh is mid-flight still
 # invalidates its result — only entries post-dating this stamp are fresh.
@@ -1650,11 +1661,119 @@ def _ranking_cache_delete(key):
         pass
 
 
-def _ranking_lock_acquire(key):
+try:
+    import fcntl
+except ImportError:  # Windows development machines
+    fcntl = None
+    import msvcrt
+
+class RankingRefreshBusy(RuntimeError):
+    """Cold cache and the single-flight lock could not be obtained within
+    RANKING_LOCK_WAIT; raised instead of computing without the lock."""
+
+
+def _ranking_lock_path(key):
+    base = settings.CACHES['default'].get('LOCATION') or ''
+    return os.path.join(base, 'ranking-locks',
+                        re.sub(r'[^A-Za-z0-9_.-]', '_', key) + '.lock')
+
+
+def _ranking_flock_try(key):
+    """Non-blocking exclusive OS lock on the key's lock file.
+
+    FileBasedCache.add() is a has_key()+set() pair, so it cannot arbitrate
+    between gunicorn workers. flock/msvcrt locks are atomic across
+    processes and threads (each call opens its own descriptor), survive a
+    refresh longer than any TTL, and are released by the kernel if the
+    holding worker dies. Returns the locked fd, or None when another
+    holder has it or the lock file cannot be opened — never a pseudo-lock
+    that would let compute() run unguarded.
+    """
+    path = _ranking_lock_path(key)
     try:
-        return cache.add(key + RANKING_LOCK_SUFFIX, 1, RANKING_CACHE_TTL)
-    except Exception:
-        return False
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        logger.warning('Ranking lock file unavailable for %s: %s', key, exc)
+        return None
+    try:
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def _ranking_flock_release(handle):
+    if handle is None:
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        else:
+            os.lseek(handle, 0, os.SEEK_SET)
+            msvcrt.locking(handle, msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+    finally:
+        os.close(handle)
+
+
+def _ranking_lock_acquire(key):
+    """Single-flight lock handle for `key`, or None when another refresh
+    holds it or a failed refresh is still backing off."""
+    if _ranking_cache_get(key + RANKING_LOCK_SUFFIX) is not None:
+        return None
+    return _ranking_flock_try(key)
+
+
+def _ranking_lookup(key):
+    """(hit, data, stale): fresh main entry or rate-limited shadow."""
+    now = time.time()
+    entry = _ranking_cache_get(key)
+    dirty = _ranking_cache_get(RANKING_DIRTY_KEY) or 0.0
+    if (isinstance(entry, tuple) and entry[0] > dirty
+            and now - entry[0] < RANKING_CACHE_TTL):
+        return True, entry[1], None
+    stale = _ranking_cache_get(key + RANKING_STALE_SUFFIX)
+    if (isinstance(stale, tuple)
+            and now - stale[0] < RANKING_REFRESH_INTERVAL):
+        return True, stale[1], stale
+    return False, None, stale
+
+
+def _ranking_refresh(key, compute, handle, stale):
+    """Recompute `key` while holding the single-flight lock; the lock is
+    released on every exit path, including a failed compute."""
+    try:
+        # A sibling may have finished the same refresh between our lookup
+        # and the lock acquisition — reuse its result.
+        hit, data, latest_stale = _ranking_lookup(key)
+        if hit:
+            return data
+        if isinstance(latest_stale, tuple):
+            stale = latest_stale
+        try:
+            started = time.time()
+            data = compute()
+        except Exception:
+            if isinstance(stale, tuple):
+                # Back off: the marker delays the next retry, and
+                # readers keep the last good result.
+                _ranking_cache_set(key + RANKING_LOCK_SUFFIX, 1)
+                return stale[1]
+            raise
+        _ranking_cache_set(key, (started, data))
+        _ranking_cache_set(
+            key + RANKING_STALE_SUFFIX, (started, data),
+            timeout=RANKING_STALE_TTL)
+        _ranking_cache_delete(key + RANKING_LOCK_SUFFIX)
+        return data
+    finally:
+        _ranking_flock_release(handle)
 
 
 def _ranking_cached(key, compute):
@@ -1664,45 +1783,33 @@ def _ranking_cached(key, compute):
     so a save landing mid-refresh still invalidates the result via
     RANKING_DIRTY_KEY. Resolution order: fresh main entry; shadow entry
     inside the refresh interval (the rate limit); recompute under the
-    single-flight lock; shadow entry while a sibling thread refreshes;
-    then a brief cold-start wait before computing directly.
+    cross-process single-flight lock; shadow entry while another worker
+    refreshes; on a cold start, wait for that worker's result, taking
+    over the lock once it is released (holder finished, failed or died).
+    compute() only ever runs while holding the OS lock: a cold-start
+    waiter that cannot get it within RANKING_LOCK_WAIT raises
+    RankingRefreshBusy.
     """
-    now = time.time()
-    entry = _ranking_cache_get(key)
-    dirty = _ranking_cache_get(RANKING_DIRTY_KEY) or 0.0
-    if (isinstance(entry, tuple) and entry[0] > dirty
-            and now - entry[0] < RANKING_CACHE_TTL):
-        return entry[1]
-    stale = _ranking_cache_get(key + RANKING_STALE_SUFFIX)
-    if (isinstance(stale, tuple)
-            and now - stale[0] < RANKING_REFRESH_INTERVAL):
-        return stale[1]
-    if _ranking_lock_acquire(key):
-        try:
-            started = time.time()
-            data = compute()
-        except Exception:
-            if isinstance(stale, tuple):
-                # Back off: the held lock delays the next retry, and
-                # readers keep the last good result.
-                return stale[1]
-            raise
-        _ranking_cache_set(key, (started, data))
-        _ranking_cache_set(
-            key + RANKING_STALE_SUFFIX, (started, data),
-            timeout=RANKING_STALE_TTL)
-        _ranking_cache_delete(key + RANKING_LOCK_SUFFIX)
+    hit, data, stale = _ranking_lookup(key)
+    if hit:
         return data
+    handle = _ranking_lock_acquire(key)
+    if handle is not None:
+        return _ranking_refresh(key, compute, handle, stale)
     if isinstance(stale, tuple):
         return stale[1]
-    # Cold start while a sibling thread is already computing: wait
-    # briefly for its entry instead of duplicating the aggregation set.
-    for _ in range(40):
-        time.sleep(0.05)
+    for _ in range(int(RANKING_LOCK_WAIT / RANKING_LOCK_POLL)):
+        time.sleep(RANKING_LOCK_POLL)
         entry = _ranking_cache_get(key)
         if isinstance(entry, tuple):
             return entry[1]
-    return compute()
+        handle = _ranking_lock_acquire(key)
+        if handle is not None:
+            return _ranking_refresh(key, compute, handle, stale)
+    logger.error('Ranking refresh of %s: lock not obtained within %ss; '
+                 'not computing without the lock', key, RANKING_LOCK_WAIT)
+    raise RankingRefreshBusy(
+        f'Ranking refresh of {key} still in progress elsewhere')
 
 
 def calculate_school_rankings():
@@ -2059,13 +2166,25 @@ def _calculate_subject_rankings_uncached():
     return data
 
 
+def _ranking_or_empty(calculate):
+    """Dashboard fallback for a cold ranking still being refreshed by
+    another worker past RANKING_LOCK_WAIT: render that block empty (the
+    template's existing {% empty %} row) instead of failing the page.
+    Never computes — RankingRefreshBusy is raised only after the lock
+    could not be obtained."""
+    try:
+        return calculate()
+    except RankingRefreshBusy:
+        return []
+
+
 def dashboard(request):
     role = get_user_role(request.user)
     user_school = get_user_school(request.user)
 
     # Live rankings from Grade and QuarterGrade records
-    all_school_ranking = calculate_school_rankings()
-    all_subject_ranking = calculate_subject_rankings()
+    all_school_ranking = _ranking_or_empty(calculate_school_rankings)
+    all_subject_ranking = _ranking_or_empty(calculate_subject_rankings)
 
     academic_ids = academic_school_ids()
     if not request.user.is_authenticated or request.user.is_superuser or role == settings.ROLE_DIRECTOR:
@@ -2087,7 +2206,7 @@ def dashboard(request):
     else:
         selected_school = selected_school.strip() or '0'
 
-    class_ranking = calculate_class_rankings()
+    class_ranking = _ranking_or_empty(calculate_class_rankings)
     if selected_school != '0':
         try:
             sid = int(selected_school)
@@ -2095,7 +2214,7 @@ def dashboard(request):
         except (ValueError, TypeError):
             class_ranking = []
 
-    top_students = calculate_top_students()
+    top_students = _ranking_or_empty(calculate_top_students)
 
     total_schools = len(academic_ids)
     total_students = Student.objects.filter(school_id__in=academic_ids).count()
@@ -2149,14 +2268,14 @@ def _clean_school_param(school):
 def top_students_ajax(request):
     """Return top students for the honor roll, optionally filtered by school."""
     school = _clean_school_param(request.GET.get('school'))
-    data = calculate_top_students(school)
+    data = _ranking_or_empty(lambda: calculate_top_students(school))
     return JsonResponse(data, safe=False)
 
 
 def class_rankings_ajax(request):
     """Return class rankings, optionally filtered by school."""
     school = _clean_school_param(request.GET.get('school'))
-    data = calculate_class_rankings(school)
+    data = _ranking_or_empty(lambda: calculate_class_rankings(school))
     return JsonResponse(data, safe=False)
 
 
@@ -5549,13 +5668,21 @@ def student_detail(request, student_id):
     conduct_scores = [conduct_map[s] for s in conduct_subjects]
     conduct_advice = _conduct_advice(conduct_map)
 
+    try:
+        all_gpas = None if non_graded else all_student_gpas()
+    except RankingRefreshBusy:
+        # Cold GPA map still being refreshed by another worker: show
+        # placeholders instead of failing or computing without the lock.
+        all_gpas = None
+    gpa_pending = not non_graded and all_gpas is None
     if non_graded:
         student_gpa = None
         class_rank = None
         school_rank = None
         district_rank = None
+    elif gpa_pending:
+        student_gpa = class_rank = school_rank = district_rank = '—'
     else:
-        all_gpas = all_student_gpas()
         student_gpa = all_gpas.get(student.id, 0.0)
 
         class_gpas = []
@@ -5673,6 +5800,7 @@ def student_detail(request, student_id):
     context = {
         'student': student,
         'gpa': student_gpa,
+        'gpa_pending': gpa_pending,
         'non_graded': non_graded,
         'class_rank': class_rank,
         'school_rank': school_rank,
@@ -6978,10 +7106,15 @@ def school_readiness_rating(request):
             group_student_scored[gkey][r['student_id']] += 1
     # Use the exact same school-GPA formula as the academic leaderboard
     # (calculate_school_rankings) so all leaderboards show identical values.
-    gpa_map = {
-        item['school'].id: item['gpa']
-        for item in calculate_school_rankings()
-    }
+    try:
+        gpa_map = {
+            item['school'].id: item['gpa']
+            for item in calculate_school_rankings()
+        }
+    except RankingRefreshBusy:
+        # Cold school ranking still being refreshed by another worker:
+        # leave the GPA column blank rather than failing or recomputing.
+        gpa_map = None
     class_subjects = list(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
         .exclude(class_name__regex=NON_GRADED_RE)
@@ -7104,7 +7237,8 @@ def school_readiness_rating(request):
             'students': students_n,
             'total_grades': grades_n,
             'fulfillment': _norm_fulfillment(norm_grades_done, expected_min, q_progress),
-            'gpa': gpa_map.get(school.id, 0.0),
+            'gpa': (gpa_map.get(school.id, 0.0)
+                    if gpa_map is not None else None),
             'teachers': teachers,
             'is_mine': bool(user_school and user_school.id == school.id),
         })

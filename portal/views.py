@@ -5691,9 +5691,9 @@ def _all_student_gpas():
         _add_score(totals, row['student_id'], row['total'], row['count'])
 
     gpas = {}
-    for student in Student.objects.all():
-        total, count = totals.get(student.id, (0.0, 0))
-        gpas[student.id] = round(total / count, 2) if count else 0.0
+    for student_id in Student.objects.order_by().values_list('id', flat=True):
+        total, count = totals.get(student_id, (0.0, 0))
+        gpas[student_id] = round(total / count, 2) if count else 0.0
     return gpas
 
 
@@ -5767,14 +5767,24 @@ def student_detail(request, student_id):
         district_gpas = []
         # Rank only against graded students of academic schools (same population as dashboard rankings)
         academic_ids = {s.id for s in School.objects.all() if is_academic_school(s)}
-        for s in Student.objects.all():
-            if s.school_id not in academic_ids or is_non_graded(s.class_name):
+        # Ranks only use GPA sets, so the per-request population pass
+        # reads plain unordered tuples (no School join/sort, no model
+        # instances) and evaluates is_non_graded once per class name.
+        non_graded_by_class = {}
+        for s_id, s_school_id, s_class in Student.objects.order_by().values_list(
+                'id', 'school_id', 'class_name'):
+            if s_school_id not in academic_ids:
                 continue
-            g = all_gpas.get(s.id, 0.0)
+            ng = non_graded_by_class.get(s_class)
+            if ng is None:
+                ng = non_graded_by_class[s_class] = is_non_graded(s_class)
+            if ng:
+                continue
+            g = all_gpas.get(s_id, 0.0)
             district_gpas.append(g)
-            if s.school_id == student.school_id:
+            if s_school_id == student.school_id:
                 school_gpas.append(g)
-            if s.school_id == student.school_id and s.class_name == student.class_name:
+            if s_school_id == student.school_id and s_class == student.class_name:
                 class_gpas.append(g)
 
         class_rank = len({g for g in class_gpas if g > student_gpa}) + 1

@@ -620,6 +620,104 @@ class SharedRankingScanTests(GoldenBase):
         self.assertIsNone(_shared_ranking_grade_rows())
 
 
+class StudentDetailRankPassTests(GoldenBase):
+    """student_detail ranks a student against the whole graded population
+    on every request; that pass must stay cheap (no Student model per
+    row) and produce exactly the former ranks."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        make_grade(cls.s1, MATH, 9, D_Q1)
+        make_grade(cls.s2, MATH, 9, D_Q1)  # tie with s1
+        make_grade(cls.s3, MATH, 7.5, D_Q1)
+        cls.s4 = make_student(cls.school_a, '7-А', 'Сеюм Хонанда')
+        make_grade(cls.s4, MATH, 6, D_Q1)
+        cls.s5 = make_student(cls.school_a, '8-Б', 'Дигар Синф')
+        make_grade(cls.s5, MATH, 10, D_Q1)
+        make_student(cls.school_a, '7-А', 'Бе Баҳо')  # no grades: 0.0
+        # Excluded from every population.
+        junior = make_student(cls.school_a, '1-А', 'Хурд Хонанда')
+        make_grade(junior, MATH, 10, D_Q1)
+        office = make_school('Идораи маориф', type='Идора')
+        clerk = make_student(office, '7-А', 'Идора Хонанда')
+        make_grade(clerk, MATH, 10, D_Q1)
+
+    @staticmethod
+    def _reference_ranks(student):
+        # The former model-instance implementation, verbatim.
+        from portal.models import School, Student
+        from portal.utils import is_academic_school, is_non_graded
+        all_gpas = _all_student_gpas()
+        student_gpa = all_gpas.get(student.id, 0.0)
+        class_gpas, school_gpas, district_gpas = [], [], []
+        academic_ids = {s.id for s in School.objects.all()
+                        if is_academic_school(s)}
+        for s in Student.objects.all():
+            if s.school_id not in academic_ids or is_non_graded(s.class_name):
+                continue
+            g = all_gpas.get(s.id, 0.0)
+            district_gpas.append(g)
+            if s.school_id == student.school_id:
+                school_gpas.append(g)
+            if (s.school_id == student.school_id
+                    and s.class_name == student.class_name):
+                class_gpas.append(g)
+        return (
+            student_gpa,
+            len({g for g in class_gpas if g > student_gpa}) + 1,
+            len({g for g in school_gpas if g > student_gpa}) + 1,
+            len({g for g in district_gpas if g > student_gpa}) + 1,
+        )
+
+    def test_ranks_match_former_implementation(self):
+        for student in (self.s1, self.s2, self.s3, self.s4, self.s5):
+            with self.subTest(student=student.full_name):
+                resp = self.client.get(
+                    reverse('student_detail', args=[student.id]))
+                self.assertEqual(resp.status_code, 200)
+                ctx = resp.context
+                self.assertEqual(
+                    (ctx['gpa'], ctx['class_rank'], ctx['school_rank'],
+                     ctx['district_rank']),
+                    self._reference_ranks(student))
+        # Dense ties: s1 and s2 share 9.0 behind s5's 10.0 in school A.
+        resp = self.client.get(reverse('student_detail', args=[self.s2.id]))
+        self.assertEqual(resp.context['class_rank'], 1)
+        self.assertEqual(resp.context['school_rank'], 2)
+
+    def test_rank_pass_does_not_instantiate_population(self):
+        from django.db.models.signals import post_init
+        from portal.models import Student
+        url = reverse('student_detail', args=[self.s1.id])
+        self.client.get(url)  # warm the GPA cache
+
+        def count_instances():
+            seen = []
+
+            def receiver(sender, **kwargs):
+                seen.append(1)
+            post_init.connect(receiver, sender=Student)
+            try:
+                self.assertEqual(self.client.get(url).status_code, 200)
+            finally:
+                post_init.disconnect(receiver, sender=Student)
+            return len(seen)
+        before = count_instances()
+        for i in range(15):
+            make_student(self.school_a, '7-А', f'Иловагӣ Хонанда {i}')
+        _clear_ranking_cache()
+        self.client.get(url)  # re-warm after the population change
+        self.assertEqual(count_instances(), before)
+
+    def test_gpa_map_covers_every_student(self):
+        from portal.models import Student
+        gpas = _all_student_gpas()
+        self.assertEqual(set(gpas), set(Student.objects.values_list(
+            'id', flat=True)))
+        self.assertEqual(gpas[self.s5.id], 10.0)
+
+
 SF_KEY = 'rank:v1:test:singleflight'
 SF_KEYS = (SF_KEY, SF_KEY + RANKING_STALE_SUFFIX, SF_KEY + RANKING_LOCK_SUFFIX)
 

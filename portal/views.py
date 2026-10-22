@@ -6,6 +6,8 @@ from django.db import IntegrityError, connection, transaction
 from django.db.models import Avg, Count, Sum, Q, Max, ProtectedError
 from django.core.cache import cache
 import calendar
+import contextlib
+import contextvars
 import io
 import json
 import os
@@ -1759,6 +1761,13 @@ def _ranking_refresh(key, compute, handle, stale):
         try:
             started = time.time()
             data = compute()
+            # A compute that reused a request-shared Grade scan read its
+            # rows at the scan time, not at `started`: stamp the entry no
+            # later than that so the dirty check still sees saves that
+            # landed after the scan.
+            scan_at = _shared_ranking_scan_time()
+            if scan_at is not None:
+                started = min(started, scan_at)
         except Exception:
             if isinstance(stale, tuple):
                 # Back off: the marker delays the next retry, and
@@ -1812,6 +1821,54 @@ def _ranking_cached(key, compute):
         f'Ranking refresh of {key} still in progress elsewhere')
 
 
+# Request-scoped share of the district-wide canonical Grade scan (504
+# follow-up). The dashboard refreshes up to four ranking keys in one
+# request and each used to repeat the same full current-year Grade scan
+# plus canonical dedup. Inside sharing_ranking_grade_scan() the first
+# compute that needs the rows scans once and later computes in the same
+# request reuse them. Each key still refreshes under its own OS lock;
+# only the data source is shared. Outside the scope nothing changes.
+_shared_ranking_scan = contextvars.ContextVar(
+    'shared_ranking_scan', default=None)
+
+
+@contextlib.contextmanager
+def sharing_ranking_grade_scan():
+    token = _shared_ranking_scan.set({})
+    try:
+        yield
+    finally:
+        _shared_ranking_scan.reset(token)
+
+
+def _shared_ranking_scan_time():
+    memo = _shared_ranking_scan.get()
+    return memo.get('at') if memo else None
+
+
+def _shared_ranking_grade_rows():
+    """Canonical current-year scored Grade rows for the active sharing
+    scope, or None outside one. Rows carry the cell-key fields, score and
+    the student's school_id/class_name. Reused only while younger than
+    RANKING_REFRESH_INTERVAL and for the same academic year, so a reused
+    scan is never older than a shadow entry may be."""
+    memo = _shared_ranking_scan.get()
+    if memo is None:
+        return None
+    bounds = academic_year_bounds()
+    now = time.time()
+    if (memo.get('bounds') == bounds
+            and now - memo['at'] < RANKING_REFRESH_INTERVAL):
+        return memo['rows']
+    rows = canonical_grade_values(Grade.objects.filter(
+        score__isnull=False, date__range=bounds).values(
+        'pk', 'student_id', 'subject', 'period', 'date',
+        'assessment_id', 'lesson_id', 'score',
+        'student__school_id', 'student__class_name').iterator())
+    memo.update(at=now, bounds=bounds, rows=rows)
+    return rows
+
+
 def calculate_school_rankings():
     """Return all schools ranked by average GPA from daily and quarterly grades (excluding non-graded classes)."""
     return _ranking_cached(
@@ -1826,12 +1883,15 @@ def _calculate_school_rankings_uncached():
     ay_start, ay_end = academic_year_bounds()
     ay = academic_year_start()
 
-    for r in canonical_grade_values(Grade.objects.filter(
+    rows = _shared_ranking_grade_rows()
+    if rows is None:
+        rows = canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
             date__range=(ay_start, ay_end)).values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score',
-            'student__school_id', 'student__class_name').iterator()):
+            'student__school_id', 'student__class_name').iterator())
+    for r in rows:
         if is_non_graded(r['student__class_name']):
             continue
         _add_score(totals, r['student__school_id'], r['score'], 1)
@@ -1913,11 +1973,14 @@ def _calculate_class_rankings_uncached():
     ay = academic_year_start()
 
     # Daily grades
-    for r in canonical_grade_values(Grade.objects.filter(
+    rows = _shared_ranking_grade_rows()
+    if rows is None:
+        rows = canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
             date__range=(ay_start, ay_end)).values(
             'pk', 'student_id', 'subject', 'period', 'date',
-            'assessment_id', 'lesson_id', 'score').iterator()):
+            'assessment_id', 'lesson_id', 'score').iterator())
+    for r in rows:
         info = students.get(r['student_id'])
         if info is None or info[0] not in academic_school_ids:
             continue
@@ -2034,12 +2097,22 @@ def _calculate_top_students_uncached():
     ay_start, ay_end = academic_year_bounds()
     ay = academic_year_start()
 
-    grade_qs = Grade.objects.filter(
-        student_filter, score__isnull=False,
-        date__range=(ay_start, ay_end)
-    ).values('pk', 'student_id', 'subject', 'period', 'date',
-             'assessment_id', 'lesson_id', 'score')
-    for r in canonical_grade_values(grade_qs.iterator()):
+    shared = _shared_ranking_grade_rows()
+    if shared is None:
+        grade_rows = canonical_grade_values(Grade.objects.filter(
+            student_filter, score__isnull=False,
+            date__range=(ay_start, ay_end)
+        ).values('pk', 'student_id', 'subject', 'period', 'date',
+                 'assessment_id', 'lesson_id', 'score').iterator())
+    else:
+        # Python form of student_filter. The cell key includes
+        # student_id, so filtering canonical rows by student equals
+        # canonicalizing the filtered queryset.
+        grade_rows = (
+            r for r in shared
+            if r['student__school_id'] in academic_school_ids
+            and not r['student__class_name'].startswith(('0-', '1-')))
+    for r in grade_rows:
         totals[r['student_id']][0] += float(r['score'] or 0)
         totals[r['student_id']][1] += 1
 
@@ -2122,11 +2195,14 @@ def _calculate_subject_rankings_uncached():
     # rows never count).
     ay_start, ay_end = academic_year_bounds()
     ay = academic_year_start()
-    for r in canonical_grade_values(Grade.objects.filter(
+    rows = _shared_ranking_grade_rows()
+    if rows is None:
+        rows = canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
             date__range=(ay_start, ay_end)).values(
             'pk', 'student_id', 'subject', 'period', 'date',
-            'assessment_id', 'lesson_id', 'score').iterator()):
+            'assessment_id', 'lesson_id', 'score').iterator())
+    for r in rows:
         subj = normalize_subject(r['subject'])
         _add_score(totals, subj, r['score'], 1)
     for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values('subject').annotate(total=Sum('grade'), count=Count('grade')):
@@ -2182,9 +2258,13 @@ def dashboard(request):
     role = get_user_role(request.user)
     user_school = get_user_school(request.user)
 
-    # Live rankings from Grade and QuarterGrade records
-    all_school_ranking = _ranking_or_empty(calculate_school_rankings)
-    all_subject_ranking = _ranking_or_empty(calculate_subject_rankings)
+    # Live rankings from Grade and QuarterGrade records. Refreshes in
+    # this request share one current-year Grade scan.
+    with sharing_ranking_grade_scan():
+        all_school_ranking = _ranking_or_empty(calculate_school_rankings)
+        all_subject_ranking = _ranking_or_empty(calculate_subject_rankings)
+        class_ranking = _ranking_or_empty(calculate_class_rankings)
+        top_students = _ranking_or_empty(calculate_top_students)
 
     academic_ids = academic_school_ids()
     if not request.user.is_authenticated or request.user.is_superuser or role == settings.ROLE_DIRECTOR:
@@ -2206,15 +2286,12 @@ def dashboard(request):
     else:
         selected_school = selected_school.strip() or '0'
 
-    class_ranking = _ranking_or_empty(calculate_class_rankings)
     if selected_school != '0':
         try:
             sid = int(selected_school)
             class_ranking = [c for c in class_ranking if c['school_id'] == sid]
         except (ValueError, TypeError):
             class_ranking = []
-
-    top_students = _ranking_or_empty(calculate_top_students)
 
     total_schools = len(academic_ids)
     total_students = Student.objects.filter(school_id__in=academic_ids).count()

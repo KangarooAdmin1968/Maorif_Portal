@@ -536,6 +536,90 @@ class SchoolRankingMergedQueryTests(GoldenBase):
         self.assertAlmostEqual(data[self.school_b.id]['gpa'], 7.0)
 
 
+class SharedRankingScanTests(GoldenBase):
+    """The dashboard refreshes four ranking keys per request; inside
+    sharing_ranking_grade_scan() they share one current-year Grade scan
+    (504 follow-up) without changing any result or freshness rule."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        make_grade(cls.s1, MATH, 9, D_Q1)
+        make_grade(cls.s1, MATH, 4, D_Q1)  # same cell: canonical dedup
+        make_grade(cls.s2, MATH, 7.5, D_Q1_B)
+        make_grade(cls.s3, MATH, 6, D_Q1)
+        # Excluded populations: non-graded class, non-academic school.
+        junior = make_student(cls.school_a, '1-А', 'Хурд Хонанда')
+        make_grade(junior, MATH, 10, D_Q1)
+        office = make_school('Идораи маориф', type='Идора')
+        clerk = make_student(office, '7-А', 'Идора Хонанда')
+        make_grade(clerk, MATH, 3, D_Q1)
+
+    def _uncached_all(self):
+        from portal.views import (
+            _calculate_class_rankings_uncached,
+            _calculate_subject_rankings_uncached,
+            _calculate_top_students_uncached,
+        )
+        return [
+            _calculate_school_rankings_uncached(),
+            _calculate_class_rankings_uncached(),
+            _calculate_subject_rankings_uncached(),
+            _calculate_top_students_uncached(),
+        ]
+
+    def test_shared_scan_results_match_standalone(self):
+        from portal import views
+        from portal.views import sharing_ranking_grade_scan
+        standalone = self._uncached_all()
+        with mock.patch('portal.views.canonical_grade_values',
+                        wraps=views.canonical_grade_values) as spy:
+            with sharing_ranking_grade_scan():
+                shared = self._uncached_all()
+        self.assertEqual(spy.call_count, 1)
+        self.assertEqual(shared, standalone)
+
+    def test_dashboard_cold_load_scans_grades_once(self):
+        from portal import views
+        with mock.patch('portal.views.canonical_grade_values',
+                        wraps=views.canonical_grade_values) as spy:
+            resp = self.client.get(reverse('dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        # Formerly one full scan per ranking key (4).
+        self.assertEqual(spy.call_count, 1)
+        for key in RANKING_CACHE_KEYS[:4]:
+            self.assertIsNotNone(cache.get(key))
+        standalone = self._uncached_all()
+        self.assertEqual(resp.context['school_ranking'], standalone[0])
+        self.assertEqual(resp.context['subject_ranking'], standalone[2])
+        self.assertEqual(resp.context['top_students'],
+                         calculate_top_students())
+
+    def test_reused_scan_stamps_entry_at_scan_time(self):
+        # A save landing after the shared scan must not be masked: the
+        # entry computed from the reused rows is stamped no later than
+        # the scan, so it predates the dirty stamp and is not fresh.
+        from portal.views import sharing_ranking_grade_scan
+        with sharing_ranking_grade_scan():
+            calculate_school_rankings()  # performs the scan
+            make_grade(self.s3, MATH, 10, D_Q1_B)
+            calculate_subject_rankings()  # cold: reuses the scan
+        entry = cache.get('rank:v1:subject')
+        self.assertLess(entry[0], cache.get(RANKING_DIRTY_KEY))
+        with mock.patch('portal.views.RANKING_REFRESH_INTERVAL', 0):
+            self.assertEqual(
+                calculate_subject_rankings(), self._uncached_all()[2])
+
+    def test_no_sharing_outside_scope(self):
+        from portal.views import (
+            _shared_ranking_grade_rows, sharing_ranking_grade_scan,
+        )
+        self.assertIsNone(_shared_ranking_grade_rows())
+        with sharing_ranking_grade_scan():
+            self.assertIsNotNone(_shared_ranking_grade_rows())
+        self.assertIsNone(_shared_ranking_grade_rows())
+
+
 SF_KEY = 'rank:v1:test:singleflight'
 SF_KEYS = (SF_KEY, SF_KEY + RANKING_STALE_SUFFIX, SF_KEY + RANKING_LOCK_SUFFIX)
 

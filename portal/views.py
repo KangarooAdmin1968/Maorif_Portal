@@ -1334,6 +1334,40 @@ def _move_student(school, student, new_class_name, new_full_name=None,
         quarter_update = {'student': new_student}
         if relabel_quarter_grades:
             quarter_update['class_name'] = new_class_name
+            # Relabeling lands every stored row on new_class_name, so two
+            # rows that differed only by their old class label (a student
+            # who moved classes and kept rows from both) would collide on
+            # the unique_together key and abort the whole move. Survivor
+            # choice: a row already labeled with the target class wins —
+            # for a locked cell it is the value frozen under the lock now
+            # guarding that cell — otherwise the lowest pk survives (the
+            # canonical rule). The bulk recalc below re-derives unlocked
+            # cells either way. NULL-year legacy rows can never violate
+            # the constraint and stay untouched.
+            target_norm = normalize_class_name(new_class_name)
+            seen = {}
+            drop_pks = []
+            for stored in QuarterGrade.objects.filter(
+                    student_id=old_id).order_by('pk'):
+                if stored.academic_year is None:
+                    continue
+                key = (stored.subject, stored.quarter,
+                       stored.academic_year)
+                prev = seen.get(key)
+                if prev is None:
+                    seen[key] = stored
+                    continue
+                keep_stored = (
+                    normalize_class_name(stored.class_name) == target_norm
+                    and normalize_class_name(prev.class_name)
+                    != target_norm)
+                if keep_stored:
+                    drop_pks.append(prev.pk)
+                    seen[key] = stored
+                else:
+                    drop_pks.append(stored.pk)
+            if drop_pks:
+                QuarterGrade.objects.filter(pk__in=drop_pks).delete()
         QuarterGrade.objects.filter(student_id=old_id).update(**quarter_update)
         Student.objects.filter(id=old_id).delete()
         # QuerySet.update() bypasses the Grade signals, so the moved rows'
@@ -1862,7 +1896,8 @@ def _shared_ranking_grade_rows():
             and now - memo['at'] < RANKING_REFRESH_INTERVAL):
         return memo['rows']
     rows = canonical_grade_values(Grade.objects.filter(
-        score__isnull=False, date__range=bounds).values(
+        score__isnull=False,
+        date__range=bounds).order_by().values(
         'pk', 'student_id', 'subject', 'period', 'date',
         'assessment_id', 'lesson_id', 'score',
         'student__school_id', 'student__class_name').iterator())
@@ -1888,7 +1923,7 @@ def _calculate_school_rankings_uncached():
     if rows is None:
         rows = canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
-            date__range=(ay_start, ay_end)).values(
+            date__range=(ay_start, ay_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score',
             'student__school_id', 'student__class_name').iterator())
@@ -1978,7 +2013,7 @@ def _calculate_class_rankings_uncached():
     if rows is None:
         rows = canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
-            date__range=(ay_start, ay_end)).values(
+            date__range=(ay_start, ay_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score').iterator())
     for r in rows:
@@ -2103,7 +2138,7 @@ def _calculate_top_students_uncached():
         grade_rows = canonical_grade_values(Grade.objects.filter(
             student_filter, score__isnull=False,
             date__range=(ay_start, ay_end)
-        ).values('pk', 'student_id', 'subject', 'period', 'date',
+        ).order_by().values('pk', 'student_id', 'subject', 'period', 'date',
                  'assessment_id', 'lesson_id', 'score').iterator())
     else:
         # Python form of student_filter. The cell key includes
@@ -2200,7 +2235,7 @@ def _calculate_subject_rankings_uncached():
     if rows is None:
         rows = canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
-            date__range=(ay_start, ay_end)).values(
+            date__range=(ay_start, ay_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score').iterator())
     for r in rows:
@@ -5686,7 +5721,7 @@ def _all_student_gpas():
     totals = {}
     for r in canonical_grade_values(Grade.objects.filter(
             score__isnull=False,
-            date__range=(ay_start, ay_end)).values(
+            date__range=(ay_start, ay_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score').iterator()):
         _add_score(totals, r['student_id'], r['score'], 1)
@@ -7140,7 +7175,7 @@ def school_readiness_rating(request):
     pair_student_scored = defaultdict(dict)
     for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
-            date__range=(q_start, q_end)).values(
+            date__range=(q_start, q_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score',
             'student__school_id', 'student__class_name').iterator()):
@@ -7170,7 +7205,7 @@ def school_readiness_rating(request):
             student__school_id__in=school_ids,
             lesson__group__is_active=True,
             date__range=(q_start, q_end),
-    ).values('pk', 'student_id', 'subject', 'period', 'date',
+    ).order_by().values('pk', 'student_id', 'subject', 'period', 'date',
              'assessment_id', 'lesson_id', 'score',
              'lesson__class_subject_id', 'lesson__group_id').iterator()):
         gkey = (r['lesson__class_subject_id'], r['lesson__group_id'])
@@ -7180,7 +7215,7 @@ def school_readiness_rating(request):
     for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
             date__range=(q_start, q_end),
-    ).exclude(lesson__group__is_active=True).values(
+    ).exclude(lesson__group__is_active=True).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score',
             'student__subject_group_memberships__class_subject_id',

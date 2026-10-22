@@ -564,6 +564,67 @@ class MoveStudentQuarterTests(GoldenBase):
         self.assertEqual(QuarterGrade.objects.get(
             student=new, class_name='8-А', subject=MATH, quarter=1).grade, 6)
 
+    def test_relabel_colliding_class_rows_merge_to_one(self):
+        # Production collision: a student who accumulated quarter rows
+        # under two class labels gets relabeled into one class — the raw
+        # UPDATE would land both on the same unique_together key and abort
+        # the whole move with UNIQUE constraint failed. The row already
+        # labeled with the target class survives (target-label preference;
+        # lowest pk is only the fallback), and the bulk recalc re-derives
+        # its value.
+        make_grade(self.s1, score=8, date=D_Q1)
+        make_quarter_grade(self.s1, quarter=1, grade=3)               # '7-А'
+        make_quarter_grade(self.s1, class_name='7-Б',
+                           quarter=1, grade=4)                        # '7-Б'
+        new = self._move(self.s1, new_class='7-Б', new_name='Фирӯз Раҳимов')
+        rows = QuarterGrade.objects.filter(
+            student=new, class_name='7-Б', subject=MATH, quarter=1)
+        self.assertEqual(rows.count(), 1)
+        self.assertEqual(rows.get().grade, 8)  # re-derived from source
+
+    def test_relabel_keeps_null_year_legacy_rows(self):
+        # NULL-year legacy rows can never violate unique_together (NULLs
+        # compare distinct), so the collision dedupe must leave them
+        # untouched even when two share the same subject/quarter.
+        make_quarter_grade(self.s1, quarter=1, grade=3,
+                           academic_year=None)
+        make_quarter_grade(self.s1, class_name='7-Б', quarter=1,
+                           grade=4, academic_year=None)
+        new = self._move(self.s1, new_class='7-Б', new_name='Фирӯз Раҳимов')
+        legacy = QuarterGrade.objects.filter(
+            student=new, class_name='7-Б', subject=MATH, quarter=1,
+            academic_year__isnull=True)
+        self.assertEqual(legacy.count(), 2)
+
+    def test_locked_collision_prefers_target_class_row(self):
+        # Locked target cell: the recalc skips it entirely, so the
+        # surviving stored row IS the displayed value. The row already
+        # labeled '7-Б' is the value frozen under the lock now guarding
+        # the cell — it must win over a lower-pk row carried in from
+        # another class label.
+        make_quarter_grade(self.s1, quarter=1, grade=3)              # '7-А'
+        make_quarter_grade(self.s1, class_name='7-Б', quarter=1,
+                           grade=4)                                   # '7-Б'
+        lock_quarter(self.school_a, '7-Б', MATH, quarter=1)
+        new = self._move(self.s1, new_class='7-Б', new_name='Фирӯз Раҳимов')
+        row = QuarterGrade.objects.get(
+            student=new, class_name='7-Б', subject=MATH, quarter=1)
+        self.assertEqual(row.grade, 4)
+
+    def test_locked_collision_without_target_row_keeps_lowest_pk(self):
+        # No stored row carries the target label: fall back to the
+        # canonical lowest-pk survivor so the choice stays
+        # deterministic under a locked cell.
+        make_quarter_grade(self.s1, class_name='7-В', quarter=1,
+                           grade=5)
+        make_quarter_grade(self.s1, class_name='7-Г', quarter=1,
+                           grade=6)
+        lock_quarter(self.school_a, '7-Б', MATH, quarter=1)
+        new = self._move(self.s1, new_class='7-Б', new_name='Фирӯз Раҳимов')
+        row = QuarterGrade.objects.get(
+            student=new, class_name='7-Б', subject=MATH, quarter=1)
+        self.assertEqual(row.grade, 5)
+
 
 # ---------------------------------------------------------------------------
 # Journal rendering — quarter cells must stay display-only with no leaks

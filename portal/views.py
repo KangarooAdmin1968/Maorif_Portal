@@ -38,6 +38,7 @@ from .utils import (
     academic_school_ids, official_subjects,
     official_subjects_for, canonical_subject_for,
     registry_subjects_for, reactivate_class_subjects,
+    reverse_approved_deactivations,
     canonical_grade_rows, canonical_grade_values,
 )
 from .curriculum_hours import (
@@ -4406,35 +4407,39 @@ def add_remove_subject(request, school_id, class_name):
         subject = request.POST.get('subject', '').strip()
         subject = normalize_subject(subject)
         if action == 'add' and subject:
-            # Registry first: a canonical Subject + class-scoped availability
-            # keep the subject alive across ensure_class_subjects() sweeps —
-            # the ClassSubject row alone used to be silently deactivated.
-            # Official curriculum names need no registry entry.
-            canonical = None
-            if subject not in official_subjects():
-                canonical = canonical_subject_for(subject, user=request.user)
-                if canonical is not None:
-                    SubjectAvailability.objects.update_or_create(
-                        subject=canonical, school=school, class_name=class_name,
-                        defaults={'is_active': True},
-                    )
-            else:
-                # Re-adding a curriculum subject clears any opt-out an
-                # earlier 'remove' wrote (see below).
-                SubjectAvailability.objects.filter(
-                    subject__name=subject, school=school,
-                    class_name=class_name, is_active=False,
-                ).update(is_active=True)
-            obj, _ = get_or_create_unique(
-                ClassSubject,
-                school=school,
-                class_name=class_name,
-                subject=subject,
-                defaults={'is_active': True, 'is_default': False}
-            )
-            if not obj.is_active:
-                obj.is_active = True
-                obj.save(update_fields=['is_active'])
+            with transaction.atomic():
+                # Registry first: a canonical Subject + class-scoped availability
+                # keep the subject alive across ensure_class_subjects() sweeps —
+                # the ClassSubject row alone used to be silently deactivated.
+                # Official curriculum names need no registry entry.
+                canonical = None
+                if subject not in official_subjects():
+                    canonical = canonical_subject_for(subject, user=request.user)
+                    if canonical is not None:
+                        SubjectAvailability.objects.update_or_create(
+                            subject=canonical, school=school, class_name=class_name,
+                            defaults={'is_active': True},
+                        )
+                else:
+                    # Re-adding a curriculum subject clears any opt-out an
+                    # earlier 'remove' wrote (see below).
+                    SubjectAvailability.objects.filter(
+                        subject__name=subject, school=school,
+                        class_name=class_name, is_active=False,
+                    ).update(is_active=True)
+                obj, _ = get_or_create_unique(
+                    ClassSubject,
+                    school=school,
+                    class_name=class_name,
+                    subject=subject,
+                    defaults={'is_active': True, 'is_default': False}
+                )
+                if not obj.is_active:
+                    obj.is_active = True
+                    obj.save(update_fields=['is_active'])
+                # Explicit re-add lifts an approved deactivation so the next
+                # ensure_class_subjects() sweep keeps the row active.
+                reverse_approved_deactivations(school, class_name, subject)
         elif action == 'remove' and subject:
             ClassSubject.objects.filter(
                 school=school,
@@ -4706,11 +4711,14 @@ def subject_registry(request):
                     if scope == 'classes':
                         for cn in class_names:
                             cn = normalize_class_name(cn)
-                            SubjectAvailability.objects.update_or_create(
-                                subject=subject, school=sch, class_name=cn,
-                                defaults={'is_active': True},
-                            )
-                            ensure_class_subjects(sch, cn)
+                            with transaction.atomic():
+                                SubjectAvailability.objects.update_or_create(
+                                    subject=subject, school=sch, class_name=cn,
+                                    defaults={'is_active': True},
+                                )
+                                reverse_approved_deactivations(
+                                    sch, cn, subject.name)
+                                ensure_class_subjects(sch, cn)
                             saved = True
                     else:
                         SubjectAvailability.objects.update_or_create(
@@ -4791,11 +4799,14 @@ def subject_registry(request):
                 for sch in target_schools:
                     if scope == 'classes':
                         for cn in class_names:
-                            SubjectAvailability.objects.update_or_create(
-                                subject=subject, school=sch, class_name=cn,
-                                defaults={'is_active': True},
-                            )
-                            ensure_class_subjects(sch, cn)
+                            with transaction.atomic():
+                                SubjectAvailability.objects.update_or_create(
+                                    subject=subject, school=sch, class_name=cn,
+                                    defaults={'is_active': True},
+                                )
+                                reverse_approved_deactivations(
+                                    sch, cn, subject.name)
+                                ensure_class_subjects(sch, cn)
                     else:
                         SubjectAvailability.objects.update_or_create(
                             subject=subject, school=sch, class_name='',

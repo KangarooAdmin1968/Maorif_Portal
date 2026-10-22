@@ -683,6 +683,8 @@ class SubjectDeactivationRequest(models.Model):
         ('pending', 'Дар тайёри'),
         ('approved', 'Тасдиқ шуд'),
         ('rejected', 'Рад шуд'),
+        ('cancelled', 'Бекор шуд'),
+        ('reversed', 'Бекор гардид — фан барқарор шуд'),
     ], default='pending')
     reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_deactivations', verbose_name='Баррасикунанда')
     reviewed_at = models.DateTimeField('Санаи баррасӣ', null=True, blank=True)

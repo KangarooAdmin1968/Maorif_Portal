@@ -13,7 +13,9 @@ from .models import (
     Lesson, Assessment, SubjectAvailability,
     normalize_class_name, normalize_subject,
 )
-from .utils import class_numeric_part, canonical_subject_for
+from .utils import (
+    class_numeric_part, canonical_subject_for, reverse_approved_deactivations,
+)
 
 
 admin.site.site_header = "Шӯъбаи маорифи ноҳияи Зафаробод"
@@ -218,6 +220,7 @@ class ClassSubjectAdmin(admin.ModelAdmin):
                 subject__name=obj.subject, school=obj.school,
                 class_name=obj.class_name,
             ).update(is_active=True)
+            reverse_approved_deactivations(obj.school, obj.class_name, obj.subject)
         # Keep the explicit opt-out marker in sync so the class-move
         # reactivation path can tell an intentional removal from an
         # empty-class deactivation.
@@ -234,6 +237,7 @@ class ClassSubjectAdmin(admin.ModelAdmin):
                 subject__name=obj.subject, school=obj.school,
                 class_name=obj.class_name,
             ).update(is_active=True)
+            reverse_approved_deactivations(obj.school, obj.class_name, obj.subject)
 
 
 @admin.register(SubjectDeactivationRequest)

@@ -258,7 +258,7 @@
                     <td>{{ req.class_subject.subject }}</td>
                     <td>{{ req.class_subject.class_name }}</td>
                     <td>
-                        {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟢 Тасдиқ шуд</span>{% elif req.status == 'cancelled' %}<span class="badge" style="background:#6b7280; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">⚪ Бекор шуд</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🔴 Рад шуд</span>{% endif %}
+                        {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟡 Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🟢 Тасдиқ шуд</span>{% elif req.status == 'cancelled' %}<span class="badge" style="background:#6b7280; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">⚪ Бекор шуд</span>{% elif req.status == 'reversed' %}<span class="badge" style="background:#3b82f6; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">{{ req.get_status_display }}</span>{% else %}<span class="badge" style="background:#ef4444; color:#fff; padding:.2rem .5rem; border-radius:.3rem;">🔴 Рад шуд</span>{% endif %}
                     </td>
                     <td>{{ req.requested_at|date:"d.m.Y H:i" }}</td>
                     <td>

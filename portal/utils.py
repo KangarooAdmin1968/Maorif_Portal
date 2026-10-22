@@ -2,6 +2,7 @@ import re
 import os
 import io
 import pandas as pd
+from django.db import transaction
 from django.db.models import Q
 from django.conf import settings
 from .models import (
@@ -352,6 +353,30 @@ def ensure_class_subjects(school, class_name):
     # Deactivate any class subjects that are not part of the official curriculum
     ClassSubject.objects.filter(school=school, class_name=class_name).exclude(subject__in=official).update(is_active=False)
     return created
+
+
+def reverse_approved_deactivations(school, class_name, subject):
+    """Explicit re-add only: lift approved deactivations for exactly this
+    school + class + subject and re-enable the existing ClassSubject.
+
+    Approved requests become 'reversed' (kept for history), so
+    ensure_class_subjects() stops disabling the row. Teachers are left as
+    they are. Must never be called from page loads or ensure_class_subjects().
+    """
+    class_name = normalize_class_name(class_name)
+    subject = normalize_subject(subject)
+    with transaction.atomic():
+        reversed_count = SubjectDeactivationRequest.objects.filter(
+            class_subject__school=school,
+            class_subject__class_name=class_name,
+            class_subject__subject=subject,
+            status='approved',
+        ).update(status='reversed')
+        ClassSubject.objects.filter(
+            school=school, class_name=class_name, subject=subject,
+            is_active=False,
+        ).update(is_active=True)
+    return reversed_count
 
 
 def reactivate_class_subjects(school, class_name, require_students=True):

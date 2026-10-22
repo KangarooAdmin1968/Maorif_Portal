@@ -366,7 +366,7 @@
                                 <td>{{ req.class_subject.subject }}</td>
                                 <td>{{ req.class_subject.class_name }}</td>
                                 <td>
-                                    {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b;">Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981;">Тасдиқшуда</span>{% elif req.status == 'cancelled' %}<span class="badge" style="background:#6b7280;">Бекор шуд</span>{% else %}<span class="badge" style="background:#ef4444;">Радшуда</span>{% endif %}
+                                    {% if req.status == 'pending' %}<span class="badge" style="background:#f59e0b;">Дар интизорӣ</span>{% elif req.status == 'approved' %}<span class="badge" style="background:#10b981;">Тасдиқшуда</span>{% elif req.status == 'cancelled' %}<span class="badge" style="background:#6b7280;">Бекор шуд</span>{% elif req.status == 'reversed' %}<span class="badge" style="background:#3b82f6;">{{ req.get_status_display }}</span>{% else %}<span class="badge" style="background:#ef4444;">Радшуда</span>{% endif %}
                                 </td>
                                 <td>
                                     {% if req.status == 'pending' %}
@@ -528,7 +528,7 @@
                     <div class="mobile-card-body">
                         <div class="mobile-card-row"><span>Фан:</span> <strong>{{ req.class_subject.subject }}</strong></div>
                         <div class="mobile-card-row"><span>Синф:</span> <strong>{{ req.class_subject.class_name }}</strong></div>
-                        <div class="mobile-card-row"><span>Ҳолат:</span> <strong>{% if req.status == 'pending' %}Дар интизорӣ{% elif req.status == 'approved' %}Тасдиқшуда{% elif req.status == 'cancelled' %}Бекор шуд{% else %}Радшуда{% endif %}</strong></div>
+                        <div class="mobile-card-row"><span>Ҳолат:</span> <strong>{% if req.status == 'pending' %}Дар интизорӣ{% elif req.status == 'approved' %}Тасдиқшуда{% elif req.status == 'cancelled' %}Бекор шуд{% elif req.status == 'reversed' %}{{ req.get_status_display }}{% else %}Радшуда{% endif %}</strong></div>
                         {% if req.status == 'pending' %}
                         <div class="mobile-card-row">
                             <form action="{% url 'cancel_deactivation_request' %}" method="post" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед ин дархостро бекор кунед?');">

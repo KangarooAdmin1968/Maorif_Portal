@@ -10,12 +10,15 @@ Data sources (existing portal data only):
   - Student (school, class_name, full_name, gender)      -> rows, C, D
   - ClassSubject (is_active, minus UNGRADED_SUBJECTS)     -> subject columns E..X
   - QuarterGrade.grade for the chosen quarter             -> subject cells
+    (cells with no stored row fall back to the journal's provisional
+    Ҷорӣ value — numeric only; the Ҷ marker is never exported)
   - СОАТИ ТАРБИЯВӢ ClassSubject allocated_teacher/teacher -> роҳбари синф (AG1)
   - School.name / School.director                         -> title + signature
 """
 import datetime
 import io
 import re
+from collections import defaultdict
 from copy import copy
 from pathlib import Path
 
@@ -26,7 +29,7 @@ from openpyxl.worksheet.properties import PageSetupProperties
 
 from .curriculum_hours import UNGRADED_SUBJECTS
 from .models import (
-    ClassSubject, QuarterGrade, Student, TeacherProfile,
+    ClassSubject, Grade, QuarterGrade, Student, TeacherProfile,
     normalize_class_name, normalize_subject,
 )
 from .utils import default_subjects_for_class
@@ -99,6 +102,35 @@ def _academic_year(today=None):
     today = today or datetime.date.today()
     year = today.year if today.month >= 9 else today.year - 1
     return f'{year}-{year + 1}'
+
+
+def _live_quarter_grade_map(students, subjects, quarter, year):
+    """{(student_id, subject): provisional quarter grade} for cells the
+    stored QuarterGrade table cannot fill — the same value the journal
+    displays with the Ҷ marker.
+
+    The journal's own pipeline is reused verbatim: the Ҷорӣ Grade pool,
+    _split_quarter_grades quarter/year attribution, the calc_quarter_value
+    АҶЧ rule and std_round — so the report can never diverge from what
+    the journal shows. A (student, subject) pair with no valid source
+    rows is absent and its cell stays blank; the Ҷ marker itself is
+    display-only and is never exported.
+    """
+    from .views import (  # local import: views imports this module
+        _split_quarter_grades, calc_quarter_value, std_round)
+    pool = defaultdict(list)
+    for g in Grade.objects.filter(
+            student__in=students, subject__in=subjects,
+            period='Холҳои ҷорӣ (Онлайн)', score__isnull=False,
+            ).select_related('assessment'):
+        pool[(g.student_id, normalize_subject(g.subject))].append(g)
+    out = {}
+    for (sid, subj), rows in pool.items():
+        value = calc_quarter_value(
+            *_split_quarter_grades(rows, quarter, year))
+        if value is not None:
+            out[(sid, subj)] = std_round(value)
+    return out
 
 
 def _school_short_name(school):
@@ -182,6 +214,11 @@ def build_class_report_workbook(school, class_name, quarter, today=None):
             grade__isnull=False, academic_year=report_year,
         ).values_list('student_id', 'subject', 'grade')
     }
+    # Cells with no stored row get the provisional value the journal
+    # displays with the Ҷ marker; stored rows always win.
+    for key, grade in _live_quarter_grade_map(
+            students, subjects, quarter, report_year).items():
+        grades.setdefault(key, grade)
     teacher_name = class_teacher_name(school, class_name)
 
     wb = load_workbook(TEMPLATE_PATH)

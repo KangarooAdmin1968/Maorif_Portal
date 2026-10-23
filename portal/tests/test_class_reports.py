@@ -18,9 +18,10 @@ from portal.class_report import (
     report_subjects,
 )
 from portal.curriculum_hours import UNGRADED_SUBJECTS
-from portal.models import normalize_class_name
+from portal.models import Grade, QuarterGrade, normalize_class_name
 from portal.tests.helpers import (
-    D_Q1, MATH, TAJIK, GoldenBase, make_class_subject, make_quarter_grade,
+    D_Q1, D_Q1_B, D_Q2, D_PREV_Q1, MATH, PERIOD, TAJIK, GoldenBase,
+    lock_quarter, make_class_subject, make_grade, make_quarter_grade,
     make_school, make_student, make_teacher_profile, make_user,
 )
 
@@ -715,3 +716,90 @@ class OverallAverageAuditTests(GoldenBase):
         self.assertEqual(
             _audit_verdict(audit_f, z, ag, z * 10, ag * 10),
             'Ҳисоб дақиқ аст')
+
+
+class ProvisionalQuarterFallbackTests(GoldenBase):
+    """Cells with no stored QuarterGrade must export the same provisional
+    value the journal displays with the Ҷ marker — the shared Ҷорӣ pool
+    -> _split_quarter_grades -> calc_quarter_value -> std_round pipeline,
+    numeric only. Stored rows always win; insufficient data stays blank."""
+
+    def _build(self, quarter=1):
+        return load_workbook(build_class_report_workbook(
+            self.school_a, '7-А', quarter, today=D_Q1)).worksheets[0]
+
+    def _cell(self, ws, full_name, subject):
+        col = _subject_col(ws, subject)
+        self.assertIsNotNone(col)
+        for r in range(6, ws.max_row + 1):
+            if ws.cell(row=r, column=3).value == full_name:
+                return ws.cell(row=r, column=col).value
+        self.fail(f'{full_name} has no data row')
+
+    def _bulk_grades(self, *rows):
+        """Source rows without the post_save signal — bulk inserts leave
+        no derived QuarterGrade, exactly like production rows that never
+        went through the journal save path."""
+        Grade.objects.bulk_create([
+            Grade(student=s, subject=subj, score=score,
+                  period=PERIOD, date=date)
+            for s, subj, score, date in rows
+        ])
+
+    def test_missing_stored_row_uses_journal_value(self):
+        # Мадина has Q1 daily grades 8,10 but no stored QuarterGrade —
+        # the journal shows 9Ҷ; the report must export plain numeric 9.
+        self._bulk_grades(
+            (self.s2, MATH, 8, D_Q1), (self.s2, MATH, 10, D_Q1_B))
+        self.assertFalse(QuarterGrade.objects.filter(
+            student=self.s2, subject=MATH, quarter=1).exists())
+        ws = self._build()
+        self.assertEqual(self._cell(ws, 'Мадина Каримова', MATH), 9)
+        # A student with no data at all stays blank.
+        self.assertIsNone(self._cell(ws, 'Фирӯз Раҳимов', MATH))
+
+    def test_stored_row_wins_over_daily_grades(self):
+        # Stored 8 must not be overwritten by the live 2/3 projection.
+        make_quarter_grade(self.s2, '7-А', MATH, quarter=1, grade=8)
+        self._bulk_grades(
+            (self.s2, MATH, 2, D_Q1), (self.s2, MATH, 3, D_Q1_B))
+        ws = self._build()
+        self.assertEqual(self._cell(ws, 'Мадина Каримова', MATH), 8)
+
+    def test_mixed_stored_and_live_cells_in_one_row(self):
+        make_quarter_grade(self.s2, '7-А', TAJIK, quarter=1, grade=7)
+        self._bulk_grades((self.s2, MATH, 9, D_Q1))
+        ws = self._build()
+        self.assertEqual(self._cell(ws, 'Мадина Каримова', MATH), 9)
+        self.assertEqual(self._cell(ws, 'Мадина Каримова', TAJIK), 7)
+
+    def test_locked_quarter_gap_uses_journal_value(self):
+        """The production gap: a locked quarter makes the Grade signal
+        skip the QuarterGrade write, so the journal shows Ҷ while the
+        stored row never exists."""
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        make_grade(self.s2, MATH, 8, D_Q1)
+        make_grade(self.s2, MATH, 10, D_Q1_B)
+        self.assertFalse(QuarterGrade.objects.filter(
+            student=self.s2, subject=MATH, quarter=1).exists())
+        ws = self._build()
+        self.assertEqual(self._cell(ws, 'Мадина Каримова', MATH), 9)
+
+    def test_insufficient_data_stays_blank(self):
+        # Attendance-only rows carry no score — nothing valid to export.
+        make_grade(self.s2, MATH, None, D_Q1, attendance='+')
+        ws = self._build()
+        self.assertIsNone(self._cell(ws, 'Мадина Каримова', MATH))
+        self.assertIsNone(self._cell(ws, 'Фирӯз Раҳимов', MATH))
+
+    def test_other_quarter_and_prior_year_rows_do_not_leak(self):
+        self._bulk_grades(
+            (self.s2, MATH, 9, D_Q2),          # Q2, same academic year
+            (self.s2, TAJIK, 7, D_PREV_Q1),    # same slot, prior year
+        )
+        ws1 = self._build(quarter=1)
+        self.assertIsNone(self._cell(ws1, 'Мадина Каримова', MATH))
+        self.assertIsNone(self._cell(ws1, 'Мадина Каримова', TAJIK))
+        # The Q2 report does see the Q2 value — quarter scoping intact.
+        ws2 = self._build(quarter=2)
+        self.assertEqual(self._cell(ws2, 'Мадина Каримова', MATH), 9)

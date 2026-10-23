@@ -1656,10 +1656,18 @@ RANKING_STALE_SUFFIX = ':stale'
 # marker: while it exists nobody starts a refresh and readers keep the
 # shadow.
 RANKING_LOCK_SUFFIX = ':computing'
+# Site-wide refresh gate (504 fix): the per-key flock alone let misses on
+# DIFFERENT keys refresh in parallel — up to one full-table canonical
+# Grade scan per worker at once — saturating CPU/memory and pinning
+# request threads past nginx's 60s proxy timeout. The gate is a second
+# OS file lock taken before the per-key lock, so at most one ranking
+# refresh runs at a time anywhere; contenders keep the existing
+# shadow/bounded-wait behavior and never duplicate the work.
+RANKING_GATE_LOCK_NAME = 'rank:v1:gate'
 # Cold start (no shadow yet) while another worker holds the lock: wait
 # for its result up to RANKING_LOCK_WAIT seconds, taking the lock over
 # if the holder releases it or dies; kept below the 60s nginx/gunicorn
-# timeout. compute() never runs without the OS lock — a waiter that
+# timeout. compute() never runs without the OS locks — a waiter that
 # times out raises RankingRefreshBusy instead of duplicating the work.
 RANKING_LOCK_WAIT = 45
 RANKING_LOCK_POLL = 0.05
@@ -1760,11 +1768,27 @@ def _ranking_flock_release(handle):
 
 
 def _ranking_lock_acquire(key):
-    """Single-flight lock handle for `key`, or None when another refresh
-    holds it or a failed refresh is still backing off."""
+    """(key lock, refresh gate) pair when this caller may compute `key`,
+    or None when any refresh is in flight or a failed one is backing off.
+
+    Two OS file locks, always taken in the same order (gate first, then
+    per-key) so concurrent acquirers cannot deadlock. The gate admits at
+    most one refresh at a time across all keys and workers; the per-key
+    lock keeps a same-key duplicate impossible. Either piece being
+    unavailable — another holder or an unopenable lock file — yields
+    None and the caller keeps the shadow / bounded-wait behavior. A dead
+    holder's locks are released by the kernel.
+    """
     if _ranking_cache_get(key + RANKING_LOCK_SUFFIX) is not None:
         return None
-    return _ranking_flock_try(key)
+    gate = _ranking_flock_try(RANKING_GATE_LOCK_NAME)
+    if gate is None:
+        return None
+    handle = _ranking_flock_try(key)
+    if handle is None:
+        _ranking_flock_release(gate)
+        return None
+    return (handle, gate)
 
 
 def _ranking_lookup(key):
@@ -1782,9 +1806,10 @@ def _ranking_lookup(key):
     return False, None, stale
 
 
-def _ranking_refresh(key, compute, handle, stale):
-    """Recompute `key` while holding the single-flight lock; the lock is
-    released on every exit path, including a failed compute."""
+def _ranking_refresh(key, compute, locks, stale):
+    """Recompute `key` while holding `locks` — the (per-key lock,
+    refresh gate) pair from _ranking_lock_acquire; both are released on
+    every exit path, including a failed compute."""
     try:
         # A sibling may have finished the same refresh between our lookup
         # and the lock acquisition — reuse its result.
@@ -1817,7 +1842,8 @@ def _ranking_refresh(key, compute, handle, stale):
         _ranking_cache_delete(key + RANKING_LOCK_SUFFIX)
         return data
     finally:
-        _ranking_flock_release(handle)
+        for handle in locks:
+            _ranking_flock_release(handle)
 
 
 def _ranking_cached(key, compute):
@@ -1827,19 +1853,20 @@ def _ranking_cached(key, compute):
     so a save landing mid-refresh still invalidates the result via
     RANKING_DIRTY_KEY. Resolution order: fresh main entry; shadow entry
     inside the refresh interval (the rate limit); recompute under the
-    cross-process single-flight lock; shadow entry while another worker
-    refreshes; on a cold start, wait for that worker's result, taking
-    over the lock once it is released (holder finished, failed or died).
-    compute() only ever runs while holding the OS lock: a cold-start
-    waiter that cannot get it within RANKING_LOCK_WAIT raises
-    RankingRefreshBusy.
+    cross-process single-flight lock pair (site-wide gate + per-key
+    lock — at most one refresh runs anywhere); shadow entry while another
+    worker refreshes; on a cold start, wait for that worker's result,
+    taking over the locks once released (holder finished, failed or
+    died). compute() only ever runs while holding both OS locks: a
+    cold-start waiter that cannot get them within RANKING_LOCK_WAIT
+    raises RankingRefreshBusy.
     """
     hit, data, stale = _ranking_lookup(key)
     if hit:
         return data
-    handle = _ranking_lock_acquire(key)
-    if handle is not None:
-        return _ranking_refresh(key, compute, handle, stale)
+    locks = _ranking_lock_acquire(key)
+    if locks is not None:
+        return _ranking_refresh(key, compute, locks, stale)
     if isinstance(stale, tuple):
         return stale[1]
     for _ in range(int(RANKING_LOCK_WAIT / RANKING_LOCK_POLL)):
@@ -1847,9 +1874,9 @@ def _ranking_cached(key, compute):
         entry = _ranking_cache_get(key)
         if isinstance(entry, tuple):
             return entry[1]
-        handle = _ranking_lock_acquire(key)
-        if handle is not None:
-            return _ranking_refresh(key, compute, handle, stale)
+        locks = _ranking_lock_acquire(key)
+        if locks is not None:
+            return _ranking_refresh(key, compute, locks, stale)
     logger.error('Ranking refresh of %s: lock not obtained within %ss; '
                  'not computing without the lock', key, RANKING_LOCK_WAIT)
     raise RankingRefreshBusy(

@@ -27,7 +27,8 @@ from portal.tests.helpers import (
 from portal.views import (
     RANKING_ALL_CACHE_KEYS, RANKING_CACHE_KEYS, RANKING_CACHE_TTL,
     RANKING_GPAS_CACHE_KEY,
-    RANKING_DIRTY_KEY, RANKING_LOCK_SUFFIX, RANKING_STALE_SUFFIX,
+    RANKING_DIRTY_KEY, RANKING_GATE_LOCK_NAME, RANKING_LOCK_SUFFIX,
+    RANKING_STALE_SUFFIX,
     RANKING_STALE_TTL, RankingRefreshBusy,
     _all_student_gpas, _calculate_school_rankings_uncached,
     _ranking_cached, _ranking_flock_release, _ranking_flock_try,
@@ -459,6 +460,41 @@ class RankingCacheTests(GoldenBase):
         self.assertTrue(activity)
         self.assertTrue(all(a['gpa'] is None for a in activity))
 
+    # --- H4: site-wide refresh gate (504 fix) ------------------------------
+    # While ANY ranking refresh holds the gate, a cold miss elsewhere must
+    # degrade — not start a second parallel full-table scan.
+
+    def test_dashboard_degrades_while_unrelated_refresh_runs(self):
+        gate = _ranking_flock_try(RANKING_GATE_LOCK_NAME)
+        self.assertIsInstance(gate, int)
+        try:
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.1), \
+                    mock.patch(
+                        'portal.views._calculate_school_rankings_uncached',
+                        side_effect=AssertionError('parallel compute')):
+                resp = self.client.get(reverse('dashboard'))
+        finally:
+            _ranking_flock_release(gate)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['school_ranking'], [])
+
+    def test_readiness_blank_gpa_while_unrelated_refresh_runs(self):
+        self.client.force_login(self.admin)
+        gate = _ranking_flock_try(RANKING_GATE_LOCK_NAME)
+        self.assertIsInstance(gate, int)
+        try:
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.1), \
+                    mock.patch(
+                        'portal.views._calculate_school_rankings_uncached',
+                        side_effect=AssertionError('parallel compute')):
+                resp = self.client.get(reverse('school_readiness_rating'))
+        finally:
+            _ranking_flock_release(gate)
+        self.assertEqual(resp.status_code, 200)
+        activity = resp.context['activity']
+        self.assertTrue(activity)
+        self.assertTrue(all(a['gpa'] is None for a in activity))
+
     # --- I: student_detail GPA map -----------------------------------------
     # 'rank:v1:gpas' caches the district-wide {student_id: gpa} map that
     # student_detail needs per request. Same bounded-refresh scheme as the
@@ -719,7 +755,12 @@ class StudentDetailRankPassTests(GoldenBase):
 
 
 SF_KEY = 'rank:v1:test:singleflight'
-SF_KEYS = (SF_KEY, SF_KEY + RANKING_STALE_SUFFIX, SF_KEY + RANKING_LOCK_SUFFIX)
+SF_KEY_B = 'rank:v1:test:singleflight-b'
+SF_KEYS = (
+    SF_KEY, SF_KEY + RANKING_STALE_SUFFIX, SF_KEY + RANKING_LOCK_SUFFIX,
+    SF_KEY_B, SF_KEY_B + RANKING_STALE_SUFFIX,
+    SF_KEY_B + RANKING_LOCK_SUFFIX,
+)
 
 # Child process: try the same non-blocking OS lock the view uses and
 # print LOCKED (held elsewhere) or FREE. No Django import needed.
@@ -967,6 +1008,74 @@ class RankingSingleFlightTests(SimpleTestCase):
         finally:
             _ranking_flock_release(handle)
         self.assertEqual(probe(), 'FREE')
+
+    # --- site-wide refresh gate (504 fix) ---------------------------------
+    # The per-key flock alone allowed misses on DIFFERENT keys to compute
+    # in parallel — one full-table canonical scan per worker at once. The
+    # gate serializes every refresh to one at a time.
+
+    def test_gate_serializes_refreshes_across_keys(self):
+        # Key A's refresh is in flight (gate held by its owner); a cold
+        # miss on key B must not start a second parallel scan — it waits
+        # then raises busy; after A finishes, B computes exactly once.
+        started = threading.Event()
+        finish = threading.Event()
+
+        def compute_a():
+            started.set()
+            finish.wait(10)
+            return 'a'
+
+        res_a = []
+        t = threading.Thread(
+            target=lambda: res_a.append(_ranking_cached(SF_KEY, compute_a)))
+        t.start()
+        self.assertTrue(started.wait(5))
+        try:
+            compute_b, calls_b = self._counting_compute()
+            with mock.patch('portal.views.RANKING_LOCK_WAIT', 0.3):
+                with self.assertRaises(RankingRefreshBusy):
+                    _ranking_cached(SF_KEY_B, compute_b)
+            self.assertEqual(calls_b, [])
+        finally:
+            finish.set()
+            t.join(10)
+        self.assertEqual(res_a, ['a'])
+        # With the gate free again, the same cold miss computes normally.
+        self.assertEqual(_ranking_cached(SF_KEY_B, compute_b), 'fresh')
+        self.assertEqual(len(calls_b), 1)
+
+    def test_gate_held_elsewhere_serves_stale_immediately(self):
+        # Shadow-first behavior is unchanged: a reader that cannot take
+        # the gate still gets the stale copy — no wait, no compute.
+        cache.set(SF_KEY + RANKING_STALE_SUFFIX,
+                  (time.time() - 100, 'stale'), RANKING_STALE_TTL)
+        gate = _ranking_flock_try(RANKING_GATE_LOCK_NAME)
+        self.assertIsInstance(gate, int)
+        try:
+            compute, calls = self._counting_compute()
+            self.assertEqual(_ranking_cached(SF_KEY, compute), 'stale')
+            self.assertEqual(calls, [])
+        finally:
+            _ranking_flock_release(gate)
+
+    def test_gate_released_on_success_and_on_failure(self):
+        # Both exit paths of _ranking_refresh must free the gate —
+        # otherwise a single refresh would stall every later recompute.
+        compute, calls = self._counting_compute()
+        self.assertEqual(_ranking_cached(SF_KEY, compute), 'fresh')
+        self.assertEqual(len(calls), 1)
+        gate = _ranking_flock_try(RANKING_GATE_LOCK_NAME)
+        self.assertIsInstance(gate, int)
+        _ranking_flock_release(gate)
+
+        def boom():
+            raise RuntimeError('db down')
+        with self.assertRaises(RuntimeError):
+            _ranking_cached(SF_KEY_B, boom)
+        gate = _ranking_flock_try(RANKING_GATE_LOCK_NAME)
+        self.assertIsInstance(gate, int)
+        _ranking_flock_release(gate)
 
 
 class SharedCacheBackendTests(TestCase):

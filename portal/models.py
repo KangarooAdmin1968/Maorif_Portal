@@ -477,7 +477,7 @@ class Grade(models.Model):
     subject = models.CharField('Фан', max_length=100)
     score = models.FloatField('Хол', blank=True, null=True)
     period = models.CharField('Давра', max_length=100, default='Холҳои ҷорӣ (Онлайн)')
-    date = models.DateField('Сана', default=datetime.date.today)
+    date = models.DateField('Сана', default=datetime.date.today, db_index=True)
     attendance = models.CharField('Давомат', max_length=10, blank=True, null=True, choices=[('+', '+ (босабаб)'), ('-', '- (бесабаб)')])
     behavior_score = models.IntegerField('Хулқ-атвор', blank=True, null=True, choices=[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)])
     sticker = models.CharField('Стикер', max_length=10, blank=True, null=True, choices=[('⭐', 'Ситора'), ('☀️', 'Офтобак'), ('🌸', 'Гул'), ('📖', 'Китоб')])

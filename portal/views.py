@@ -7257,78 +7257,67 @@ def _compute_school_readiness_payload(schools, gpa_map):
     class_student_counts = {
         key: len(ids) for key, ids in class_student_ids.items()
     }
+    # Group attribution maps. Grade has no teacher FK, so attribution is
+    # derived: Grade.lesson.group wins when set (concrete teaching event);
+    # legacy lesson-less / group-less rows fall back to the student's
+    # current SubjectGroupMembership — an approximation for pre-split
+    # history, never fabricated. Loaded before the grade scan so a single
+    # pass can feed both paths — the membership JOIN fan-out the old
+    # third scan used is replaced by an in-memory lookup.
+    group_members = defaultdict(set)
+    student_memberships = defaultdict(list)
+    for m in SubjectGroupMembership.objects.filter(
+            class_subject__school_id__in=school_ids,
+            class_subject__is_active=True,
+            group__is_active=True,
+    ).values('class_subject_id', 'class_subject__subject', 'group_id',
+             'student_id'):
+        gkey = (m['class_subject_id'], m['group_id'])
+        group_members[gkey].add(m['student_id'])
+        student_memberships[m['student_id']].append(
+            (gkey, normalize_subject(m['class_subject__subject'])))
+
     # Per-student current-quarter rows keyed by the student's own
-    # school+class+subject: one grouped query feeds both the raw pair
-    # totals and the norm math, which counts only academic rows
-    # (score__isnull=False) — attendance/behavior/sticker-only marks
-    # never satisfy the grading norm.
+    # school+class+subject: one canonical pass feeds the raw pair totals,
+    # the norm math (academic score__isnull=False rows only), and both
+    # group-attribution paths — previously three separate scans of the
+    # same quarter rows, the last one widened by the membership JOIN.
     pair_grade_counts = defaultdict(int)
     pair_scored_counts = defaultdict(int)
     pair_student_scored = defaultdict(dict)
+    group_grade_counts = defaultdict(int)
+    group_student_scored = defaultdict(lambda: defaultdict(int))
     for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
             date__range=(q_start, q_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score',
-            'student__school_id', 'student__class_name').iterator()):
+            'student__school_id', 'student__class_name',
+            'lesson__class_subject_id', 'lesson__group_id',
+            'lesson__group__is_active').iterator()):
         key = (r['student__school_id'], r['student__class_name'], r['subject'])
         pair_grade_counts[key] += 1
-        if r['score'] is not None:
+        scored = r['score'] is not None
+        if scored:
             pair_scored_counts[key] += 1
             sid = r['student_id']
             pair_student_scored[key][sid] = pair_student_scored[key].get(sid, 0) + 1
-    # Group attribution maps. Grade has no teacher FK, so attribution is
-    # derived: Grade.lesson.group wins when set (concrete teaching event);
-    # legacy lesson-less / group-less rows fall back to the student's
-    # current SubjectGroupMembership — an approximation for pre-split
-    # history, never fabricated.
-    group_members = defaultdict(set)
-    for m in SubjectGroupMembership.objects.filter(
-            class_subject__school_id__in=school_ids,
-            class_subject__is_active=True,
-            group__is_active=True,
-    ).values('class_subject_id', 'group_id', 'student_id'):
-        group_members[(m['class_subject_id'], m['group_id'])].add(
-            m['student_id'])
-    group_size = {key: len(ids) for key, ids in group_members.items()}
-    group_grade_counts = defaultdict(int)
-    group_student_scored = defaultdict(lambda: defaultdict(int))
-    for r in canonical_grade_values(Grade.objects.filter(
-            student__school_id__in=school_ids,
-            lesson__group__is_active=True,
-            date__range=(q_start, q_end),
-    ).order_by().values('pk', 'student_id', 'subject', 'period', 'date',
-             'assessment_id', 'lesson_id', 'score',
-             'lesson__class_subject_id', 'lesson__group_id').iterator()):
-        gkey = (r['lesson__class_subject_id'], r['lesson__group_id'])
-        group_grade_counts[gkey] += 1
-        if r['score'] is not None:
-            group_student_scored[gkey][r['student_id']] += 1
-    for r in canonical_grade_values(Grade.objects.filter(
-            student__school_id__in=school_ids,
-            date__range=(q_start, q_end),
-    ).exclude(lesson__group__is_active=True).order_by().values(
-            'pk', 'student_id', 'subject', 'period', 'date',
-            'assessment_id', 'lesson_id', 'score',
-            'student__subject_group_memberships__class_subject_id',
-            'student__subject_group_memberships__class_subject__subject',
-            'student__subject_group_memberships__group_id',
-            'student__subject_group_memberships__group__is_active',
-    ).iterator(), extra_key=lambda r: (
-            r['student__subject_group_memberships__class_subject_id'],
-            r['student__subject_group_memberships__group_id'])):
-        if not r['student__subject_group_memberships__group__is_active']:
-            continue
-        cs_subject = r['student__subject_group_memberships__class_subject__subject']
-        if normalize_subject(r['subject']) != normalize_subject(cs_subject):
-            continue
-        gkey = (
-            r['student__subject_group_memberships__class_subject_id'],
-            r['student__subject_group_memberships__group_id'],
-        )
-        group_grade_counts[gkey] += 1
-        if r['score'] is not None:
-            group_student_scored[gkey][r['student_id']] += 1
+        if r['lesson__group__is_active']:
+            # Concrete teaching event: the grade belongs to the lesson's
+            # own group regardless of current membership.
+            gkey = (r['lesson__class_subject_id'], r['lesson__group_id'])
+            group_grade_counts[gkey] += 1
+            if scored:
+                group_student_scored[gkey][r['student_id']] += 1
+        else:
+            subj_norm = normalize_subject(r['subject'])
+            for gkey, cs_subject_norm in student_memberships.get(
+                    r['student_id'], ()):
+                if subj_norm != cs_subject_norm:
+                    continue
+                group_grade_counts[gkey] += 1
+                if scored:
+                    group_student_scored[gkey][r['student_id']] += 1
     class_subjects = list(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
         .exclude(class_name__regex=NON_GRADED_RE)

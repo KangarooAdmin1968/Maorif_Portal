@@ -55,6 +55,7 @@ from .tabel import (
     workload_snapshot,
 )
 from .class_report import ClassReportError, build_class_report_workbook
+from .zavuch_report import build_zavuch_report_workbook
 from .tariff_rates import suggested_rate_map, tariff_data_available
 from .monitoring import (
     can_access_monitoring, get_activity_summary, scope_monitoring_stats,
@@ -7930,6 +7931,37 @@ def class_report_export(request):
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
+    return response
+
+
+@login_required
+def zavuch_report_export(request):
+    """Ҳуҷҷатнигорӣ → Ҳисоботи завуч: А.Ҷ.Ч. school summary as xlsx.
+
+    Same gate, school isolation and quarter param as the class reports.
+    Band cells hold computed counts; Омад/Рафт stay blank for manual
+    entry until the portal tracks student mobility.
+    """
+    if not _tabel_access(request.user):
+        return redirect('dashboard')
+    school = _class_report_school(request)
+    if not school:
+        messages.warning(request, 'Ҳисобот учун муассисани танланг.')
+        return redirect('dashboard')
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    output = build_zavuch_report_workbook(school, quarter)
+
+    filename = (
+        f"Ҳисоботи_завуч_{get_school_number(school)}_чорак{quarter}.xlsx")
+    encoded_filename = urllib.parse.quote(filename)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = (
+        f"attachment; filename*=utf-8''{encoded_filename}")
     return response
 
 

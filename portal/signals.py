@@ -120,10 +120,11 @@ def invalidate_ranking_caches(sender, **kwargs):
     """
     from .views import (  # local import avoids cycles
         RANKING_CACHE_KEYS, RANKING_DIRTY_KEY, RANKING_DIRTY_TTL,
+        READINESS_CACHE_KEY,
     )
 
     try:
-        cache.delete_many(RANKING_CACHE_KEYS)
+        cache.delete_many(RANKING_CACHE_KEYS + (READINESS_CACHE_KEY,))
         cache.set(RANKING_DIRTY_KEY, time.time(), timeout=RANKING_DIRTY_TTL)
     except Exception:
         logger.exception('Failed to invalidate ranking caches')

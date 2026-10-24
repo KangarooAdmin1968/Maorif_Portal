@@ -1676,12 +1676,20 @@ RANKING_LOCK_POLL = 0.05
 # invalidates its result — only entries post-dating this stamp are fresh.
 RANKING_DIRTY_KEY = 'rank:v1:dirty'
 RANKING_DIRTY_TTL = RANKING_STALE_TTL
+# District-wide school_readiness_rating payload. Kept out of
+# RANKING_CACHE_KEYS so the four leaderboards' warmup/invalidation
+# bookkeeping is untouched; the dirty stamp still bounds its freshness
+# and signals delete it alongside the others.
+READINESS_CACHE_KEY = 'rank:v1:readiness'
 # Every cache key the ranking cache can touch (used to fully reset it).
 RANKING_ALL_CACHE_KEYS = (
     RANKING_CACHE_KEYS
     + tuple(k + RANKING_STALE_SUFFIX for k in RANKING_CACHE_KEYS)
     + tuple(k + RANKING_LOCK_SUFFIX for k in RANKING_CACHE_KEYS)
     + (RANKING_DIRTY_KEY,)
+    + (READINESS_CACHE_KEY,
+       READINESS_CACHE_KEY + RANKING_STALE_SUFFIX,
+       READINESS_CACHE_KEY + RANKING_LOCK_SUFFIX)
 )
 
 
@@ -7096,6 +7104,64 @@ def school_readiness_rating(request):
         schools = [user_school] if user_school and is_academic_school(user_school) else []
     else:
         schools = [s for s in School.objects.all() if is_academic_school(s)]
+
+    # Use the exact same school-GPA formula as the academic leaderboard
+    # (calculate_school_rankings) so all leaderboards show identical
+    # values. Fetched here, before the readiness payload's own lock, so
+    # the cached call can never nest inside the site-wide refresh gate.
+    try:
+        gpa_map = {
+            item['school'].id: item['gpa']
+            for item in calculate_school_rankings()
+        }
+    except RankingRefreshBusy:
+        # Cold school ranking still being refreshed by another worker:
+        # leave the GPA column blank rather than failing or recomputing.
+        gpa_map = None
+
+    user_school = get_user_school(request.user)
+    if zavuch_scoped:
+        # One school is cheap enough to compute per request.
+        data, activity = _compute_school_readiness_payload(
+            schools, gpa_map)
+    else:
+        # The district-wide payload is shared by every staff/superuser
+        # viewer: run it through the same bounded-refresh cache as the
+        # other rankings so concurrent opens do not each rescan the
+        # quarter's Grade rows. A refresh busy past LOCK_WAIT renders
+        # empty blocks instead of hanging the request.
+        try:
+            data, activity = _ranking_cached(
+                READINESS_CACHE_KEY,
+                lambda: _compute_school_readiness_payload(
+                    schools, gpa_map))
+        except RankingRefreshBusy:
+            data, activity = [], []
+    # Per-viewer flag — stamped after the (possibly cached) payload is
+    # retrieved so a cached value never carries another user's mark.
+    for item in activity:
+        item['is_mine'] = bool(
+            user_school and item['school'].id == user_school.id)
+
+    return render(request, 'portal/school_readiness_rating.html', {
+        'stats': data,
+        'activity': activity,
+        'min_norm_bands': MIN_GRADES_BANDS,
+        'zavuch_scope': zavuch_scoped,
+    })
+
+
+def _compute_school_readiness_payload(schools, gpa_map):
+    """Build (stats, activity) for the readiness leaderboard.
+
+    stats — tab 1, lesson-allocation readiness per school.
+    activity — tab 2, grading activity + teacher workload per school.
+    Heavy: several canonical scans of the quarter's Grade rows, so the
+    district-wide call is served through _ranking_cached; zavuch's
+    single-school call is cheap enough to compute per request.
+    gpa_map — {school_id: gpa} from calculate_school_rankings, or None
+    (the GPA column is then left blank). is_mine is stamped by the view.
+    """
     school_ids = [s.id for s in schools]
 
     # Active TeachingGroups per CS — drives both the tab-1 staffing check
@@ -7166,7 +7232,6 @@ def school_readiness_rating(request):
     # Tab 2: live district grading-activity leaderboard.
     # "Active students" and norm expectations exclude non-graded class levels ('0' and '1').
     NON_GRADED_RE = r'^(0|1)(-|$|[^0-9])'
-    user_school = get_user_school(request.user)
     # Norm fulfillment is a current-quarter, time-aware metric: only Grade
     # rows dated inside today's quarter count, and only the elapsed share
     # of the quarterly minimum is expected. The 100% cap is display-only —
@@ -7264,17 +7329,6 @@ def school_readiness_rating(request):
         group_grade_counts[gkey] += 1
         if r['score'] is not None:
             group_student_scored[gkey][r['student_id']] += 1
-    # Use the exact same school-GPA formula as the academic leaderboard
-    # (calculate_school_rankings) so all leaderboards show identical values.
-    try:
-        gpa_map = {
-            item['school'].id: item['gpa']
-            for item in calculate_school_rankings()
-        }
-    except RankingRefreshBusy:
-        # Cold school ranking still being refreshed by another worker:
-        # leave the GPA column blank rather than failing or recomputing.
-        gpa_map = None
     class_subjects = list(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
         .exclude(class_name__regex=NON_GRADED_RE)
@@ -7400,7 +7454,7 @@ def school_readiness_rating(request):
             'gpa': (gpa_map.get(school.id, 0.0)
                     if gpa_map is not None else None),
             'teachers': teachers,
-            'is_mine': bool(user_school and user_school.id == school.id),
+            'is_mine': False,  # stamped per viewer by the view
         })
     activity.sort(key=lambda x: (-x['fulfillment'], -x['total_grades']))
 
@@ -7413,12 +7467,7 @@ def school_readiness_rating(request):
             prev_fulfillment = item['fulfillment']
         item['rank'] = rank
 
-    return render(request, 'portal/school_readiness_rating.html', {
-        'stats': data,
-        'activity': activity,
-        'min_norm_bands': MIN_GRADES_BANDS,
-        'zavuch_scope': zavuch_scoped,
-    })
+    return data, activity
 
 
 @login_required

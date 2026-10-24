@@ -460,6 +460,21 @@ class RankingCacheTests(GoldenBase):
         self.assertTrue(activity)
         self.assertTrue(all(a['gpa'] is None for a in activity))
 
+    def test_readiness_second_get_served_from_cache(self):
+        """A second district-wide open inside the TTL returns the cached
+        payload — the quarter Grade scans do not run again."""
+        self.client.force_login(self.admin)
+        first = self.client.get(reverse('school_readiness_rating'))
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.context['activity'])
+        with mock.patch(
+                'portal.views._compute_school_readiness_payload',
+                side_effect=AssertionError('recomputed')):
+            resp = self.client.get(reverse('school_readiness_rating'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.context['activity']),
+                         len(first.context['activity']))
+
     # --- H4: site-wide refresh gate (504 fix) ------------------------------
     # While ANY ranking refresh holds the gate, a cold miss elsewhere must
     # degrade — not start a second parallel full-table scan.
@@ -478,7 +493,9 @@ class RankingCacheTests(GoldenBase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context['school_ranking'], [])
 
-    def test_readiness_blank_gpa_while_unrelated_refresh_runs(self):
+    def test_readiness_degrades_while_unrelated_refresh_runs(self):
+        """Gate held + cold readiness cache: the page degrades to empty
+        blocks rather than starting an unguarded district-wide scan."""
         self.client.force_login(self.admin)
         gate = _ranking_flock_try(RANKING_GATE_LOCK_NAME)
         self.assertIsInstance(gate, int)
@@ -491,9 +508,8 @@ class RankingCacheTests(GoldenBase):
         finally:
             _ranking_flock_release(gate)
         self.assertEqual(resp.status_code, 200)
-        activity = resp.context['activity']
-        self.assertTrue(activity)
-        self.assertTrue(all(a['gpa'] is None for a in activity))
+        self.assertEqual(resp.context['stats'], [])
+        self.assertEqual(resp.context['activity'], [])
 
     # --- I: student_detail GPA map -----------------------------------------
     # 'rank:v1:gpas' caches the district-wide {student_id: gpa} map that

@@ -61,13 +61,16 @@ class MaorifReportExportTests(GoldenBase):
         self.assertEqual(ws['N8'].value, 50.0)
 
     def test_ungraded_students_listed_in_note(self):
-        # s1 gets a grade; s2 and s3 stay ungraded -> Эзоҳ lists both.
+        # s1 gets a grade; s2 and s3 stay ungraded -> one row per school.
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=8)
         ws = self._ws(self._get(self.admin))
         note = ws['A10'].value or ''
         self.assertIn('синфи 1-ум', note)
-        self.assertIn('синфи 7-А-и МТМУ №1', note)
-        self.assertIn('синфи 7-Б-и МТМУ №2', note)
+        self.assertIn('Баҳо нагирифтаанд', ws['A11'].value or '')
+        self.assertIn('МТМУ №1', ws['A12'].value or '')
+        self.assertIn('7-А (1)', ws['A12'].value or '')
+        self.assertIn('МТМУ №2', ws['A13'].value or '')
+        self.assertIn('7-Б (1)', ws['A13'].value or '')
 
     def test_level1_students_only_in_note(self):
         make_student(self.school_a, '1-А', 'Сарвиноз Одилова')

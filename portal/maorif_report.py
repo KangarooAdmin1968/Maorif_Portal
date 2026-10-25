@@ -178,6 +178,10 @@ def _write_header(ws):
         c = ws.cell(row=5, column=col, value=text)
         c.font = Font(bold=True, size=10)
         c.alignment = CENTER
+    # Merged cells never auto-grow — reserve height so the wrapped
+    # captions (esp. the long col-N one) stay fully visible.
+    ws.row_dimensions[4].height = 42
+    ws.row_dimensions[5].height = 15
 
 
 def _write_data_row(ws, r, index, name, data, bold=None):
@@ -227,33 +231,55 @@ def _border_table(ws, last_row):
 def _write_footer(ws, start_row, stats, prepared_by):
     ordinal = QUARTER_WORD_ORDINALS.get(
         stats['quarter'], f"{stats['quarter']}-ум")
-    ws.merge_cells(start_row=start_row, start_column=1,
-                   end_row=start_row, end_column=LAST_COL)
-    note = ('Эзоҳ: Шумораи хонандагони синфи 1-ум '
-            f"{stats['level1_total']} нафар, аз он ҷумла духтар "
-            f"{stats['level1_girls']} нафарро ташкил медиҳад.")
-    if stats['ungraded']:
-        listed = '; '.join(
-            f"{u['n']} нафар хонандаи синфи {u['class_name']}-и "
-            f"{u['school_name']}" for u in stats['ungraded'])
-        note += (f" Баҳо нагирифтаанд дар чоряки {ordinal}: {listed}.")
-    cell = ws.cell(row=start_row, column=1, value=note)
-    cell.alignment = LEFT
-    cell.font = Font(size=10, italic=True)
+    row = start_row
 
-    ws.merge_cells(start_row=start_row + 2, start_column=1,
-                   end_row=start_row + 2, end_column=6)
-    ws.cell(row=start_row + 2, column=1,
+    def line(text, font):
+        nonlocal row
+        ws.merge_cells(start_row=row, start_column=1,
+                       end_row=row, end_column=LAST_COL)
+        c = ws.cell(row=row, column=1, value=text)
+        c.alignment = LEFT
+        c.font = font
+        row += 1
+
+    line('Эзоҳ: Шумораи хонандагони синфи 1-ум '
+         f"{stats['level1_total']} нафар, аз он ҷумла духтар "
+         f"{stats['level1_girls']} нафарро ташкил медиҳад.",
+         Font(size=10, italic=True))
+
+    if stats['ungraded']:
+        # One row per school, classes compact — errors stay scannable
+        # without one giant wrapped sentence.
+        line(f'Баҳо нагирифтаанд дар чоряки {ordinal}:',
+             Font(size=10, italic=True, bold=True))
+        by_school = defaultdict(list)
+        for u in stats['ungraded']:
+            by_school[u['school_name']].append(u)
+        order = [r['school_name'] for r in stats['rows']
+                 if r['school_name'] in by_school]
+        order += [n for n in by_school if n not in set(order)]
+        for school_name in order:
+            items = by_school[school_name]
+            listed = ', '.join(f"{u['class_name']} ({u['n']})"
+                               for u in items)
+            line(f'{school_name}: {listed} — жами '
+                 f"{sum(u['n'] for u in items)} нафар",
+                 Font(size=9, italic=True))
+
+    row += 1
+    ws.merge_cells(start_row=row, start_column=1,
+                   end_row=row, end_column=6)
+    ws.cell(row=row, column=1,
             value=f'Мудири шуъбаи маориф:    {_district_director_name()}'
                   .rstrip())
-    ws.merge_cells(start_row=start_row + 3, start_column=1,
-                   end_row=start_row + 3, end_column=6)
-    ws.cell(row=start_row + 3, column=1,
+    ws.merge_cells(start_row=row + 1, start_column=1,
+                   end_row=row + 1, end_column=6)
+    ws.cell(row=row + 1, column=1,
             value=f'Ичрокунанда:    {prepared_by}'.rstrip())
 
 
 def _layout(ws):
-    widths = {1: 5, 2: 26, 3: 14, 4: 12, 13: 11, 14: 16}
+    widths = {1: 5, 2: 26, 3: 14, 4: 12, 13: 11, 14: 18}
     for col in range(1, LAST_COL + 1):
         ws.column_dimensions[get_column_letter(col)].width = (
             widths.get(col, 8))

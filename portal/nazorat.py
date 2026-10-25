@@ -11,6 +11,7 @@ from collections import defaultdict
 
 from django.db.models import Count
 
+from .curriculum_hours import UNGRADED_SUBJECTS
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
 from .models import ClassSubject, Grade, QuarterGrade, Student, normalize_subject
 from .utils import class_numeric_part
@@ -134,6 +135,8 @@ def collect_teacher_control(school, quarter, today=None):
     for cs in subjects:
         if class_numeric_part(cs.class_name) not in LEVELS:
             continue  # grade-1 classes follow the sticker journal, not marks
+        if normalize_subject(cs.subject) in UNGRADED_SUBJECTS:
+            continue  # e.g. СОАТИ ТАРБИЯВӢ — no grades are required
         total = roster.get(cs.class_name, 0)
         got = graded.get(
             (cs.class_name, normalize_subject(cs.subject)), 0)

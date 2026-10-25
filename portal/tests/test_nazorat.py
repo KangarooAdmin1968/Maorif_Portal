@@ -146,3 +146,5 @@ class NazoratTests(GoldenBase):
         rows = resp.context['teachers']['rows']
         self.assertFalse(any(r['subject'] == MATH for r in rows))
         self.assertFalse(any(r['class_name'] == '7-Б' for r in rows))
+        # Un-graded subjects (СОАТИ ТАРБИЯВӢ) never appear as a gap.
+        self.assertFalse(any('ТАРБИЯВ' in r['subject'] for r in rows))

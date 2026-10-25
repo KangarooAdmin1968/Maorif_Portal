@@ -41,9 +41,14 @@
 
 <div class="print-toolbar no-print">
     <button type="button" class="btn btn-success" onclick="window.print()">🖨️ Чоп кардан</button>
+    {% if can_school_docs %}
     <a href="{% url 'workload_tabel' %}" class="btn">📋 Табели сарборӣ</a>
     <a href="{% url 'class_reports' %}" class="btn">📊 Ҳисоботи синфҳо</a>
     <a href="{% url 'zavuch_report_export' %}" class="btn">📈 Ҳисоботи завуч</a>
+    {% endif %}
+    {% if can_maorif %}
+    <a href="{% url 'maorif_report_export' %}" class="btn">🏛 Ҳисоботи маориф</a>
+    {% endif %}
     <a href="{% url 'dashboard' %}" class="btn">Бозгашт</a>
 </div>
 

@@ -55,6 +55,7 @@ from .tabel import (
     workload_snapshot,
 )
 from .class_report import ClassReportError, build_class_report_workbook
+from .maorif_report import build_maorif_report_workbook
 from .zavuch_report import build_zavuch_report_workbook
 from .tariff_rates import suggested_rate_map, tariff_data_available
 from .monitoring import (
@@ -7472,7 +7473,9 @@ def school_documents(request):
     """
     role = get_user_role(request.user)
     is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
-    if not (request.user.is_superuser or request.user.is_staff or is_zavuch):
+    can_maorif = _maorif_report_access(request.user)
+    if not (request.user.is_superuser or request.user.is_staff or is_zavuch
+            or role == settings.ROLE_DIRECTOR):
         return redirect('dashboard')
 
     school = get_user_school(request.user)
@@ -7556,6 +7559,8 @@ def school_documents(request):
     return render(request, 'portal/documents_landing.html', {
         'school': school,
         'workload': workload,
+        'can_maorif': can_maorif,
+        'can_school_docs': _tabel_access(request.user),
     })
 
 
@@ -7955,6 +7960,39 @@ def zavuch_report_export(request):
 
     filename = (
         f"Ҳисоботи_завуч_{get_school_number(school)}_чорак{quarter}.xlsx")
+    encoded_filename = urllib.parse.quote(filename)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = (
+        f"attachment; filename*=utf-8''{encoded_filename}")
+    return response
+
+
+def _maorif_report_access(user):
+    """District summary: superuser, маориф staff and the district director.
+
+    Zavuchs are deliberately excluded — the table compares all schools.
+    """
+    return (user.is_superuser or user.is_staff
+            or get_user_role(user) == settings.ROLE_DIRECTOR)
+
+
+@login_required
+def maorif_report_export(request):
+    """Ҳуҷҷатнигорӣ → Ҳисоботи маориф: district А.Ҷ.Ч. summary as xlsx.
+
+    Rows are the academic schools; band cells use the same per-student
+    quarter-average buckets as the school-level завуч report.
+    """
+    if not _maorif_report_access(request.user):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    prepared_by = request.user.get_full_name() or request.user.username
+    output = build_maorif_report_workbook(quarter, prepared_by=prepared_by)
+
+    filename = f"Ҳисоботи_маориф_АҶЧ{quarter}.xlsx"
     encoded_filename = urllib.parse.quote(filename)
     response = HttpResponse(
         output.read(),

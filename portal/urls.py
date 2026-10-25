@@ -69,6 +69,7 @@ urlpatterns = [
     path('schools/documents/class-reports/', views.class_reports, name='class_reports'),
     path('schools/documents/class-reports/export/', views.class_report_export, name='class_report_export'),
     path('schools/documents/zavuch-report/', views.zavuch_report_export, name='zavuch_report_export'),
+    path('schools/documents/maorif-report/', views.maorif_report_export, name='maorif_report_export'),
     path('monitoring-dashboard/', views.monitoring_dashboard, name='monitoring_dashboard'),
     path('monitoring-dashboard/export/', views.export_monitoring_excel, name='export_monitoring_excel'),
     path('top-students/', views.top_students_ajax, name='top_students_ajax'),

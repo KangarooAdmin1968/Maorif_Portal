@@ -246,6 +246,64 @@ class Student(models.Model):
                 )
 
 
+class StudentMovement(models.Model):
+    """Омад/рафт journal — one row per student joining or leaving.
+
+    student_name / class_name / gender are frozen snapshots: the record
+    must keep its meaning after the Student row is deleted (рафт) or
+    renamed. The optional ``student`` FK survives while the student
+    exists. ``academic_year`` is the September-start year (same
+    convention as QuarterGrade) so reports filter without re-deriving.
+    Same-school class transfers never write a row — _move_student only
+    re-keys the Student record, it is not a school-level move.
+    """
+    MOVEMENT_TYPES = [
+        ('arrival', 'Омад'),
+        ('departure', 'Рафт'),
+    ]
+
+    school = models.ForeignKey(
+        School, on_delete=models.CASCADE, related_name='student_movements',
+        verbose_name='Муассиса')
+    student = models.ForeignKey(
+        Student, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='movements', verbose_name='Хонанда')
+    student_name = models.CharField('Ному насаб', max_length=255)
+    class_name = models.CharField('Синф', max_length=20)
+    gender = models.CharField(
+        'Ҷинс', max_length=1, choices=Student.GENDER_CHOICES, blank=True)
+    movement_type = models.CharField(
+        'Навъ', max_length=10, choices=MOVEMENT_TYPES)
+    date = models.DateField('Сана', default=datetime.date.today)
+    academic_year = models.PositiveSmallIntegerField('Соли таҳсил')
+    is_manual = models.BooleanField('Дастӣ ворид шуд', default=False)
+    note = models.CharField('Эзоҳ', max_length=255, blank=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='recorded_movements', verbose_name='Сабткунанда')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Ҳаракати хонанда'
+        verbose_name_plural = 'Ҳаракатҳои хонандагон'
+        ordering = ['-date', '-id']
+        indexes = [
+            models.Index(fields=['school', 'academic_year', 'date']),
+        ]
+
+    def __str__(self):
+        return (f"{self.student_name} — {self.class_name} — "
+                f"{self.get_movement_type_display()} — {self.date}")
+
+    def save(self, *args, **kwargs):
+        self.class_name = normalize_class_name(self.class_name)
+        if not self.academic_year:
+            self.academic_year = (
+                self.date.year if self.date.month >= 9
+                else self.date.year - 1)
+        super().save(*args, **kwargs)
+
+
 class ClassSubject(models.Model):
     school = models.ForeignKey(School, on_delete=models.CASCADE, verbose_name='Муассиса')
     class_name = models.CharField('Синф', max_length=20)

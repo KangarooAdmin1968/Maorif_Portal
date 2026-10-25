@@ -43,6 +43,7 @@
         </label>
         <noscript><button type="submit" class="btn">Намоиш</button></noscript>
     </form>
+    <a href="{% url 'student_movements' %}{% if district_view and school %}?school_id={{ school.id }}{% endif %}" class="btn">🔁 Омад-рафт</a>
 </div>
 
 {% if stats %}

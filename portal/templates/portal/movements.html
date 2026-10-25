@@ -1,0 +1,176 @@
+{% extends 'portal/base.html' %}
+{% block title %}Омад-рафт{% endblock %}
+{% block extra_head %}
+<style>
+  .nz-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+  .nz-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .nz-toolbar select, .nz-toolbar input { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; }
+  .doc-card { background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem; padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
+  .doc-card h2 { margin: 0 0 .6rem; font-size: 1.05rem; color: #003366; }
+  table.nz-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  table.nz-table th, table.nz-table td { border: 1px solid #d1d5db; padding: .4rem .65rem; text-align: left; vertical-align: top; }
+  table.nz-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
+  table.nz-table td.center, table.nz-table th.center { text-align: center; }
+  .ok-note { color: #166534; font-weight: 600; }
+  .tag-manual { font-size: .72rem; background: #fef3c7; color: #92400e; border-radius: .3rem; padding: .05rem .35rem; }
+  .tag-arr { color: #166534; font-weight: 600; }
+  .tag-dep { color: #b91c1c; font-weight: 600; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>📋 Омад-рафт{% if school %} — {{ school.name }}{% endif %}</h1>
+
+<div class="nz-toolbar no-print">
+    <form method="get" action="{% url 'student_movements' %}">
+        {% if district_view %}
+        <label>Муассиса
+            <select name="school_id" onchange="this.form.submit()">
+                {% for s in schools %}
+                <option value="{{ s.id }}"{% if school and s.id == school.id %} selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% endif %}
+        <label>Чоряк
+            <select name="quarter" onchange="this.form.submit()">
+                {% for q in quarters %}
+                <option value="{{ q }}"{% if q == quarter %} selected{% endif %}>{{ q }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn">Намоиш</button></noscript>
+    </form>
+    <a href="{% url 'nazorat' %}{% if district_view and school %}?school_id={{ school.id }}{% endif %}" class="btn">🔎 Назорат</a>
+</div>
+
+{% if summary %}
+<div class="doc-card">
+    <h2>Ҳаракати хонандагон — чоряки {{ quarter }}
+        <span style="font-weight:400; font-size:.8rem; color:#6b7280;">({{ summary.start|date:"d.m.Y" }} – {{ summary.end|date:"d.m.Y" }})</span>
+    </h2>
+    <table class="nz-table">
+        <thead>
+            <tr>
+                <th rowspan="2">Синф</th>
+                <th colspan="2" class="center">Аввали чоряк</th>
+                <th colspan="2" class="center">Омад</th>
+                <th colspan="2" class="center">Рафт</th>
+                <th colspan="2" class="center">Охири чоряк</th>
+            </tr>
+            <tr>
+                <th class="center">Ҳамагӣ</th><th class="center">аз ҷ. духтарон</th>
+                <th class="center">Ҳамагӣ</th><th class="center">аз ҷ. духтарон</th>
+                <th class="center">Ҳамагӣ</th><th class="center">аз ҷ. духтарон</th>
+                <th class="center">Ҳамагӣ</th><th class="center">аз ҷ. духтарон</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in summary.rows %}
+            <tr>
+                <td>{{ r.class_name }}</td>
+                <td class="center">{{ r.start_total }}</td><td class="center">{{ r.start_f }}</td>
+                <td class="center">{{ r.arr_total }}</td><td class="center">{{ r.arr_f }}</td>
+                <td class="center">{{ r.dep_total }}</td><td class="center">{{ r.dep_f }}</td>
+                <td class="center">{{ r.end_total }}</td><td class="center">{{ r.end_f }}</td>
+            </tr>
+            {% endfor %}
+            <tr style="font-weight:700; background:#f3f4f6;">
+                <td>Хамагӣ</td>
+                <td class="center">{{ summary.totals.start_total }}</td><td class="center">{{ summary.totals.start_f }}</td>
+                <td class="center">{{ summary.totals.arr_total }}</td><td class="center">{{ summary.totals.arr_f }}</td>
+                <td class="center">{{ summary.totals.dep_total }}</td><td class="center">{{ summary.totals.dep_f }}</td>
+                <td class="center">{{ summary.totals.end_total }}</td><td class="center">{{ summary.totals.end_f }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="doc-card">
+    <h2>Қайдҳо</h2>
+    {% if summary.movements %}
+    <table class="nz-table">
+        <thead><tr>
+            <th class="center" style="width:95px;">Сана</th>
+            <th>Ному насаб</th>
+            <th class="center" style="width:70px;">Синф</th>
+            <th class="center" style="width:70px;">Навъ</th>
+            <th class="center" style="width:80px;">Ҷинс</th>
+            <th>Эзоҳ</th>
+            {% if can_edit %}<th class="center" style="width:60px;"></th>{% endif %}
+        </tr></thead>
+        <tbody>
+            {% for m in summary.movements %}
+            <tr>
+                <td class="center">{{ m.date|date:"d.m.Y" }}</td>
+                <td>{{ m.student_name }}{% if m.is_manual %} <span class="tag-manual">дастӣ</span>{% endif %}</td>
+                <td class="center">{{ m.class_name }}</td>
+                <td class="center">
+                    {% if m.movement_type == 'arrival' %}<span class="tag-arr">Омад</span>
+                    {% else %}<span class="tag-dep">Рафт</span>{% endif %}
+                </td>
+                <td class="center">{% if m.gender == 'F' %}Духтар{% elif m.gender == 'M' %}Писар{% else %}—{% endif %}</td>
+                <td>{{ m.note }}</td>
+                {% if can_edit %}
+                <td class="center">
+                    <form method="post" action="{% url 'movement_delete' %}"
+                          onsubmit="return confirm('Қайд нест карда шавад?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="movement_id" value="{{ m.id }}">
+                        <input type="hidden" name="school_id" value="{{ school.id }}">
+                        <input type="hidden" name="quarter" value="{{ quarter }}">
+                        <button type="submit" class="btn" style="padding:.1rem .45rem;">✕</button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <p class="ok-note">✔ Дар ин чоряк ҳаракат сабт нашудааст.</p>
+    {% endif %}
+</div>
+
+{% if can_edit %}
+<div class="doc-card no-print">
+    <h2>Қайди нав (дастӣ)</h2>
+    <form method="post" action="{% url 'movement_add' %}" class="nz-toolbar">
+        {% csrf_token %}
+        <input type="hidden" name="school_id" value="{{ school.id }}">
+        <input type="hidden" name="quarter" value="{{ quarter }}">
+        <label>Ному насаб
+            <input type="text" name="full_name" required>
+        </label>
+        <label>Синф
+            <input type="text" name="class_name" list="class-list" required placeholder="масалан 7-А">
+            <datalist id="class-list">
+                {% for c in class_options %}<option value="{{ c }}">{% endfor %}
+            </datalist>
+        </label>
+        <label>Навъ
+            <select name="movement_type">
+                <option value="arrival">Омад</option>
+                <option value="departure">Рафт</option>
+            </select>
+        </label>
+        <label>Сана
+            <input type="date" name="date" value="{{ today }}" required>
+        </label>
+        <label>Ҷинс
+            <select name="gender">
+                <option value="">Автоматик</option>
+                <option value="M">Писар</option>
+                <option value="F">Духтар</option>
+            </select>
+        </label>
+        <label>Эзоҳ
+            <input type="text" name="note">
+        </label>
+        <button type="submit" class="btn btn-success">Сабт кардан</button>
+    </form>
+</div>
+{% endif %}
+{% else %}
+<p>Муассиса интихоб нашудааст.</p>
+{% endif %}
+{% endblock %}

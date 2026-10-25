@@ -41,9 +41,9 @@ class ZavuchReportExportTests(GoldenBase):
         self.assertEqual(ws[f'B{r}'].value, 'СИНФИ 7')
         self.assertEqual(ws[f'C{r}'].value, 2)
         self.assertEqual(ws[f'D{r}'].value, 1)   # Мадина — духтар
-        # Омад/Рафт stay blank — manual entry until mobility tracking.
+        # Омад/Рафт come from the mobility journal — no rows yet -> 0.
         for col in 'EFGH':
-            self.assertIsNone(ws[f'{col}{r}'].value)
+            self.assertEqual(ws[f'{col}{r}'].value, 0)
         self.assertEqual(ws[f'I{r}'].value, f'=C{r}+E{r}-G{r}')
         # Graded count + bands: s1 avg 9 -> 9-10; s2 has no grade -> Бе хол.
         self.assertEqual(ws[f'K{r}'].value, 1)

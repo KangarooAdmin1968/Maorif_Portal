@@ -29,7 +29,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, CLASS_LETTERS
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, StudentMovement, CLASS_LETTERS
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -3150,12 +3150,17 @@ def add_student(request, school_id, class_name):
     if Student.objects.filter(id=student_id).exists():
         messages.warning(request, 'Хонанда бо ин ном аллакай вуҷуд дорад.')
     else:
-        Student.objects.create(
+        student = Student.objects.create(
             id=student_id,
             full_name=full_name,
             class_name=class_name,
             school=school
         )
+        StudentMovement.objects.create(
+            school=school, student=student,
+            student_name=student.full_name, class_name=class_name,
+            gender=student.gender or '', movement_type='arrival',
+            date=datetime.date.today(), created_by=request.user)
         reactivate_class_subjects(school, class_name)
         messages.success(request, 'Хонанда илова шуд.')
     return redirect('class_detail', school_id=school.id, class_name=class_name)
@@ -3172,6 +3177,11 @@ def remove_student(request, school_id, class_name):
     if student_id:
         try:
             student = Student.objects.get(id=student_id, school=school, class_name=class_name)
+            StudentMovement.objects.create(
+                school=school, student=student,
+                student_name=student.full_name, class_name=class_name,
+                gender=student.gender or '', movement_type='departure',
+                date=datetime.date.today(), created_by=request.user)
             student.delete()
             messages.success(request, 'Хонанда хориҷ карда шуд.')
         except Student.DoesNotExist:
@@ -8042,6 +8052,134 @@ def nazorat(request):
         'att_options': att_options,
         'teachers': teachers,
     })
+
+
+def _movement_scope(request):
+    """(school, district_view, schools, allowed) for the Омад-рафт pages.
+
+    Same audience and school resolution as the Назорат tab: the zavuch
+    is bound to their own school; district viewers pick ?school_id=.
+    """
+    if not _nazorat_access(request.user):
+        return None, False, [], False
+    if not _maorif_report_access(request.user):
+        return get_user_school(request.user), False, [], True
+    from .maorif_report import _district_sort_key
+    schools = sorted(academic_schools(), key=_district_sort_key)
+    school = get_user_school(request.user)
+    school_id = (request.GET.get('school_id')
+                 or request.POST.get('school_id'))
+    if school_id:
+        try:
+            school = School.objects.get(pk=int(school_id))
+        except (ValueError, School.DoesNotExist):
+            pass
+    if school is None and schools:
+        school = schools[0]
+    return school, True, schools, True
+
+
+def _movement_redirect(request, school, quarter):
+    url = f"{reverse('student_movements')}?quarter={quarter}"
+    if school and _maorif_report_access(request.user):
+        url += f"&school_id={school.id}"
+    return redirect(url)
+
+
+@login_required
+def student_movements(request):
+    """📋 Омад-рафт — the school's student mobility journal.
+
+    Automatic rows are written by add_student / remove_student; the
+    zavuch can add manual rows (moves that predate tracking) or delete
+    mistakes. The А.Ҷ.Ч. export fills its Омад/Рафт columns from the
+    same records.
+    """
+    school, district_view, schools, allowed = _movement_scope(request)
+    if not allowed:
+        return redirect('dashboard')
+    quarter, invalid_quarter = _class_report_quarter(request)
+    if invalid_quarter:
+        messages.warning(
+            request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
+
+    summary = None
+    class_options = []
+    if school is not None:
+        from .movements import collect_movements
+        summary = collect_movements(school, quarter)
+        class_options = sorted(
+            set(Student.objects.filter(school=school)
+                .exclude(class_name='')
+                .values_list('class_name', flat=True)),
+            key=lambda n: (class_numeric_part(n) or 0, n))
+    return render(request, 'portal/movements.html', {
+        'school': school,
+        'schools': schools,
+        'district_view': district_view,
+        'quarter': quarter,
+        'quarters': [1, 2, 3, 4],
+        'summary': summary,
+        'class_options': class_options,
+        'can_edit': bool(school)
+        and _can_manage_school(request.user, school),
+        'today': timezone.localdate().isoformat(),
+    })
+
+
+@login_required
+@require_POST
+def movement_add(request):
+    """Manual Омад/Рафт row — covers moves that predate tracking."""
+    school, _, _, allowed = _movement_scope(request)
+    if (not allowed or school is None
+            or not _can_manage_school(request.user, school)):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+
+    full_name = request.POST.get('full_name', '').strip()
+    class_name = _validate_class_name(request.POST.get('class_name'))
+    mtype = request.POST.get('movement_type', '')
+    gender = request.POST.get('gender', '').strip()
+    note = request.POST.get('note', '').strip()
+    try:
+        date = datetime.date.fromisoformat(
+            request.POST.get('date', '').strip())
+    except ValueError:
+        date = None
+
+    if not full_name or not class_name \
+            or mtype not in ('arrival', 'departure') or date is None:
+        messages.error(request, 'Иттилоот нопурра — қайд сабт нашуд.')
+        return _movement_redirect(request, school, quarter)
+
+    if gender not in ('M', 'F'):
+        from .gender_detector import detect_student_gender
+        gender = detect_student_gender(full_name) or ''
+    student = Student.objects.filter(
+        school=school, class_name=class_name,
+        full_name=full_name).first()
+    StudentMovement.objects.create(
+        school=school, student=student, student_name=full_name,
+        class_name=class_name, gender=gender, movement_type=mtype,
+        date=date, is_manual=True, note=note, created_by=request.user)
+    messages.success(request, 'Қайд сабт шуд.')
+    return _movement_redirect(request, school, quarter)
+
+
+@login_required
+@require_POST
+def movement_delete(request):
+    """Remove a journal row — only rows of the resolved school."""
+    school, _, _, allowed = _movement_scope(request)
+    if (not allowed or school is None
+            or not _can_manage_school(request.user, school)):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    StudentMovement.objects.filter(
+        pk=request.POST.get('movement_id'), school=school).delete()
+    messages.success(request, 'Қайд нест карда шуд.')
+    return _movement_redirect(request, school, quarter)
 
 
 @login_required

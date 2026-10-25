@@ -9,7 +9,7 @@ from .forms import ClassSubjectAdminForm, BulkClassSubjectForm
 from .models import (
     School, Teacher, Student, Grade, QuarterGrade, QuarterLock,
     ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth,
-    SubjectDeactivationRequest,
+    SubjectDeactivationRequest, StudentMovement,
     Lesson, Assessment, SubjectAvailability,
     normalize_class_name, normalize_subject,
 )
@@ -42,6 +42,15 @@ class StudentAdmin(admin.ModelAdmin):
     list_display = ['id', 'full_name', 'class_name', 'school', 'gender']
     list_filter = ['school', 'class_name', 'gender']
     search_fields = ['full_name', 'id']
+
+
+@admin.register(StudentMovement)
+class StudentMovementAdmin(admin.ModelAdmin):
+    list_display = ['date', 'student_name', 'class_name', 'gender',
+                    'movement_type', 'school', 'is_manual', 'created_by']
+    list_filter = ['movement_type', 'school', 'academic_year', 'is_manual']
+    search_fields = ['student_name', 'class_name']
+    date_hierarchy = 'date'
 
 
 @admin.register(Grade)

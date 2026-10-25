@@ -7,10 +7,9 @@ header block, band formulas and signature lines preserved.
 Data sources (existing portal data only):
   - Student (class level, gender)               -> C, D (+Эзоҳ row for level 1)
   - QuarterGrade.grade for the chosen quarter    -> K, L and band cells N/P/T
+  - StudentMovement (Омад/Рафт journal)          -> E..H, and the
+    quarter-start baseline inside C/D
   - School.name / School.director                -> title + signature
-  - Омад/Рафт columns E..H stay blank — the portal has no student
-    mobility records yet; the I/J formulas fold the zavuch's manual
-    entries into the end-of-quarter counts.
 """
 import io
 from collections import defaultdict
@@ -20,7 +19,7 @@ from django.conf import settings
 from openpyxl import load_workbook
 
 from .class_report import QUARTER_ORDINALS, _director_name
-from .models import QuarterGrade, Student
+from .models import QuarterGrade, Student, StudentMovement
 from .utils import class_numeric_part
 
 TEMPLATE_PATH = (
@@ -65,7 +64,8 @@ def build_zavuch_report_workbook(school, quarter):
     QuarterGrade.grade rows in the chosen quarter/current academic year;
     students without any quarter grade land in Бе хол (V = I-K).
     """
-    from .views import academic_year_start  # local import avoids cycles
+    from .views import (  # local imports avoid cycles
+        academic_year_start, academic_year_quarter_windows)
 
     if quarter not in (1, 2, 3, 4):
         raise ZavuchReportError('Чораки нодуруст.')
@@ -74,9 +74,9 @@ def build_zavuch_report_workbook(school, quarter):
     ws = wb.active
     ay = academic_year_start()
 
-    # Roster by grade level. "Аввали чоряк" uses the current roster — the
-    # Омад/Рафт columns adjust the end-of-quarter count once the zavuch
-    # enters mobility numbers by hand.
+    # Roster by grade level; C/D carry the roster at quarter start — the
+    # live count minus arrivals plus departures recorded in the mobility
+    # journal — so end-of-quarter I/J lands back on the live roster.
     levels = {lvl: [0, 0] for lvl in range(1, 12)}   # [total, girls]
     for s in Student.objects.filter(school=school).values(
             'class_name', 'gender'):
@@ -85,6 +85,19 @@ def build_zavuch_report_workbook(school, quarter):
             levels[lvl][0] += 1
             if s['gender'] == 'F':
                 levels[lvl][1] += 1
+
+    qstart, qend = academic_year_quarter_windows(ay)[quarter]
+    moved = {lvl: [0, 0, 0, 0] for lvl in LEVELS}  # arr, arr_f, dep, dep_f
+    for m in StudentMovement.objects.filter(
+            school=school, date__gte=qstart, date__lte=qend).values(
+            'class_name', 'gender', 'movement_type'):
+        lvl = class_numeric_part(m['class_name'])
+        if lvl not in moved:
+            continue
+        i = 0 if m['movement_type'] == 'arrival' else 2
+        moved[lvl][i] += 1
+        if m['gender'] == 'F':
+            moved[lvl][i + 1] += 1
 
     # Quarter grades -> per-student average -> band, grouped by level.
     sums = {}
@@ -115,11 +128,13 @@ def build_zavuch_report_workbook(school, quarter):
         r = FIRST_DATA_ROW + i
         ws[f'A{r}'] = i + 1
         ws[f'B{r}'] = f'СИНФИ {lvl}'
-        ws[f'C{r}'] = levels[lvl][0]
-        ws[f'D{r}'] = levels[lvl][1]
-        # Омад/Рафт: blank — filled by hand until mobility tracking exists.
-        for col in 'EFGH':
-            ws[f'{col}{r}'] = None
+        arr_t, arr_f, dep_t, dep_f = moved[lvl]
+        ws[f'C{r}'] = levels[lvl][0] - arr_t + dep_t
+        ws[f'D{r}'] = levels[lvl][1] - arr_f + dep_f
+        ws[f'E{r}'] = arr_t
+        ws[f'F{r}'] = arr_f
+        ws[f'G{r}'] = dep_t
+        ws[f'H{r}'] = dep_f
         ws[f'I{r}'] = f'=C{r}+E{r}-G{r}'
         ws[f'J{r}'] = f'=D{r}+F{r}-H{r}'
         g = graded[lvl]

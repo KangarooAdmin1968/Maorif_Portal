@@ -108,14 +108,18 @@ def collect_attendance_control(school, period, today=None):
 
 def collect_teacher_control(school, quarter, today=None):
     """Only class-subjects WITH a gap: allocated active subjects where
-    fewer students hold a quarter grade than are enrolled.
+    fewer students have a journal mark (Grade.score) this quarter than
+    are enrolled — i.e. the teacher has not graded everyone yet.
 
-    Aggregated in three passes (subjects, roster sizes, graded counts)
-    so a 25-school district picker stays fast.
+    Daily Grade rows are read, not QuarterGrade: the чорак mark is only
+    entered at quarter close, so counting it would falsely show 0 for
+    teachers who already work in the journal.
     """
     from .views import academic_year_start  # local import avoids cycles
 
     ay = academic_year_start(today)
+    today = today or datetime.date.today()
+    start, end, _, _ = _period_bounds(f'q{quarter}', ay, today)
     subjects = (ClassSubject.objects
                 .filter(school=school, is_active=True)
                 .select_related('teacher', 'allocated_teacher')
@@ -124,11 +128,12 @@ def collect_teacher_control(school, quarter, today=None):
               Student.objects.filter(school=school)
               .exclude(class_name='')
               .values('class_name').annotate(n=Count('id'))}
-    graded = {(r['class_name'], r['subject']): r['n'] for r in
-              QuarterGrade.objects
-              .filter(student__school=school, quarter=quarter,
-                      academic_year=ay, grade__isnull=False)
-              .values('class_name', 'subject')
+    graded = {(r['student__class_name'], r['subject']): r['n'] for r in
+              Grade.objects
+              .filter(student__school=school,
+                      date__gte=start, date__lte=end,
+                      score__isnull=False)
+              .values('student__class_name', 'subject')
               .annotate(n=Count('student', distinct=True))}
 
     rows = []

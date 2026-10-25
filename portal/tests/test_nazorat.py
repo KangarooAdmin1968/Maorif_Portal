@@ -106,3 +106,43 @@ class NazoratTests(GoldenBase):
         resp = self.client.get(reverse('nazorat'), {'att': 'm10'})
         att = resp.context['attendance']
         self.assertEqual(att['totals']['total'], 0)   # school A has none
+
+    def test_teacher_gaps_only_listed(self):
+        # 7-А МАТЕМАТИКА has 2 students; only s1 gets a quarter grade
+        # -> teacher_1's row shows 1/2; the auto-seeded default subjects
+        # (no teacher assigned) appear as таъйин нашудааст.
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'))
+        teachers = resp.context['teachers']
+        math_rows = [r for r in teachers['rows'] if r['subject'] == MATH]
+        self.assertEqual(len(math_rows), 1)
+        row = math_rows[0]
+        self.assertEqual(
+            (row['class_name'], row['graded'], row['total']),
+            ('7-А', 1, 2))
+        self.assertEqual(row['teacher'], 'teacher_1')
+        self.assertTrue(any(r['teacher'] == 'таъйин нашудааст'
+                            for r in teachers['rows']))
+        # School B's class never leaks into school A's page.
+        self.assertFalse(any(r['class_name'] == '7-Б'
+                             for r in teachers['rows']))
+
+        # Once s2 is graded too, the МАТЕМАТИКА gap disappears while
+        # still-ungraded subjects remain listed.
+        make_quarter_grade(self.s2, '7-А', MATH, 1, grade=8)
+        resp = self.client.get(reverse('nazorat'))
+        math_rows = [r for r in resp.context['teachers']['rows']
+                     if r['subject'] == MATH]
+        self.assertEqual(math_rows, [])
+
+    def test_teacher_control_school_isolated(self):
+        # School A fully graded -> gaps only come from the auto-seeded
+        # unassigned subjects; school B's 7-Б never shows up.
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
+        make_quarter_grade(self.s2, '7-А', MATH, 1, grade=9)
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'))
+        rows = resp.context['teachers']['rows']
+        self.assertFalse(any(r['subject'] == MATH for r in rows))
+        self.assertFalse(any(r['class_name'] == '7-Б' for r in rows))

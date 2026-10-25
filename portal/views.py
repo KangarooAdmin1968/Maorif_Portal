@@ -8022,14 +8022,15 @@ def nazorat(request):
 
     from .nazorat import (
         attendance_period_options, collect_attendance_control,
-        collect_grading_control)
-    stats = attendance = None
+        collect_grading_control, collect_teacher_control)
+    stats = attendance = teachers = None
     att_options = []
     if school is not None:
         stats = collect_grading_control(school, quarter)
         attendance = collect_attendance_control(
             school, request.GET.get('att'))
         att_options = attendance_period_options(stats['academic_year'])
+        teachers = collect_teacher_control(school, quarter)
     return render(request, 'portal/nazorat.html', {
         'school': school,
         'schools': schools,
@@ -8039,6 +8040,7 @@ def nazorat(request):
         'stats': stats,
         'attendance': attendance,
         'att_options': att_options,
+        'teachers': teachers,
     })
 
 

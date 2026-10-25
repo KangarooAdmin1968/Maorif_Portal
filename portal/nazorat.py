@@ -12,7 +12,7 @@ from collections import defaultdict
 from django.db.models import Count
 
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
-from .models import Grade, QuarterGrade, Student
+from .models import ClassSubject, Grade, QuarterGrade, Student, normalize_subject
 from .utils import class_numeric_part
 
 # Academic-year order: September..August. Quarter = 3-month spans.
@@ -103,6 +103,59 @@ def collect_attendance_control(school, period, today=None):
         totals['total'] += t
     return {'period': value, 'period_label': label,
             'classes': classes, 'totals': totals}
+
+
+def collect_teacher_control(school, quarter, today=None):
+    """Only class-subjects WITH a gap: allocated active subjects where
+    fewer students hold a quarter grade than are enrolled.
+
+    Aggregated in three passes (subjects, roster sizes, graded counts)
+    so a 25-school district picker stays fast.
+    """
+    from .views import academic_year_start  # local import avoids cycles
+
+    ay = academic_year_start(today)
+    subjects = (ClassSubject.objects
+                .filter(school=school, is_active=True)
+                .select_related('teacher', 'allocated_teacher')
+                .order_by('class_name', 'subject'))
+    roster = {r['class_name']: r['n'] for r in
+              Student.objects.filter(school=school)
+              .exclude(class_name='')
+              .values('class_name').annotate(n=Count('id'))}
+    graded = {(r['class_name'], r['subject']): r['n'] for r in
+              QuarterGrade.objects
+              .filter(student__school=school, quarter=quarter,
+                      academic_year=ay, grade__isnull=False)
+              .values('class_name', 'subject')
+              .annotate(n=Count('student', distinct=True))}
+
+    rows = []
+    for cs in subjects:
+        if class_numeric_part(cs.class_name) not in LEVELS:
+            continue  # grade-1 classes follow the sticker journal, not marks
+        total = roster.get(cs.class_name, 0)
+        got = graded.get(
+            (cs.class_name, normalize_subject(cs.subject)), 0)
+        if got >= total:
+            continue  # fully graded — only the gaps are listed
+        if cs.allocated_teacher_id:
+            teacher_name = cs.allocated_teacher.full_name
+        elif cs.teacher_id:
+            teacher_name = (cs.teacher.get_full_name()
+                            or cs.teacher.username)
+        else:
+            teacher_name = 'таъйин нашудааст'
+        rows.append({
+            'class_name': cs.class_name,
+            'subject': cs.subject,
+            'teacher': teacher_name,
+            'graded': got,
+            'total': total,
+        })
+    rows.sort(key=lambda r: (class_numeric_part(r['class_name']) or 0,
+                             r['class_name'], r['subject']))
+    return {'rows': rows, 'gaps': len(rows)}
 
 
 def collect_grading_control(school, quarter, today=None):

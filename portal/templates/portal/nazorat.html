@@ -146,6 +146,31 @@
     </table>
     {% endif %}
 </div>
+<div class="doc-card">
+    <h2>Омӯзгорони камчиликдор (чоряки {{ stats.quarter_ordinal }})</h2>
+    {% if teachers.gaps == 0 %}
+        <p class="ok-note">✔ Ҳамаи омӯзгорон фанҳои худро пурра баҳо додаанд.</p>
+    {% else %}
+    <table class="nz-table">
+        <thead><tr>
+            <th style="width:110px;">Синф</th>
+            <th>Фан</th>
+            <th>Омӯзгор</th>
+            <th class="center" style="width:150px;">Баҳо гирифтаанд</th>
+        </tr></thead>
+        <tbody>
+            {% for row in teachers.rows %}
+            <tr>
+                <td>{{ row.class_name }}</td>
+                <td>{{ row.subject }}</td>
+                <td class="names">{{ row.teacher }}</td>
+                <td class="center">{{ row.graded }} / {{ row.total }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
 {% else %}
 <p>Муассиса интихоб нашудааст.</p>
 {% endif %}

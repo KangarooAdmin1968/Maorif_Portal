@@ -63,6 +63,22 @@
                     <a class="btn btn-success" href="{% url 'maorif_report_total_export' %}?quarter={{ quarter }}">⬇️ Боргирӣ</a>
                 </td>
             </tr>
+            <tr>
+                <td class="center">3</td>
+                <td><strong>А.Ҷ.Ч-{{ quarter }} — холҳо (10-1), аз рӯи муассисаҳо</strong></td>
+                <td class="report-desc">Вилоят шакли: ҳар хол алоҳида (10, 9, 8 … 1) сон + фоиз, сифати таҳсилот (7-10) ва азхудкунӣ (4-10). Ҳар муассиса як сатр.</td>
+                <td class="center">
+                    <a class="btn btn-success" href="{% url 'maorif_report_grades_export' %}?quarter={{ quarter }}">⬇️ Боргирӣ</a>
+                </td>
+            </tr>
+            <tr>
+                <td class="center">4</td>
+                <td><strong>А.Ҷ.Ч-{{ quarter }} — холҳо (10-1), ноҳия</strong></td>
+                <td class="report-desc">Вилоят шакли якка сатрда: «ноҳияи Зафаробод» + «Хамагӣ» — вилоятга супориладиган варақ.</td>
+                <td class="center">
+                    <a class="btn btn-success" href="{% url 'maorif_report_grades_district_export' %}?quarter={{ quarter }}">⬇️ Боргирӣ</a>
+                </td>
+            </tr>
         </tbody>
     </table>
     <p class="quarter-labels">
@@ -72,3 +88,4 @@
     </p>
 </div>
 {% endblock %}
+

@@ -56,6 +56,7 @@ from .tabel import (
 )
 from .class_report import ClassReportError, build_class_report_workbook
 from .maorif_report import (
+    build_maorif_grades_district_workbook, build_maorif_grades_workbook,
     build_maorif_report_workbook, build_maorif_total_workbook)
 from .zavuch_report import build_zavuch_report_workbook
 from .tariff_rates import suggested_rate_map, tariff_data_available
@@ -8034,6 +8035,31 @@ def maorif_report_total_export(request):
 
 
 @login_required
+def maorif_report_grades_export(request):
+    """Oblast form: per-grade Хол (10..1) columns, one row per school."""
+    if not _maorif_report_access(request.user):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    prepared_by = request.user.get_full_name() or request.user.username
+    output = build_maorif_grades_workbook(quarter, prepared_by=prepared_by)
+    return _maorif_xlsx_response(
+        output, f"Ҳисобот_АҶЧ{quarter}_холҳо_муассисаҳо.xlsx")
+
+
+@login_required
+def maorif_report_grades_district_export(request):
+    """Oblast form: single «ноҳияи Зафаробод» row + Хамагӣ."""
+    if not _maorif_report_access(request.user):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    prepared_by = request.user.get_full_name() or request.user.username
+    output = build_maorif_grades_district_workbook(
+        quarter, prepared_by=prepared_by)
+    return _maorif_xlsx_response(
+        output, f"Ҳисобот_АҶЧ{quarter}_холҳо_ноҳия.xlsx")
+
+
+@login_required
 def export_monitoring_excel(request):
     """Export the monitoring dashboard data as a styled Excel workbook.
 
@@ -8141,3 +8167,4 @@ def service_worker(request):
     response['Service-Worker-Allowed'] = '/'
     response['Cache-Control'] = 'no-cache'
     return response
+

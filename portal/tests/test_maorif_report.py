@@ -128,3 +128,53 @@ class MaorifReportExportTests(GoldenBase):
         self.assertEqual(resp.status_code, 302)
         resp = self.client.get(reverse('maorif_report_total_export'))
         self.assertEqual(resp.status_code, 302)
+
+    def test_grades_workbook_per_mark_columns(self):
+        # s1 avg 10 -> mark column "10"; s3 avg 3 -> mark column "3".
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=10)
+        make_quarter_grade(self.s3, '7-Б', MATH, 1, grade=3)
+        self.client.force_login(self.admin)
+        resp = self.client.get(reverse('maorif_report_grades_export'))
+        self.assertEqual(resp.status_code, 200)
+        ws = self._ws(resp)
+        # Sub-header row carries each mark + % pair, 10 down to 1.
+        self.assertEqual(ws['E5'].value, '10')
+        self.assertEqual(ws['F5'].value, '%')
+        self.assertEqual(ws['W5'].value, '1')
+        # School A row: s1 in the "10" column (E=count, F=%).
+        self.assertEqual(ws['B6'].value, 'МТМУ №1')
+        self.assertEqual(ws['E6'].value, 1)
+        self.assertEqual(ws['F6'].value, 100.0)
+        self.assertEqual(ws['Y6'].value, 100.0)  # сифат 7-10
+        self.assertEqual(ws['Z6'].value, 100.0)  # азхудкунӣ 4-10
+        # School B row: s3 in the "3" column (S=count, T=%).
+        self.assertEqual(ws['S7'].value, 1)
+        self.assertEqual(ws['Y7'].value, 0.0)
+        self.assertEqual(ws['Z7'].value, 0.0)
+        # Хамагӣ row follows the two school rows.
+        self.assertEqual(ws['B8'].value, 'Хамагӣ')
+        self.assertEqual(ws['E8'].value, 1)
+        self.assertEqual(ws['S8'].value, 1)
+
+    def test_grades_district_workbook_single_row(self):
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=10)
+        self.client.force_login(self.director)
+        resp = self.client.get(
+            reverse('maorif_report_grades_district_export'))
+        self.assertEqual(resp.status_code, 200)
+        ws = self._ws(resp)
+        # Official one-row form: «ноҳияи Зафаробод» + Хамагӣ.
+        self.assertEqual(ws['A6'].value, 1)
+        self.assertEqual(ws['B6'].value, 'ноҳияи Зафаробод')
+        self.assertEqual(ws['D6'].value, 1)
+        self.assertEqual(ws['E6'].value, 1)
+        self.assertEqual(ws['B7'].value, 'Хамагӣ')
+        self.assertEqual(ws['E7'].value, 1)
+        self.assertIsNone(ws['B8'].value)
+
+    def test_reports_page_lists_grade_files(self):
+        self.client.force_login(self.director)
+        resp = self.client.get(reverse('maorif_reports'))
+        self.assertContains(resp, reverse('maorif_report_grades_export'))
+        self.assertContains(
+            resp, reverse('maorif_report_grades_district_export'))

@@ -81,7 +81,8 @@ def collect_maorif_stats(quarter, today=None):
         entry[0] += float(row['grade'])
         entry[1] += 1
 
-    stats = {s.id: {'graded': 0, 'hi': 0, 'md': 0, 'rm': 0, 'lo': 0}
+    stats = {s.id: {'graded': 0, 'hi': 0, 'md': 0, 'rm': 0, 'lo': 0,
+                    'dist': {g: 0 for g in range(1, 11)}}
              for s in schools}
     for sid, (total, count) in sums.items():
         loc = where.get(sid)
@@ -90,6 +91,7 @@ def collect_maorif_stats(quarter, today=None):
         st = stats[loc[0]]
         st['graded'] += 1
         st[_band(total / count)] += 1
+        st['dist'][_whole_grade(total / count)] += 1
 
     # Ungraded 2-11 students per school+class — the Эзоҳ footnote lists
     # them the same way the paper form does.
@@ -124,30 +126,41 @@ def _district_director_name():
     return (dept.director or '').strip() if dept else ''
 
 
+def _whole_grade(avg):
+    """Round-half-up the quarter average to the nearest mark 1..10 —
+    feeds the per-grade Хол columns of the oblast report variant."""
+    return max(1, min(10, int(avg + 0.5)))
+
+
 def _pct(part, whole):
     """Rounded part/whole*100 as a plain value — displays even in
     Excel's Protected View where formulas are never recalculated."""
     return round(part / whole * 100, 2) if whole else 0
 
 
-def _write_title(ws, quarter, ay):
+def _write_title(ws, quarter, ay, last_col=LAST_COL,
+                 area='ноҳияи Зафаробод', sample=False):
     ordinal = QUARTER_WORD_ORDINALS.get(quarter, f'{quarter}-ум')
     ws.merge_cells(start_row=1, start_column=1,
-                   end_row=1, end_column=LAST_COL)
+                   end_row=1, end_column=last_col - (2 if sample else 0))
     ws['A1'] = ('дар бораи натиҷаи арзёбии ҷамъбастии чоряки '
                 f'{ordinal} (А.Ҷ.Ч-{quarter})')
     ws['A1'].font = Font(italic=True, size=11)
     ws['A1'].alignment = LEFT
+    if sample:
+        c = ws.cell(row=1, column=last_col - 1, value='намуна')
+        c.font = Font(italic=True, bold=True, size=11)
+        c.alignment = CENTER
     ws.merge_cells(start_row=2, start_column=1,
-                   end_row=2, end_column=LAST_COL)
+                   end_row=2, end_column=last_col)
     ws['A2'] = 'МАЪЛУМОТ'
     ws['A2'].font = Font(bold=True, size=14)
     ws['A2'].alignment = CENTER
     ws.merge_cells(start_row=3, start_column=1,
-                   end_row=3, end_column=LAST_COL)
+                   end_row=3, end_column=last_col)
     ws['A3'] = ('хонандагони муассисахои таъсилоти умумӣ дар соли '
                 f'таҳсили {ay}-{ay + 1} оид ба сатҳу сифати дониши '
-                'хонандагон дар ноҳияи Зафаробод')
+                f'хонандагон дар {area}')
     ws['A3'].font = Font(bold=True, size=11)
     ws['A3'].alignment = CENTER
 
@@ -219,16 +232,17 @@ def _write_data_row(ws, r, index, name, data, bold=None):
             c.font = Font(bold=True)
 
 
-def _border_table(ws, last_row):
+def _border_table(ws, last_row, last_col=LAST_COL):
     for r in range(4, last_row + 1):
-        for col in range(1, LAST_COL + 1):
+        for col in range(1, last_col + 1):
             cell = ws.cell(row=r, column=col)
             cell.border = BORDER
             if cell.alignment.horizontal is None:
                 cell.alignment = CENTER
 
 
-def _write_footer(ws, start_row, stats, prepared_by):
+def _write_note_lines(ws, start_row, stats, last_col=LAST_COL):
+    """Эзоҳ + per-school ungraded-class rows -> next free row."""
     ordinal = QUARTER_WORD_ORDINALS.get(
         stats['quarter'], f"{stats['quarter']}-ум")
     row = start_row
@@ -236,7 +250,7 @@ def _write_footer(ws, start_row, stats, prepared_by):
     def line(text, font):
         nonlocal row
         ws.merge_cells(start_row=row, start_column=1,
-                       end_row=row, end_column=LAST_COL)
+                       end_row=row, end_column=last_col)
         c = ws.cell(row=row, column=1, value=text)
         c.alignment = LEFT
         c.font = font
@@ -265,8 +279,11 @@ def _write_footer(ws, start_row, stats, prepared_by):
             line(f'{school_name}: {listed} — жами '
                  f"{sum(u['n'] for u in items)} нафар",
                  Font(size=9, italic=True))
+    return row
 
-    row += 1
+
+def _write_footer(ws, start_row, stats, prepared_by):
+    row = _write_note_lines(ws, start_row, stats) + 1
     ws.merge_cells(start_row=row, start_column=1,
                    end_row=row, end_column=6)
     ws.cell(row=row, column=1,
@@ -303,8 +320,11 @@ def _finish(wb):
 
 
 def _totals(stats):
-    return {k: sum(r[k] for r in stats['rows'])
-            for k in ('total', 'graded', 'hi', 'md', 'rm', 'lo')}
+    t = {k: sum(r[k] for r in stats['rows'])
+         for k in ('total', 'graded', 'hi', 'md', 'rm', 'lo')}
+    t['dist'] = {g: sum(r['dist'][g] for r in stats['rows'])
+                 for g in range(1, 11)}
+    return t
 
 
 def build_maorif_report_workbook(quarter, prepared_by=''):
@@ -346,3 +366,159 @@ def build_maorif_total_workbook(quarter, prepared_by=''):
     _write_footer(ws, FIRST_DATA_ROW + 2, stats, prepared_by)
     _layout(ws)
     return _finish(wb)
+
+
+# ----------------------------------------------------------------------
+# Oblast-style variant: every mark 10..1 gets its own count + % column.
+# ----------------------------------------------------------------------
+
+GRADE_LAST_COL = 26          # A..Z
+
+
+def _write_grade_header(ws, name_header):
+    """Rows 4-5 for the per-grade form: Хол spans the 20 mark cells."""
+
+    def merge_header(text, col, last_col=None):
+        ws.merge_cells(start_row=4, start_column=col, end_row=5,
+                       end_column=last_col or col)
+        c = ws.cell(row=4, column=col, value=text)
+        c.font = Font(bold=True, size=10)
+        c.alignment = CENTER
+
+    merge_header('№', 1)
+    merge_header(name_header, 2)
+    merge_header('Шумораи хонандагон', 3)
+    merge_header('Иштирок намуд', 4)
+    ws.merge_cells(start_row=4, start_column=5, end_row=4, end_column=24)
+    c = ws.cell(row=4, column=5, value='Хол')
+    c.font = Font(bold=True, size=10)
+    c.alignment = CENTER
+    col = 5
+    for g in range(10, 0, -1):
+        for text in (str(g), '%'):
+            c = ws.cell(row=5, column=col, value=text)
+            c.font = Font(bold=True, size=10)
+            c.alignment = CENTER
+            col += 1
+    merge_header('Сифати таҳсилот % (холхои 7-10)', 25)
+    merge_header('Азхудкунии барномахои таълимӣ % (холхои 4-10)', 26)
+    ws.row_dimensions[4].height = 55
+    ws.row_dimensions[5].height = 14
+
+
+def _write_grade_row(ws, r, index, name, data, bold=None):
+    """One row of the per-grade form: dist counts + % + summary cols."""
+    if bold is None:
+        bold = index is None
+    if index is not None:
+        ws.cell(row=r, column=1, value=index)
+    name_cell = ws.cell(row=r, column=2, value=name)
+    name_cell.alignment = LEFT
+    if bold:
+        name_cell.font = Font(bold=True)
+    for col, value in ((3, data['total']), (4, data['graded'])):
+        c = ws.cell(row=r, column=col, value=value)
+        if bold:
+            c.font = Font(bold=True)
+    graded = data['graded']
+    col = 5
+    for g in range(10, 0, -1):
+        n = data['dist'][g]
+        c = ws.cell(row=r, column=col, value=n)
+        if bold:
+            c.font = Font(bold=True)
+        c = ws.cell(row=r, column=col + 1, value=_pct(n, graded))
+        c.number_format = '0.00'
+        if bold:
+            c.font = Font(bold=True)
+        col += 2
+    dist = data['dist']
+    quality = sum(dist[g] for g in range(7, 11))
+    mastery = graded - sum(dist[g] for g in range(1, 4))
+    for col, value in ((25, _pct(quality, graded)),
+                       (26, _pct(mastery, graded))):
+        c = ws.cell(row=r, column=col, value=value)
+        c.number_format = '0.00'
+        if bold:
+            c.font = Font(bold=True)
+
+
+def _write_grade_footer(ws, start_row, stats, prepared_by):
+    """Эзоҳ block + the oblast form's signature lines (Сардор, Муҳр,
+    Ичрокунанда, Телефон)."""
+    row = _write_note_lines(ws, start_row, stats,
+                            last_col=GRADE_LAST_COL) + 1
+    ws.cell(row=row, column=2, value='Сардор (мудир)').font = Font(
+        bold=True)
+    ws.cell(row=row, column=9, value='_________________')
+    ws.cell(row=row + 1, column=9, value='имзо').font = Font(
+        size=8, italic=True)
+    ws.cell(row=row, column=14, value='_______________________')
+    ws.cell(row=row + 1, column=14,
+            value='насаб, ном ва номи падар').font = Font(
+        size=8, italic=True)
+    ws.cell(row=row + 3, column=2, value='Муҳр')
+    ws.cell(row=row + 5, column=2,
+            value=f'Ичрокунанда:    {prepared_by}'.rstrip())
+    ws.cell(row=row + 6, column=2, value='Телефон:    ______________')
+
+
+def _grade_layout(ws):
+    widths = {1: 4, 2: 24, 3: 10, 4: 10, 25: 10, 26: 13}
+    for col in range(1, GRADE_LAST_COL + 1):
+        ws.column_dimensions[get_column_letter(col)].width = (
+            widths.get(col, 5))
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_options.horizontalCentered = True
+    ws.page_margins.left = ws.page_margins.right = 0.3
+    ws.page_margins.top = ws.page_margins.bottom = 0.4
+
+
+def _build_grades_sheet(quarter, name_header, rows_data, prepared_by,
+                        title):
+    stats = collect_maorif_stats(quarter)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title
+    _write_title(ws, quarter, stats['academic_year'],
+                 last_col=GRADE_LAST_COL,
+                 area='вилоят, шаҳру ноҳияи Зафаробод', sample=True)
+    _write_grade_header(ws, name_header)
+    row_list = rows_data(stats)
+    for i, (index, name, data, bold) in enumerate(row_list):
+        _write_grade_row(ws, FIRST_DATA_ROW + i, index, name, data,
+                         bold=bold)
+    last = FIRST_DATA_ROW + len(row_list) - 1
+    _border_table(ws, last, last_col=GRADE_LAST_COL)
+    _write_grade_footer(ws, last + 2, stats, prepared_by)
+    _grade_layout(ws)
+    return _finish(wb)
+
+
+def build_maorif_grades_workbook(quarter, prepared_by=''):
+    """Per-grade (10..1) form, one row per academic school -> BytesIO."""
+    def rows(stats):
+        out = [(i + 1, r['school_name'], r, None)
+               for i, r in enumerate(stats['rows'])]
+        out.append((None, 'Хамагӣ', _totals(stats), True))
+        return out
+    return _build_grades_sheet(
+        quarter, 'Муассисаи таъсилотӣ', rows, prepared_by,
+        f'АҶЧ-{quarter} холҳо')
+
+
+def build_maorif_grades_district_workbook(quarter, prepared_by=''):
+    """Per-grade form as the official one-row district page: a single
+    «ноҳияи Зафаробод» row plus the Хамагӣ line -> BytesIO."""
+    def rows(stats):
+        totals = _totals(stats)
+        return [(1, 'ноҳияи Зафаробод', totals, None),
+                (None, 'Хамагӣ', totals, True)]
+    return _build_grades_sheet(
+        quarter, 'Вилоят, шаҳр, ноҳия', rows, prepared_by,
+        f'АҶЧ-{quarter} холҳо — ноҳия')
+

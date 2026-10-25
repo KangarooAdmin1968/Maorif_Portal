@@ -75,6 +75,7 @@ urlpatterns = [
     path('schools/documents/maorif-report/grades-by-schools/', views.maorif_report_grades_export, name='maorif_report_grades_export'),
     path('schools/documents/maorif-report/grades-district/', views.maorif_report_grades_district_export, name='maorif_report_grades_district_export'),
     path('monitoring-dashboard/', views.monitoring_dashboard, name='monitoring_dashboard'),
+    path('nazorat/', views.nazorat, name='nazorat'),
     path('monitoring-dashboard/export/', views.export_monitoring_excel, name='export_monitoring_excel'),
     path('top-students/', views.top_students_ajax, name='top_students_ajax'),
     path('class-rankings/', views.class_rankings_ajax, name='class_rankings_ajax'),

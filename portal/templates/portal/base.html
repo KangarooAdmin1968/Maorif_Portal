@@ -188,6 +188,9 @@
                     {% if user.is_superuser or user.is_staff or is_zavuch or user_role == 'director' %}
                         <a href="{% url 'school_documents' %}">📄 Ҳуҷҷатнигорӣ</a>
                     {% endif %}
+                    {% if user.is_superuser or user.is_staff or is_zavuch or user_role == 'director' %}
+                        <a href="{% url 'nazorat' %}">🔎 Назорат</a>
+                    {% endif %}
                     {% if can_monitor %}
                         <a href="{% url 'monitoring_dashboard' %}">📊 Мониторинг</a>
                     {% endif %}

@@ -7981,6 +7981,58 @@ def _maorif_report_access(user):
             or get_user_role(user) == settings.ROLE_DIRECTOR)
 
 
+def _nazorat_access(user):
+    """The school-control tab: zavuch (own school) + district viewers."""
+    return _maorif_report_access(user) or _is_zavuch(
+        user, get_user_role(user))
+
+
+@login_required
+def nazorat(request):
+    """🔎 Назорат — live per-school control page for завуч and маориф.
+
+    Zavuch sees only their own school; superuser/staff/director may pick
+    any academic school via ?school_id=. Sections are collected by
+    portal.nazorat and appended as cards — new queries slot in later.
+    """
+    if not _nazorat_access(request.user):
+        return redirect('dashboard')
+    district_view = _maorif_report_access(request.user)
+
+    schools = []
+    if district_view:
+        from .maorif_report import _district_sort_key
+        schools = sorted(academic_schools(), key=_district_sort_key)
+        school = get_user_school(request.user)
+        school_id = request.GET.get('school_id')
+        if school_id:
+            try:
+                school = School.objects.get(pk=int(school_id))
+            except (ValueError, School.DoesNotExist):
+                pass
+        if school is None and schools:
+            school = schools[0]
+    else:
+        school = get_user_school(request.user)
+
+    quarter, invalid_quarter = _class_report_quarter(request)
+    if invalid_quarter:
+        messages.warning(
+            request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
+
+    from .nazorat import collect_grading_control
+    stats = (collect_grading_control(school, quarter)
+             if school is not None else None)
+    return render(request, 'portal/nazorat.html', {
+        'school': school,
+        'schools': schools,
+        'district_view': district_view,
+        'quarter': quarter,
+        'quarters': [1, 2, 3, 4],
+        'stats': stats,
+    })
+
+
 @login_required
 def maorif_reports(request):
     """Ҳуҷҷатнигорӣ → Ҳисоботи маориф: list of district Excel reports.

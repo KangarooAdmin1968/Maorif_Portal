@@ -50,7 +50,10 @@ class ZavuchReportExportTests(GoldenBase):
         self.assertEqual(ws[f'N{r}'].value, 1)
         self.assertEqual(ws[f'P{r}'].value, 0)
         self.assertEqual(ws[f'T{r}'].value, 0)
-        self.assertEqual(ws[f'R{r}'].value, f'=K{r}-N{r}-P{r}-T{r}')
+        # Derived band cells are computed values (visible in Protected
+        # View); only the Омад/Рафт-dependent chain stays formula-driven.
+        self.assertEqual(ws[f'R{r}'].value, 0)
+        self.assertEqual(ws[f'O{r}'].value, 100.0)
         self.assertEqual(ws[f'V{r}'].value, f'=I{r}-K{r}')
 
     def test_per_student_average_decides_band(self):

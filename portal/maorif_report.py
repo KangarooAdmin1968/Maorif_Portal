@@ -124,9 +124,14 @@ def _district_director_name():
     return (dept.director or '').strip() if dept else ''
 
 
-def _pct(row, col):
-    """'count/иштирок*100' guarded formula for one percent cell."""
-    return f'=IF($D{row}=0,0,{col}{row}*100/$D{row})'
+def _pct(part, whole):
+    """Rounded count/whole*100 — a plain value, not a formula.
+
+    Nothing in this sheet is manual input, so computed numbers are
+    written directly: they display even in Excel's Protected View
+    (Защищенный просмотр), where formulas are never recalculated.
+    """
+    return round(part / whole * 100, 2) if whole else 0
 
 
 def build_maorif_report_workbook(quarter, prepared_by=''):
@@ -193,33 +198,36 @@ def build_maorif_report_workbook(quarter, prepared_by=''):
         ws.cell(row=r, column=4, value=row['graded'])
         for col, key in ((5, 'hi'), (7, 'md'), (9, 'rm'), (11, 'lo')):
             ws.cell(row=r, column=col, value=row[key])
-        for col, src in ((6, 'E'), (8, 'G'), (10, 'I'), (12, 'K')):
-            c = ws.cell(row=r, column=col, value=_pct(r, src))
+        g = row['graded']
+        for col, part in ((6, row['hi']), (8, row['md']),
+                          (10, row['rm']), (12, row['lo'])):
+            c = ws.cell(row=r, column=col, value=_pct(part, g))
             c.number_format = '0.00'
-        q = ws.cell(row=r, column=13,
-                    value=f'=IF($D{r}=0,0,F{r}+H{r})')
+        q = ws.cell(row=r, column=13, value=_pct(row['hi'] + row['md'], g))
         q.number_format = '0.00'
         # 4-10 mastery = participants who never landed in the 1-3 band.
-        m = ws.cell(row=r, column=14,
-                    value=f'=IF($D{r}=0,0,($D{r}-K{r})*100/$D{r})')
+        m = ws.cell(row=r, column=14, value=_pct(g - row['lo'], g))
         m.number_format = '0.00'
 
     last = FIRST_DATA_ROW + len(stats['rows']) - 1
     tot = last + 1
+    totals = {k: sum(r[k] for r in stats['rows'])
+              for k in ('total', 'graded', 'hi', 'md', 'rm', 'lo')}
     ws.cell(row=tot, column=2, value='Хамагӣ').font = Font(bold=True)
-    for col in (3, 4, 5, 7, 9, 11):
-        letter = get_column_letter(col)
-        c = ws.cell(row=tot, column=col,
-                    value=f'=SUM({letter}{FIRST_DATA_ROW}:{letter}{last})')
+    for col, key in ((3, 'total'), (4, 'graded'), (5, 'hi'),
+                     (7, 'md'), (9, 'rm'), (11, 'lo')):
+        c = ws.cell(row=tot, column=col, value=totals[key])
         c.font = Font(bold=True)
-    for col, src in ((6, 'E'), (8, 'G'), (10, 'I'), (12, 'K')):
-        c = ws.cell(row=tot, column=col, value=_pct(tot, src))
+    g = totals['graded']
+    for col, part in ((6, totals['hi']), (8, totals['md']),
+                      (10, totals['rm']), (12, totals['lo'])):
+        c = ws.cell(row=tot, column=col, value=_pct(part, g))
         c.number_format = '0.00'
         c.font = Font(bold=True)
-    for col, formula in (
-            (13, f'=IF($D{tot}=0,0,F{tot}+H{tot})'),
-            (14, f'=IF($D{tot}=0,0,($D{tot}-K{tot})*100/$D{tot})')):
-        c = ws.cell(row=tot, column=col, value=formula)
+    for col, value in (
+            (13, _pct(totals['hi'] + totals['md'], g)),
+            (14, _pct(g - totals['lo'], g))):
+        c = ws.cell(row=tot, column=col, value=value)
         c.number_format = '0.00'
         c.font = Font(bold=True)
 

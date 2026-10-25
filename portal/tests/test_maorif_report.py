@@ -47,13 +47,18 @@ class MaorifReportExportTests(GoldenBase):
         self.assertEqual(ws['C7'].value, 1)
         self.assertEqual(ws['D7'].value, 1)
         self.assertEqual(ws['K7'].value, 1)
-        # Percent / quality / mastery cells carry formulas, not values.
-        self.assertEqual(ws['F6'].value, '=IF($D6=0,0,E6*100/$D6)')
-        self.assertEqual(ws['M6'].value, '=IF($D6=0,0,F6+H6)')
-        self.assertEqual(ws['N6'].value, '=IF($D6=0,0,($D6-K6)*100/$D6)')
-        # Хамагӣ total row sums the counts.
+        # Percent / quality / mastery cells carry computed values — they
+        # must display even in Excel's Protected View (no recalc there).
+        self.assertEqual(ws['F6'].value, 100.0)   # 1/1 graded -> 10-9
+        self.assertEqual(ws['M6'].value, 100.0)   # сифатнокӣ
+        self.assertEqual(ws['N6'].value, 100.0)   # no 1-3 grades
+        self.assertEqual(ws['N7'].value, 0.0)     # s3 fully in the 3-1 band
+        # Хамагӣ total row holds summed counts.
         self.assertEqual(ws['B8'].value, 'Хамагӣ')
-        self.assertEqual(ws['C8'].value, '=SUM(C6:C7)')
+        self.assertEqual(ws['C8'].value, 3)
+        self.assertEqual(ws['F8'].value, 50.0)    # 1 of 2 graded -> 10-9
+        self.assertEqual(ws['M8'].value, 50.0)
+        self.assertEqual(ws['N8'].value, 50.0)
 
     def test_ungraded_students_listed_in_note(self):
         # s1 gets a grade; s2 and s3 stay ungraded -> Эзоҳ lists both.

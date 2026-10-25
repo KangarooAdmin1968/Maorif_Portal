@@ -52,6 +52,12 @@ def _band(avg):
     return BAND_1_3
 
 
+def _pct(part, whole):
+    """Rounded part/whole*100 as a plain value — displays even in
+    Excel's Protected View where formulas are never recalculated."""
+    return round(part / whole * 100, 2) if whole else 0
+
+
 def build_zavuch_report_workbook(school, quarter):
     """Fill the owner's А.Ҷ.Ч. template for one school + quarter.
 
@@ -117,22 +123,27 @@ def build_zavuch_report_workbook(school, quarter):
         ws[f'I{r}'] = f'=C{r}+E{r}-G{r}'
         ws[f'J{r}'] = f'=D{r}+F{r}-H{r}'
         g = graded[lvl]
-        ws[f'K{r}'] = g['total']
+        k = g['total']
+        n, p, t = (g['bands'][BAND_9_10], g['bands'][BAND_7_8],
+                   g['bands'][BAND_1_3])
+        r46 = k - n - p - t   # 4-6 remainder — owner's K-N-P-T logic
+        ws[f'K{r}'] = k
         ws[f'L{r}'] = g['f']
         ws[f'M{r}'] = 100
-        ws[f'N{r}'] = g['bands'][BAND_9_10]
-        ws[f'O{r}'] = f'=IF($K{r}=0,0,N{r}*100/$K{r})'
-        ws[f'P{r}'] = g['bands'][BAND_7_8]
-        ws[f'Q{r}'] = f'=IF($K{r}=0,0,P{r}*100/$K{r})'
-        # 4-6 is whatever graded students remain after the other bands —
-        # the owner's =K-N-P formula also subtracts the 1-3 band (T) here.
-        ws[f'R{r}'] = f'=K{r}-N{r}-P{r}-T{r}'
-        ws[f'S{r}'] = f'=IF($K{r}=0,0,R{r}*100/$K{r})'
-        ws[f'T{r}'] = g['bands'][BAND_1_3]
-        ws[f'U{r}'] = f'=IF($K{r}=0,0,T{r}*100/$K{r})'
+        # Band cells are computed values (nothing manual affects them);
+        # only the Омад/Рафт-dependent chain stays formula-driven so
+        # hand-entered E..H numbers fold into I/J/V/W on recalc.
+        ws[f'N{r}'] = n
+        ws[f'O{r}'] = _pct(n, k)
+        ws[f'P{r}'] = p
+        ws[f'Q{r}'] = _pct(p, k)
+        ws[f'R{r}'] = r46
+        ws[f'S{r}'] = _pct(r46, k)
+        ws[f'T{r}'] = t
+        ws[f'U{r}'] = _pct(t, k)
         ws[f'V{r}'] = f'=I{r}-K{r}'
         ws[f'W{r}'] = f'=IF($K{r}=0,0,V{r}*100/$K{r})'
-        ws[f'X{r}'] = f'=O{r}+Q{r}'
+        ws[f'X{r}'] = _pct(n + p, k)
         ws[f'Y{r}'] = 100
 
     ordinal = QUARTER_ORDINALS.get(quarter, f'{quarter}-ум')

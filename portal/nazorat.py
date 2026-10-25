@@ -5,11 +5,104 @@ JSON-friendly data (so a future quarter closure can freeze it) and the
 template only renders what it gets. New sections get their own
 collect_* function here and a card in the template.
 """
+import calendar
+import datetime
 from collections import defaultdict
 
+from django.db.models import Count
+
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
-from .models import QuarterGrade, Student
+from .models import Grade, QuarterGrade, Student
 from .utils import class_numeric_part
+
+# Academic-year order: September..August. Quarter = 3-month spans.
+ACADEMIC_MONTHS = (9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8)
+QUARTER_MONTHS = {1: (9, 10, 11), 2: (12, 1, 2),
+                  3: (3, 4, 5), 4: (6, 7, 8)}
+MONTH_NAMES = {1: 'Январ', 2: 'Феврал', 3: 'Март', 4: 'Апрел',
+               5: 'Май', 6: 'Июн', 7: 'Июл', 8: 'Август',
+               9: 'Сентябр', 10: 'Октябр', 11: 'Ноябр', 12: 'Декабр'}
+
+
+def attendance_period_options(ay):
+    """[(value, label)] for the Давомат dropdown — months then quarters."""
+    options = [(f'm{m}', f'{MONTH_NAMES[m]} {ay if m >= 9 else ay + 1}')
+               for m in ACADEMIC_MONTHS]
+    options += [(f'q{q}', f'Чоряки {QUARTER_WORD_ORDINALS[q]}')
+                for q in (1, 2, 3, 4)]
+    return options
+
+
+def _month_bounds(year, month):
+    start = datetime.date(year, month, 1)
+    end = datetime.date(year, month, calendar.monthrange(year, month)[1])
+    return start, end
+
+
+def _period_bounds(period, ay, today):
+    """'m9'..'m8' / 'q1'..'q4' -> (start, end, label, value).
+
+    Invalid/missing input falls back to the current calendar month.
+    """
+    if period and period[0] == 'm' and period[1:].isdigit():
+        m = int(period[1:])
+        if m in ACADEMIC_MONTHS:
+            y = ay if m >= 9 else ay + 1
+            start, end = _month_bounds(y, m)
+            return start, end, f'{MONTH_NAMES[m]} {y}', period
+    if period and period[0] == 'q' and period[1:].isdigit():
+        q = int(period[1:])
+        if q in QUARTER_MONTHS:
+            first, last = QUARTER_MONTHS[q][0], QUARTER_MONTHS[q][-1]
+            start = datetime.date(ay if first >= 9 else ay + 1, first, 1)
+            _, end = _month_bounds(ay if last >= 9 else ay + 1, last)
+            label = f'Чоряки {QUARTER_WORD_ORDINALS[q]}'
+            return start, end, label, period
+    m = today.month
+    y = ay if m >= 9 else ay + 1
+    start, end = _month_bounds(y, m)
+    return start, end, f'{MONTH_NAMES[m]} {y}', f'm{m}'
+
+
+def collect_attendance_control(school, period, today=None):
+    """Per-class missed-lesson counts (Grade.attendance rows) for the
+    chosen month or quarter; every attendance mark equals one lesson
+    hour. All classes appear — zero rows stay visible so the завуч can
+    confirm a class really had no absences.
+    """
+    from .views import academic_year_start  # local import avoids cycles
+
+    ay = academic_year_start(today)
+    today = today or datetime.date.today()
+    start, end, label, value = _period_bounds(period, ay, today)
+
+    counts = (Grade.objects
+              .filter(student__school=school,
+                      date__gte=start, date__lte=end,
+                      attendance__in=('+', '-'))
+              .values('student__class_name', 'attendance')
+              .annotate(n=Count('id')))
+    per_class = defaultdict(lambda: {'excused': 0, 'unexcused': 0})
+    for row in counts:
+        key = 'excused' if row['attendance'] == '+' else 'unexcused'
+        per_class[row['student__class_name']][key] += row['n']
+
+    class_names = set(
+        Student.objects.filter(school=school)
+        .exclude(class_name='').values_list('class_name', flat=True))
+    classes = []
+    totals = {'total': 0, 'excused': 0, 'unexcused': 0}
+    for name in sorted(class_names,
+                       key=lambda n: (class_numeric_part(n) or 0, n)):
+        c = per_class[name]
+        t = c['excused'] + c['unexcused']
+        classes.append({'class_name': name, 'excused': c['excused'],
+                        'unexcused': c['unexcused'], 'total': t})
+        totals['excused'] += c['excused']
+        totals['unexcused'] += c['unexcused']
+        totals['total'] += t
+    return {'period': value, 'period_label': label,
+            'classes': classes, 'totals': totals}
 
 
 def collect_grading_control(school, quarter, today=None):

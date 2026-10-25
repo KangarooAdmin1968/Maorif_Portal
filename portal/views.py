@@ -8020,9 +8020,16 @@ def nazorat(request):
         messages.warning(
             request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
 
-    from .nazorat import collect_grading_control
-    stats = (collect_grading_control(school, quarter)
-             if school is not None else None)
+    from .nazorat import (
+        attendance_period_options, collect_attendance_control,
+        collect_grading_control)
+    stats = attendance = None
+    att_options = []
+    if school is not None:
+        stats = collect_grading_control(school, quarter)
+        attendance = collect_attendance_control(
+            school, request.GET.get('att'))
+        att_options = attendance_period_options(stats['academic_year'])
     return render(request, 'portal/nazorat.html', {
         'school': school,
         'schools': schools,
@@ -8030,6 +8037,8 @@ def nazorat(request):
         'quarter': quarter,
         'quarters': [1, 2, 3, 4],
         'stats': stats,
+        'attendance': attendance,
+        'att_options': att_options,
     })
 
 

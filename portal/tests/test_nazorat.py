@@ -7,7 +7,8 @@ students for the selected quarter.
 from django.urls import reverse
 
 from .helpers import (
-    GoldenBase, MATH, make_quarter_grade, make_user,
+    D_Q1, D_Q1_B, D_Q2, GoldenBase, MATH, make_grade,
+    make_quarter_grade, make_user,
 )
 
 
@@ -69,3 +70,39 @@ class NazoratTests(GoldenBase):
         resp = self.client.get(reverse('nazorat'))
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'name="school_id"')
+
+    def test_attendance_month_and_quarter(self):
+        # October: s1 unexcused, s2 excused. November: s2 unexcused.
+        make_grade(self.s1, attendance='-', date=D_Q1)      # Oct
+        make_grade(self.s2, attendance='+', date=D_Q1)      # Oct
+        make_grade(self.s2, attendance='-', date=D_Q1_B)    # Nov
+        make_grade(self.s1, attendance='-', date=D_Q2)      # Jan (q2)
+        self.client.force_login(self.zavuch_a)
+
+        resp = self.client.get(reverse('nazorat'), {'att': 'm10'})
+        att = resp.context['attendance']
+        cls = att['classes'][0]
+        self.assertEqual(cls['class_name'], '7-А')
+        self.assertEqual((cls['total'], cls['excused'], cls['unexcused']),
+                         (2, 1, 1))
+        self.assertEqual(att['totals']['total'], 2)
+        self.assertIn('Октябр', att['period_label'])
+
+        resp = self.client.get(reverse('nazorat'), {'att': 'q1'})
+        att = resp.context['attendance']
+        # Q1 spans Sep-Nov: the two Oct marks + one Nov mark; Jan is out.
+        self.assertEqual(att['totals']['total'], 3)
+        self.assertEqual(att['totals']['unexcused'], 2)
+
+        # Month dropdown offers every academic month + quarters.
+        options = [v for v, _ in resp.context['att_options']]
+        self.assertIn('m9', options)
+        self.assertIn('m8', options)
+        self.assertIn('q4', options)
+
+    def test_attendance_other_school_not_leaked(self):
+        make_grade(self.s3, attendance='-', date=D_Q1)
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'), {'att': 'm10'})
+        att = resp.context['attendance']
+        self.assertEqual(att['totals']['total'], 0)   # school A has none

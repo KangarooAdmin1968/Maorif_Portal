@@ -80,6 +80,48 @@
 </div>
 
 <div class="doc-card">
+    <h2>Давомат — соатҳои дарсии қолдифта</h2>
+    <form method="get" action="{% url 'nazorat' %}" class="nz-toolbar no-print">
+        {% if district_view %}
+        <input type="hidden" name="school_id" value="{{ school.id }}">
+        {% endif %}
+        <input type="hidden" name="quarter" value="{{ quarter }}">
+        <label>Давра
+            <select name="att" onchange="this.form.submit()">
+                {% for val, label in att_options %}
+                <option value="{{ val }}"{% if val == attendance.period %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn">Намоиш</button></noscript>
+    </form>
+    <table class="nz-table">
+        <thead><tr>
+            <th>Синф</th>
+            <th class="center">Умумий соатҳои қолдифта</th>
+            <th class="center">Босабаб</th>
+            <th class="center">Бесабаб</th>
+        </tr></thead>
+        <tbody>
+            {% for cls in attendance.classes %}
+            <tr>
+                <td>{{ cls.class_name }}</td>
+                <td class="center">{{ cls.total }}</td>
+                <td class="center">{{ cls.excused }}</td>
+                <td class="center">{{ cls.unexcused }}</td>
+            </tr>
+            {% endfor %}
+            <tr style="font-weight:700; background:#f3f4f6;">
+                <td>Хамагӣ</td>
+                <td class="center">{{ attendance.totals.total }}</td>
+                <td class="center">{{ attendance.totals.excused }}</td>
+                <td class="center">{{ attendance.totals.unexcused }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="doc-card">
     <h2>Хонандагони дорои холҳои 1-3 (миёнаи чоряк)</h2>
     {% if stats.totals.low == 0 %}
         <p class="ok-note">✔ Хонандаи дорои холҳои 1-3 нест.</p>

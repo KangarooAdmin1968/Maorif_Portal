@@ -94,4 +94,34 @@ class MaorifReportExportTests(GoldenBase):
         self.client.force_login(self.director)
         resp = self.client.get(reverse('school_documents'))
         self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, reverse('maorif_reports'))
+
+    def test_reports_page_lists_files(self):
+        self.client.force_login(self.director)
+        resp = self.client.get(reverse('maorif_reports'), {'quarter': 2})
+        self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, reverse('maorif_report_export'))
+        self.assertContains(resp, reverse('maorif_report_total_export'))
+
+    def test_total_workbook_single_khamagi_row(self):
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
+        make_quarter_grade(self.s3, '7-Б', MATH, 1, grade=3)
+        self.client.force_login(self.admin)
+        resp = self.client.get(reverse('maorif_report_total_export'))
+        self.assertEqual(resp.status_code, 200)
+        ws = load_workbook(io.BytesIO(resp.content)).active
+        # Single bold Хамагӣ row as the only data row.
+        self.assertEqual(ws['A6'].value, 1)
+        self.assertEqual(ws['B6'].value, 'Хамагӣ')
+        self.assertEqual(ws['C6'].value, 3)    # s1+s2+s3
+        self.assertEqual(ws['D6'].value, 2)    # s1, s3 graded
+        self.assertEqual(ws['E6'].value, 1)    # s1 -> 10-9
+        self.assertEqual(ws['K6'].value, 1)    # s3 -> 3-1
+        self.assertIsNone(ws['B7'].value)      # no second data row
+
+    def test_reports_page_denied_for_zavuch(self):
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('maorif_reports'))
+        self.assertEqual(resp.status_code, 302)
+        resp = self.client.get(reverse('maorif_report_total_export'))
+        self.assertEqual(resp.status_code, 302)

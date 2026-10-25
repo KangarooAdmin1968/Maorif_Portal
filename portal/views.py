@@ -55,7 +55,8 @@ from .tabel import (
     workload_snapshot,
 )
 from .class_report import ClassReportError, build_class_report_workbook
-from .maorif_report import build_maorif_report_workbook
+from .maorif_report import (
+    build_maorif_report_workbook, build_maorif_total_workbook)
 from .zavuch_report import build_zavuch_report_workbook
 from .tariff_rates import suggested_rate_map, tariff_data_available
 from .monitoring import (
@@ -7980,27 +7981,56 @@ def _maorif_report_access(user):
 
 
 @login_required
-def maorif_report_export(request):
-    """Ҳуҷҷатнигорӣ → Ҳисоботи маориф: district А.Ҷ.Ч. summary as xlsx.
+def maorif_reports(request):
+    """Ҳуҷҷатнигорӣ → Ҳисоботи маориф: list of district Excel reports.
 
-    Rows are the academic schools; band cells use the same per-student
-    quarter-average buckets as the school-level завуч report.
+    District-level audience only (superuser / staff / ROLE_DIRECTOR).
+    New report files register as rows on this page.
     """
+    if not _maorif_report_access(request.user):
+        return redirect('dashboard')
+    quarter, invalid_quarter = _class_report_quarter(request)
+    if invalid_quarter:
+        messages.warning(
+            request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
+    return render(request, 'portal/maorif_reports.html', {
+        'quarter': quarter,
+        'quarters': [1, 2, 3, 4],
+    })
+
+
+def _maorif_xlsx_response(output, filename):
+    encoded = urllib.parse.quote(filename)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = (
+        f"attachment; filename*=utf-8''{encoded}")
+    return response
+
+
+@login_required
+def maorif_report_export(request):
+    """District А.Ҷ.Ч. summary as xlsx — one row per academic school."""
     if not _maorif_report_access(request.user):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
     prepared_by = request.user.get_full_name() or request.user.username
     output = build_maorif_report_workbook(quarter, prepared_by=prepared_by)
+    return _maorif_xlsx_response(
+        output, f"Ҳисобот_АҶЧ{quarter}_муассисаҳо.xlsx")
 
-    filename = f"Ҳисоботи_маориф_АҶЧ{quarter}.xlsx"
-    encoded_filename = urllib.parse.quote(filename)
-    response = HttpResponse(
-        output.read(),
-        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    response['Content-Disposition'] = (
-        f"attachment; filename*=utf-8''{encoded_filename}")
-    return response
+
+@login_required
+def maorif_report_total_export(request):
+    """District А.Ҷ.Ч. summary as xlsx — single Хамагӣ (district total) row."""
+    if not _maorif_report_access(request.user):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    prepared_by = request.user.get_full_name() or request.user.username
+    output = build_maorif_total_workbook(quarter, prepared_by=prepared_by)
+    return _maorif_xlsx_response(
+        output, f"Ҳисобот_АҶЧ{quarter}_ҳамагӣ.xlsx")
 
 
 @login_required

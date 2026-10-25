@@ -125,25 +125,13 @@ def _district_director_name():
 
 
 def _pct(part, whole):
-    """Rounded count/whole*100 — a plain value, not a formula.
-
-    Nothing in this sheet is manual input, so computed numbers are
-    written directly: they display even in Excel's Protected View
-    (Защищенный просмотр), where formulas are never recalculated.
-    """
+    """Rounded part/whole*100 as a plain value — displays even in
+    Excel's Protected View where formulas are never recalculated."""
     return round(part / whole * 100, 2) if whole else 0
 
 
-def build_maorif_report_workbook(quarter, prepared_by=''):
-    """Build the district А.Ҷ.Ч. workbook for one quarter -> BytesIO."""
-    stats = collect_maorif_stats(quarter)
+def _write_title(ws, quarter, ay):
     ordinal = QUARTER_WORD_ORDINALS.get(quarter, f'{quarter}-ум')
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = f'АҶЧ-{quarter}'
-
-    # ---- Title block -------------------------------------------------
     ws.merge_cells(start_row=1, start_column=1,
                    end_row=1, end_column=LAST_COL)
     ws['A1'] = ('дар бораи натиҷаи арзёбии ҷамъбастии чоряки '
@@ -158,13 +146,15 @@ def build_maorif_report_workbook(quarter, prepared_by=''):
     ws.merge_cells(start_row=3, start_column=1,
                    end_row=3, end_column=LAST_COL)
     ws['A3'] = ('хонандагони муассисахои таъсилоти умумӣ дар соли '
-                f"таҳсили {stats['academic_year']}-"
-                f"{stats['academic_year'] + 1} оид ба сатҳу сифати дониши "
+                f'таҳсили {ay}-{ay + 1} оид ба сатҳу сифати дониши '
                 'хонандагон дар ноҳияи Зафаробод')
     ws['A3'].font = Font(bold=True, size=11)
     ws['A3'].alignment = CENTER
 
-    # ---- Two-row header ----------------------------------------------
+
+def _write_header(ws):
+    """Rows 4-5: merged captions + band sub-headers."""
+
     def merge_header(text, col, last_col=None):
         ws.merge_cells(start_row=4, start_column=col, end_row=5,
                        end_column=last_col or col)
@@ -189,60 +179,56 @@ def build_maorif_report_workbook(quarter, prepared_by=''):
         c.font = Font(bold=True, size=10)
         c.alignment = CENTER
 
-    # ---- School rows -------------------------------------------------
-    for i, row in enumerate(stats['rows']):
-        r = FIRST_DATA_ROW + i
-        ws.cell(row=r, column=1, value=i + 1)
-        ws.cell(row=r, column=2, value=row['school_name']).alignment = LEFT
-        ws.cell(row=r, column=3, value=row['total'])
-        ws.cell(row=r, column=4, value=row['graded'])
-        for col, key in ((5, 'hi'), (7, 'md'), (9, 'rm'), (11, 'lo')):
-            ws.cell(row=r, column=col, value=row[key])
-        g = row['graded']
-        for col, part in ((6, row['hi']), (8, row['md']),
-                          (10, row['rm']), (12, row['lo'])):
-            c = ws.cell(row=r, column=col, value=_pct(part, g))
-            c.number_format = '0.00'
-        q = ws.cell(row=r, column=13, value=_pct(row['hi'] + row['md'], g))
-        q.number_format = '0.00'
-        # 4-10 mastery = participants who never landed in the 1-3 band.
-        m = ws.cell(row=r, column=14, value=_pct(g - row['lo'], g))
-        m.number_format = '0.00'
 
-    last = FIRST_DATA_ROW + len(stats['rows']) - 1
-    tot = last + 1
-    totals = {k: sum(r[k] for r in stats['rows'])
-              for k in ('total', 'graded', 'hi', 'md', 'rm', 'lo')}
-    ws.cell(row=tot, column=2, value='Хамагӣ').font = Font(bold=True)
-    for col, key in ((3, 'total'), (4, 'graded'), (5, 'hi'),
-                     (7, 'md'), (9, 'rm'), (11, 'lo')):
-        c = ws.cell(row=tot, column=col, value=totals[key])
-        c.font = Font(bold=True)
-    g = totals['graded']
-    for col, part in ((6, totals['hi']), (8, totals['md']),
-                      (10, totals['rm']), (12, totals['lo'])):
-        c = ws.cell(row=tot, column=col, value=_pct(part, g))
+def _write_data_row(ws, r, index, name, data, bold=None):
+    """One table row: counts + computed percents for `data` keys
+    (total/graded/hi/md/rm/lo). index=None renders an unnumbered bold
+    row (Хамагӣ); the totals-only sheet passes index=1 + bold=True."""
+    if bold is None:
+        bold = index is None
+    if index is not None:
+        ws.cell(row=r, column=1, value=index)
+    name_cell = ws.cell(row=r, column=2, value=name)
+    name_cell.alignment = LEFT
+    if bold:
+        name_cell.font = Font(bold=True)
+    ws.cell(row=r, column=3, value=data['total'])
+    ws.cell(row=r, column=4, value=data['graded'])
+    for col, key in ((5, 'hi'), (7, 'md'), (9, 'rm'), (11, 'lo')):
+        c = ws.cell(row=r, column=col, value=data[key])
+        if bold:
+            c.font = Font(bold=True)
+    g = data['graded']
+    for col, part in ((6, data['hi']), (8, data['md']),
+                      (10, data['rm']), (12, data['lo'])):
+        c = ws.cell(row=r, column=col, value=_pct(part, g))
         c.number_format = '0.00'
-        c.font = Font(bold=True)
+        if bold:
+            c.font = Font(bold=True)
     for col, value in (
-            (13, _pct(totals['hi'] + totals['md'], g)),
-            (14, _pct(g - totals['lo'], g))):
-        c = ws.cell(row=tot, column=col, value=value)
+            (13, _pct(data['hi'] + data['md'], g)),
+            # 4-10 mastery = participants who never landed in the 1-3 band.
+            (14, _pct(g - data['lo'], g))):
+        c = ws.cell(row=r, column=col, value=value)
         c.number_format = '0.00'
-        c.font = Font(bold=True)
+        if bold:
+            c.font = Font(bold=True)
 
-    # Borders across the table area.
-    for r in range(4, tot + 1):
+
+def _border_table(ws, last_row):
+    for r in range(4, last_row + 1):
         for col in range(1, LAST_COL + 1):
             cell = ws.cell(row=r, column=col)
             cell.border = BORDER
             if cell.alignment.horizontal is None:
                 cell.alignment = CENTER
 
-    # ---- Эзоҳ + signatures -------------------------------------------
-    note_row = tot + 2
-    ws.merge_cells(start_row=note_row, start_column=1,
-                   end_row=note_row, end_column=LAST_COL)
+
+def _write_footer(ws, start_row, stats, prepared_by):
+    ordinal = QUARTER_WORD_ORDINALS.get(
+        stats['quarter'], f"{stats['quarter']}-ум")
+    ws.merge_cells(start_row=start_row, start_column=1,
+                   end_row=start_row, end_column=LAST_COL)
     note = ('Эзоҳ: Шумораи хонандагони синфи 1-ум '
             f"{stats['level1_total']} нафар, аз он ҷумла духтар "
             f"{stats['level1_girls']} нафарро ташкил медиҳад.")
@@ -251,27 +237,27 @@ def build_maorif_report_workbook(quarter, prepared_by=''):
             f"{u['n']} нафар хонандаи синфи {u['class_name']}-и "
             f"{u['school_name']}" for u in stats['ungraded'])
         note += (f" Баҳо нагирифтаанд дар чоряки {ordinal}: {listed}.")
-    cell = ws.cell(row=note_row, column=1, value=note)
+    cell = ws.cell(row=start_row, column=1, value=note)
     cell.alignment = LEFT
     cell.font = Font(size=10, italic=True)
 
-    ws.merge_cells(start_row=note_row + 2, start_column=1,
-                   end_row=note_row + 2, end_column=6)
-    ws.cell(row=note_row + 2, column=1,
+    ws.merge_cells(start_row=start_row + 2, start_column=1,
+                   end_row=start_row + 2, end_column=6)
+    ws.cell(row=start_row + 2, column=1,
             value=f'Мудири шуъбаи маориф:    {_district_director_name()}'
                   .rstrip())
-    ws.merge_cells(start_row=note_row + 3, start_column=1,
-                   end_row=note_row + 3, end_column=6)
-    ws.cell(row=note_row + 3, column=1,
+    ws.merge_cells(start_row=start_row + 3, start_column=1,
+                   end_row=start_row + 3, end_column=6)
+    ws.cell(row=start_row + 3, column=1,
             value=f'Ичрокунанда:    {prepared_by}'.rstrip())
 
-    # ---- Layout -------------------------------------------------------
+
+def _layout(ws):
     widths = {1: 5, 2: 26, 3: 14, 4: 12, 13: 11, 14: 16}
     for col in range(1, LAST_COL + 1):
         ws.column_dimensions[get_column_letter(col)].width = (
             widths.get(col, 8))
-    # Whole table (title + header + school rows + Хамагӣ + Эзоҳ + signatures)
-    # must fit one A4 landscape sheet — scale to a single page both ways.
+    # Everything fits one A4 landscape sheet — scale to a single page.
     ws.page_setup.orientation = 'landscape'
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.fitToWidth = 1
@@ -281,8 +267,56 @@ def build_maorif_report_workbook(quarter, prepared_by=''):
     ws.page_margins.left = ws.page_margins.right = 0.4
     ws.page_margins.top = ws.page_margins.bottom = 0.5
 
+
+def _finish(wb):
     wb.calculation.fullCalcOnLoad = True
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
     return output
+
+
+def _totals(stats):
+    return {k: sum(r[k] for r in stats['rows'])
+            for k in ('total', 'graded', 'hi', 'md', 'rm', 'lo')}
+
+
+def build_maorif_report_workbook(quarter, prepared_by=''):
+    """District А.Ҷ.Ч. workbook, one row per academic school -> BytesIO."""
+    stats = collect_maorif_stats(quarter)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f'АҶЧ-{quarter}'
+
+    _write_title(ws, quarter, stats['academic_year'])
+    _write_header(ws)
+    for i, row in enumerate(stats['rows']):
+        _write_data_row(ws, FIRST_DATA_ROW + i, i + 1,
+                        row['school_name'], row)
+    tot = FIRST_DATA_ROW + len(stats['rows'])
+    _write_data_row(ws, tot, None, 'Хамагӣ', _totals(stats))
+    _border_table(ws, tot)
+    _write_footer(ws, tot + 2, stats, prepared_by)
+    _layout(ws)
+    return _finish(wb)
+
+
+def build_maorif_total_workbook(quarter, prepared_by=''):
+    """Same district summary collapsed to the single Хамагӣ row.
+
+    This is the standalone totals page the department sends upward —
+    identical columns and footer to the per-school workbook.
+    """
+    stats = collect_maorif_stats(quarter)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f'АҶЧ-{quarter} — ҳамагӣ'
+
+    _write_title(ws, quarter, stats['academic_year'])
+    _write_header(ws)
+    _write_data_row(ws, FIRST_DATA_ROW, 1, 'Хамагӣ', _totals(stats),
+                    bold=True)
+    _border_table(ws, FIRST_DATA_ROW)
+    _write_footer(ws, FIRST_DATA_ROW + 2, stats, prepared_by)
+    _layout(ws)
+    return _finish(wb)

@@ -1,0 +1,74 @@
+{% extends 'portal/base.html' %}
+{% block title %}Ҳисоботи маориф{% endblock %}
+{% block extra_head %}
+<style>
+  .doc-card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem;
+    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  .doc-card h2 { margin: 0 0 .75rem; font-size: 1.1rem; color: #003366; }
+  .cr-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+  .cr-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .cr-toolbar select { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; min-width: 8rem; }
+  table.report-table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  table.report-table th, table.report-table td { border: 1px solid #d1d5db; padding: .45rem .7rem; text-align: left; }
+  table.report-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
+  table.report-table td.center { text-align: center; }
+  .report-desc { color: #4b5563; font-size: .85rem; }
+  .quarter-labels { font-size: .78rem; color: #6b7280; margin-top: .6rem; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>🏛 Ҳисоботи маориф</h1>
+
+<div class="cr-toolbar no-print">
+    <form method="get" action="{% url 'maorif_reports' %}">
+        <label>Чоряк
+            <select name="quarter" onchange="this.form.submit()">
+                {% for q in quarters %}
+                <option value="{{ q }}"{% if q == quarter %} selected{% endif %}>{{ q }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn">Намоиш</button></noscript>
+    </form>
+    <a href="{% url 'school_documents' %}" class="btn">Ҳуҷҷатшиносӣ</a>
+</div>
+
+<div class="doc-card">
+    <h2>Ҳисоботҳои чоряки {{ quarter }} — ноҳияи Зафаробод</h2>
+    <table class="report-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>Ҳисобот</th>
+                <th>Шарҳ</th>
+                <th style="width:150px;">Excel</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="center">1</td>
+                <td><strong>А.Ҷ.Ч-{{ quarter }} — аз рӯи муассисаҳо</strong></td>
+                <td class="report-desc">Ҳар муассисаи таъсилотӣ як сатр: шумораи хонандагон, иштирок, бандҳои баҳо (10-9 / 8-7 / 6-4 / 3-1), сифатнокӣ ва азхудкунии барномаи таълимӣ (4-10). Барои мушоҳида ва ислоҳи хатогиҳои муассисаҳо.</td>
+                <td class="center">
+                    <a class="btn btn-success" href="{% url 'maorif_report_export' %}?quarter={{ quarter }}">⬇️ Боргирӣ</a>
+                </td>
+            </tr>
+            <tr>
+                <td class="center">2</td>
+                <td><strong>А.Ҷ.Ч-{{ quarter }} — умумӣ (ҳамагӣ)</strong></td>
+                <td class="report-desc">Танҳо як сатри «Ҳамагӣ» оид ба тамоми ноҳия — варақаи ҷамъбастӣ барои супоридан ба мақомоти болоӣ.</td>
+                <td class="center">
+                    <a class="btn btn-success" href="{% url 'maorif_report_total_export' %}?quarter={{ quarter }}">⬇️ Боргирӣ</a>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+    <p class="quarter-labels">
+        Ҳисоботҳо аз маълумоти ҷорӣ ҳисоб мешаванд — хонандагоне, ки баҳои
+        чорякӣ нагирифтаанд, дар қисми «Эзоҳ» аз рӯи синфу муассиса нишон
+        дода мешаванд. Ҳар файл дар як варақи A4-и уфуқӣ чоп мешавад.
+    </p>
+</div>
+{% endblock %}

@@ -42,17 +42,27 @@ TAJIK = 'ЗАБОНИ ТОҶИКӢ'
 CUSTOM_SUBJECT = 'ФАНИ ФАЪОЛИЯТ'  # not in TJC_SUBJECTS — used for seeding tests
 PERIOD = 'Холҳои ҷорӣ (Онлайн)'
 
-# Dates inside each academic quarter of the CURRENT academic year
-# (get_date_quarter: Sep-Nov=1, Dec-Feb=2, Mar-May=3, Jun-Aug=4). Resolved
-# dynamically: the runtime pipeline only counts source rows dated inside
-# the current Sep..Aug academic year, so fixtures must live in it too.
+# Dates inside each academic quarter of the CURRENT academic year,
+# derived from the official quarter windows (portal.academic_calendar)
+# so fixtures always land inside their quarter whatever calendar is in
+# force. The runtime pipeline only counts source rows dated inside the
+# current Sep..Aug academic year, so fixtures must live in it too.
+from portal.academic_calendar import quarter_windows as _qw
+
 _AY = (datetime.date.today().year if datetime.date.today().month >= 9
        else datetime.date.today().year - 1)
-D_Q1 = datetime.date(_AY, 10, 15)
-D_Q1_B = datetime.date(_AY, 11, 20)
-D_Q2 = datetime.date(_AY + 1, 1, 15)
-D_Q3 = datetime.date(_AY + 1, 4, 10)
-D_Q4 = datetime.date(_AY + 1, 6, 5)
+
+
+def _qdate(q, offset):
+    """`offset` days after quarter `q`'s official start, current AY."""
+    return _qw(_AY)[q][0] + datetime.timedelta(days=offset)
+
+
+D_Q1 = _qdate(1, 44)    # Oct 15 in the 2026-27 calendar
+D_Q1_B = _qdate(1, 49)  # Oct 20
+D_Q2 = _qdate(2, 11)    # Nov 20
+D_Q3 = _qdate(3, 38)    # Feb 15
+D_Q4 = _qdate(4, 16)    # Apr 15
 # Same quarter slot one academic year earlier — for year-separation tests.
 D_PREV_Q1 = datetime.date(_AY - 1, 10, 15)
 

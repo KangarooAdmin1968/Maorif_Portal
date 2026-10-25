@@ -16,10 +16,9 @@ from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
 from .models import ClassSubject, Grade, QuarterGrade, Student, normalize_subject
 from .utils import class_numeric_part
 
-# Academic-year order: September..August. Quarter = 3-month spans.
+# Academic-year order: September..August; quarter bounds come from the
+# official calendar in portal.academic_calendar.
 ACADEMIC_MONTHS = (9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8)
-QUARTER_MONTHS = {1: (9, 10, 11), 2: (12, 1, 2),
-                  3: (3, 4, 5), 4: (6, 7, 8)}
 MONTH_NAMES = {1: 'Январ', 2: 'Феврал', 3: 'Март', 4: 'Апрел',
                5: 'Май', 6: 'Июн', 7: 'Июл', 8: 'Август',
                9: 'Сентябр', 10: 'Октябр', 11: 'Ноябр', 12: 'Декабр'}
@@ -53,10 +52,9 @@ def _period_bounds(period, ay, today):
             return start, end, f'{MONTH_NAMES[m]} {y}', period
     if period and period[0] == 'q' and period[1:].isdigit():
         q = int(period[1:])
-        if q in QUARTER_MONTHS:
-            first, last = QUARTER_MONTHS[q][0], QUARTER_MONTHS[q][-1]
-            start = datetime.date(ay if first >= 9 else ay + 1, first, 1)
-            _, end = _month_bounds(ay if last >= 9 else ay + 1, last)
+        if q in (1, 2, 3, 4):
+            from .views import academic_year_quarter_windows
+            start, end = academic_year_quarter_windows(ay)[q]
             label = f'Чоряки {QUARTER_WORD_ORDINALS[q]}'
             return start, end, label, period
     m = today.month

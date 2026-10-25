@@ -72,11 +72,12 @@ class NazoratTests(GoldenBase):
         self.assertContains(resp, 'name="school_id"')
 
     def test_attendance_month_and_quarter(self):
-        # October: s1 unexcused, s2 excused. November: s2 unexcused.
-        make_grade(self.s1, attendance='-', date=D_Q1)      # Oct
-        make_grade(self.s2, attendance='+', date=D_Q1)      # Oct
-        make_grade(self.s2, attendance='-', date=D_Q1_B)    # Nov
-        make_grade(self.s1, attendance='-', date=D_Q2)      # Jan (q2)
+        # October (Q1 ends Oct 31): s1 unexcused, s2 excused + unexcused.
+        # The Nov mark lands in Q2 under the official calendar.
+        make_grade(self.s1, attendance='-', date=D_Q1)      # Oct 15
+        make_grade(self.s2, attendance='+', date=D_Q1)      # Oct 15
+        make_grade(self.s2, attendance='-', date=D_Q1_B)    # Oct 20
+        make_grade(self.s1, attendance='-', date=D_Q2)      # Nov 20 (q2)
         self.client.force_login(self.zavuch_a)
 
         resp = self.client.get(reverse('nazorat'), {'att': 'm10'})
@@ -84,15 +85,20 @@ class NazoratTests(GoldenBase):
         cls = att['classes'][0]
         self.assertEqual(cls['class_name'], '7-А')
         self.assertEqual((cls['total'], cls['excused'], cls['unexcused']),
-                         (2, 1, 1))
-        self.assertEqual(att['totals']['total'], 2)
+                         (3, 1, 2))
+        self.assertEqual(att['totals']['total'], 3)
         self.assertIn('Октябр', att['period_label'])
 
         resp = self.client.get(reverse('nazorat'), {'att': 'q1'})
         att = resp.context['attendance']
-        # Q1 spans Sep-Nov: the two Oct marks + one Nov mark; Jan is out.
+        # Q1 = Sep 1 – Oct 31: the three Oct marks; the Nov mark is out.
         self.assertEqual(att['totals']['total'], 3)
         self.assertEqual(att['totals']['unexcused'], 2)
+
+        resp = self.client.get(reverse('nazorat'), {'att': 'm11'})
+        att = resp.context['attendance']
+        self.assertEqual(att['totals']['total'], 1)
+        self.assertEqual(att['totals']['unexcused'], 1)
 
         # Month dropdown offers every academic month + quarters.
         options = [v for v, _ in resp.context['att_options']]

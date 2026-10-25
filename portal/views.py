@@ -143,41 +143,33 @@ def calc_quarterly(qmap, live_flags=None):
 
 
 def get_date_quarter(date):
-    """Map a date to its academic quarter."""
-    m = date.month
-    if m in (9, 10, 11):
-        return 1
-    elif m in (12, 1, 2):
-        return 2
-    elif m in (3, 4, 5):
-        return 3
-    elif m in (6, 7, 8):
-        return 4
-    return None
+    """Map a date to its academic quarter — official calendar windows.
+
+    Delegates to portal.academic_calendar: exact windows per academic
+    year, month buckets for unlisted years, vacation gaps attributed to
+    the quarter that just ended.
+    """
+    from .academic_calendar import get_date_quarter as _gdq
+    return _gdq(date)
 
 
 def _current_quarter_bounds(today):
     """Return (start, end) calendar dates of the quarter containing today.
 
-    Month buckets mirror get_date_quarter: Q1 Sep-Nov, Q2 Dec-Feb,
-    Q3 Mar-May, Q4 Jun-Aug. The end is the first day of the next month
-    minus one day, keeping February leap-safe.
+    Uses the official quarter windows; a today that falls inside a
+    vacation gap resolves to the quarter that just ended.
     """
-    m = today.month
-    if m in (9, 10, 11):
-        start = datetime.date(today.year, 9, 1)
-        end = datetime.date(today.year, 12, 1) - datetime.timedelta(days=1)
-    elif m in (12, 1, 2):
-        y = today.year if m == 12 else today.year - 1
-        start = datetime.date(y, 12, 1)
-        end = datetime.date(y + 1, 3, 1) - datetime.timedelta(days=1)
-    elif m in (3, 4, 5):
-        start = datetime.date(today.year, 3, 1)
-        end = datetime.date(today.year, 6, 1) - datetime.timedelta(days=1)
-    else:
-        start = datetime.date(today.year, 6, 1)
-        end = datetime.date(today.year, 9, 1) - datetime.timedelta(days=1)
-    return start, end
+    from .academic_calendar import quarter_windows, academic_year_for_date
+    windows = quarter_windows(academic_year_for_date(today))
+    prev = None
+    for start, end in sorted(windows.values()):
+        if start <= today <= end:
+            return start, end
+        if today > end:
+            prev = (start, end)
+        else:
+            break
+    return prev or windows[1]
 
 
 def academic_year_start(today=None):
@@ -196,16 +188,11 @@ def academic_year_quarter_windows(year):
     """Inclusive (start, end) dates per quarter of the Sep..Aug year.
 
     `year` is the September-start year from academic_year_start()
-    (e.g. 2026 -> 2026-09-01..2027-08-31). February stays leap-safe via
-    calendar.monthrange.
+    (e.g. 2026 -> 2026-09-01..2027-08-31). Exact official windows live
+    in portal.academic_calendar; unlisted years get month buckets.
     """
-    feb_last = calendar.monthrange(year + 1, 2)[1]
-    return {
-        1: (datetime.date(year, 9, 1), datetime.date(year, 11, 30)),
-        2: (datetime.date(year, 12, 1), datetime.date(year + 1, 2, feb_last)),
-        3: (datetime.date(year + 1, 3, 1), datetime.date(year + 1, 5, 31)),
-        4: (datetime.date(year + 1, 6, 1), datetime.date(year + 1, 8, 31)),
-    }
+    from .academic_calendar import quarter_windows
+    return quarter_windows(year)
 
 
 def academic_year_bounds(year=None):

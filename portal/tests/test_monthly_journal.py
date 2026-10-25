@@ -13,7 +13,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal.models import Assessment, Grade
-from portal.tests.helpers import D_Q1, D_Q1_B, MATH, GoldenBase
+from portal.tests.helpers import D_Q1, MATH, GoldenBase
 from portal.tests.test_phase4_lessons import (
     make_control, make_lesson, post_grade,
 )
@@ -25,6 +25,7 @@ NOV = f'{D_Q1.year}-{D_Q1.month + 1:02d}'
 D_OCT_A = D_Q1
 D_OCT_B = datetime.date(D_Q1.year, 10, 20)
 D_OCT_C = datetime.date(D_Q1.year, 10, 22)
+D_NOV = datetime.date(D_Q1.year, 11, 20)  # Q2 under the official calendar
 
 
 def _sundays(year, month):
@@ -241,16 +242,16 @@ class MonthlyJournalTests(GoldenBase):
     # -- month navigation ---------------------------------------------------
 
     def test_month_param_selects_month(self):
-        post_grade(self.client, self.s1, score='7', date=D_Q1_B)  # November
+        post_grade(self.client, self.s1, score='7', date=D_NOV)  # November
         resp = self._get(month=OCT)
         # Nov 20 is not in the October grid at all.
         self.assertEqual(len(resp.context['day_rows']), 27)
         self.assertNotIn(
-            D_Q1_B, [d['date'] for d in resp.context['day_rows']]
+            D_NOV, [d['date'] for d in resp.context['day_rows']]
         )
         resp = self._get(month=NOV)
         status = {d['date']: d['status'] for d in resp.context['day_rows']}
-        self.assertEqual(status[D_Q1_B], 'partial')
+        self.assertEqual(status[D_NOV], 'partial')
         # 30 November days minus that year's Sundays.
         self.assertEqual(
             len(resp.context['day_rows']),
@@ -361,7 +362,7 @@ class JournalExcelExportTests(GoldenBase):
         self.assertIn('Санҷиши 1', data[0][5])
 
     def test_out_of_month_grades_excluded(self):
-        post_grade(self.client, self.s1, score='7', date=D_Q1_B)  # Nov
+        post_grade(self.client, self.s1, score='7', date=D_NOV)  # Nov
         post_grade(self.client, self.s1, score='8', date=D_OCT_A)
         resp = self.client.get(self.url, {'month': OCT})
         rows = self._rows(resp)

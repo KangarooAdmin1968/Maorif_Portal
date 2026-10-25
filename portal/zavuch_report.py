@@ -124,6 +124,11 @@ def build_zavuch_report_workbook(school, quarter):
             g['f'] += 1
         g['bands'][_band(total / count)] += 1
 
+    # Header wording: the template's «Шумораи» clips to «мор» in narrow
+    # columns — write the official «Шумора» on every count column.
+    for col in 'NPRTV':
+        ws[f'{col}4'] = 'Шумора'
+
     for i, lvl in enumerate(LEVELS):
         r = FIRST_DATA_ROW + i
         ws[f'A{r}'] = i + 1

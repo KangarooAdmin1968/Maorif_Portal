@@ -29,58 +29,69 @@ PREV_Q = Q_START - datetime.timedelta(days=1)
 
 
 class QuarterBoundsTests(TestCase):
-    """_current_quarter_bounds mirrors get_date_quarter's month buckets."""
+    """_current_quarter_bounds follows the official quarter calendar."""
 
-    def test_q1_sep_nov(self):
+    def test_q1_official_window(self):
+        # 2026-27 order: Q1 = Sep 1 – Oct 31.
         self.assertEqual(
             _current_quarter_bounds(datetime.date(2026, 10, 15)),
-            (datetime.date(2026, 9, 1), datetime.date(2026, 11, 30)))
+            (datetime.date(2026, 9, 1), datetime.date(2026, 10, 31)))
 
-    def test_q2_dec_feb_crosses_year(self):
+    def test_q2_official_window_crosses_months(self):
+        # Q2 = Nov 9 – Dec 31 in 2026-27.
         self.assertEqual(
-            _current_quarter_bounds(datetime.date(2027, 1, 15)),
-            (datetime.date(2026, 12, 1), datetime.date(2027, 2, 28)))
+            _current_quarter_bounds(datetime.date(2026, 12, 15)),
+            (datetime.date(2026, 11, 9), datetime.date(2026, 12, 31)))
 
-    def test_q2_leap_year(self):
+    def test_vacation_gap_belongs_to_ended_quarter(self):
+        # Nov 5 is inside the Q1→Q2 break; it resolves to Q1's bounds.
+        self.assertEqual(
+            _current_quarter_bounds(datetime.date(2026, 11, 5)),
+            (datetime.date(2026, 9, 1), datetime.date(2026, 10, 31)))
+
+    def test_q2_leap_year_fallback(self):
+        # AY 2027-28 has no published table -> month buckets.
         self.assertEqual(
             _current_quarter_bounds(datetime.date(2028, 2, 10)),
             (datetime.date(2027, 12, 1), datetime.date(2028, 2, 29)))
 
-    def test_q3_mar_may(self):
+    def test_q3_fallback_year(self):
         self.assertEqual(
             _current_quarter_bounds(datetime.date(2026, 4, 10)),
             (datetime.date(2026, 3, 1), datetime.date(2026, 5, 31)))
 
-    def test_q4_jun_aug(self):
+    def test_q4_fallback_year(self):
         self.assertEqual(
             _current_quarter_bounds(datetime.date(2026, 7, 1)),
             (datetime.date(2026, 6, 1), datetime.date(2026, 8, 31)))
 
     def test_bounds_consistent_with_get_date_quarter(self):
-        # Every boundary day must map back to the intended quarter number.
+        # Boundary days of the 2026-27 official calendar.
         self.assertEqual(get_date_quarter(datetime.date(2026, 9, 1)), 1)
-        self.assertEqual(get_date_quarter(datetime.date(2026, 11, 30)), 1)
-        self.assertEqual(get_date_quarter(datetime.date(2027, 2, 28)), 2)
-        self.assertEqual(get_date_quarter(datetime.date(2026, 5, 31)), 3)
-        self.assertEqual(get_date_quarter(datetime.date(2026, 8, 31)), 4)
+        self.assertEqual(get_date_quarter(datetime.date(2026, 10, 31)), 1)
+        self.assertEqual(get_date_quarter(datetime.date(2026, 11, 30)), 2)
+        self.assertEqual(get_date_quarter(datetime.date(2027, 2, 28)), 3)
+        self.assertEqual(get_date_quarter(datetime.date(2027, 5, 31)), 4)
+        # Fallback years keep the old month-bucket answers.
+        self.assertEqual(get_date_quarter(datetime.date(2025, 11, 30)), 1)
 
 
 class QuarterProgressTests(TestCase):
     """_quarter_progress: elapsed fraction of the current quarter."""
 
     def test_first_day_never_zero(self):
-        # Sep 1 is day 1 of 91 (Q1) — small but non-zero.
+        # Sep 1 is day 1 of 61 (Q1 = Sep 1 – Oct 31).
         self.assertAlmostEqual(
-            _quarter_progress(datetime.date(2026, 9, 1)), 1 / 91)
+            _quarter_progress(datetime.date(2026, 9, 1)), 1 / 61)
 
     def test_last_day_is_one(self):
         self.assertEqual(
-            _quarter_progress(datetime.date(2026, 11, 30)), 1.0)
+            _quarter_progress(datetime.date(2026, 10, 31)), 1.0)
 
     def test_midpoint(self):
-        # Oct 16 = day 46 of 91.
+        # Oct 16 = day 46 of 61.
         self.assertAlmostEqual(
-            _quarter_progress(datetime.date(2026, 10, 16)), 46 / 91)
+            _quarter_progress(datetime.date(2026, 10, 16)), 46 / 61)
 
 
 class NormFulfillmentTests(TestCase):

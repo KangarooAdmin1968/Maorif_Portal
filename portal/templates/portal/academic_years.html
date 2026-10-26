@@ -44,25 +44,27 @@
 
 {% for y in years %}
 <div class="yr-card">
-    <h2>Соли таҳсили {{ y.year }}-{{ y.year|add:1 }}{% if y.year == current_year %} <span style="font-weight:400; font-size:.8rem; color:#6b7280;">(ҷорӣ)</span>{% endif %}</h2>
+    <h2>Соли таҳсили {{ y.year }}-{{ y.year|add:1 }}{% if y.year == current_year %} <span style="font-weight:400; font-size:.8rem; color:#6b7280;">(ҷорӣ)</span>{% else %} <span style="font-weight:400; font-size:.8rem; color:#6b7280;">(архив)</span>{% endif %}</h2>
     <div class="q-grid">
         {% for q in y.quarters %}
         <div class="q-card{% if q.closed %} closed{% endif %}">
             <div class="qt">Чоряки {{ q.ordinal }}</div>
             <div class="qd">{{ q.start|date:"d.m.Y" }} – {{ q.end|date:"d.m.Y" }}</div>
             {% if q.closed %}
-                <span class="q-badge closed">🔒 Якунланда</span>
+                <span class="q-badge closed">🔒 Ҷамъбаст шудааст</span>
             {% elif q.locked_count > 0 %}
                 <span class="q-badge partial">Қисман баста ({{ q.locked_count }}/{{ q.total }})</span>
             {% else %}
-                <span class="q-badge open">Кушод</span>
+                <span class="q-badge open">Кушода аст</span>
             {% endif %}
             <div class="q-stats">
                 Фанҳо: {{ q.locked_count }}/{{ q.total }} баста<br>
-                {% if q.missing_total %}
-                <span class="warn">⚠ {{ q.missing_total }} хол чоряк нагуфтааст</span>
-                {% else %}
-                Ҳолҳои чорякӣ: пур
+                {% if q.year == current_year %}
+                    {% if q.missing_total %}
+                    <span class="warn">⚠ {{ q.missing_total }} баҳогузорӣ нашудааст</span>
+                    {% else %}
+                    Ҳолҳои чорякӣ: пур
+                    {% endif %}
                 {% endif %}
             </div>
             <div class="q-actions">
@@ -78,7 +80,7 @@
                     </form>
                     {% endif %}
                 {% elif can_close and q.ended %}
-                    <a class="btn-close-q" href="{% url 'quarter_close' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">🔒 Якунлаш</a>
+                    <a class="btn-close-q" href="{% url 'quarter_close' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">🔒 Ҷамъбаст</a>
                 {% elif can_close %}
                     <span style="font-size:.8rem; color:#9ca3af;">Чоряк ҳануз идома дорад</span>
                 {% endif %}

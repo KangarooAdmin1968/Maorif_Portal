@@ -8257,20 +8257,20 @@ def quarter_close(request):
 
     qs = collect_quarter_close(school, quarter, year)
     if qs['closed']:
-        messages.info(request, 'Ин чоряк аллакай якунландааст.')
+        messages.info(request, 'Ин чоряк аллакай ҷамъбаст шудааст.')
         return _years_redirect(request, school)
 
     if request.method == 'POST':
         if request.POST.get('confirm', '').strip().upper() != 'ТАСДИҚ':
             messages.error(
-                request, 'Барои якунланish калимаи «ТАСДИҚ» навишта шавад.')
+                request, 'Барои ҷамъбаст калимаи «ТАСДИҚ» навишта шавад.')
             return render(request, 'portal/quarter_close.html', {
                 'school': school, 'qs': qs})
         n = close_quarter(school, quarter, year)
         save_quarter_archive(school, quarter, year)
         messages.success(
             request,
-            f'Чоряки {qs["ordinal"]} якунланда шуд — '
+            f'Чоряки {qs["ordinal"]} ҷамъбаст шуд — '
             f'{n} фан баста гашт ва архив сабт гардид.')
         return _years_redirect(request, school)
 

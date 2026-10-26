@@ -1,5 +1,5 @@
 {% extends 'portal/base.html' %}
-{% block title %}Якуни чоряк{% endblock %}
+{% block title %}Ҷамъбасти чоряк{% endblock %}
 {% block extra_head %}
 <style>
   .qc-card { background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem; padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
@@ -17,19 +17,19 @@
 </style>
 {% endblock %}
 {% block content %}
-<h1>🔒 Якуни чоряки {{ qs.ordinal }} — {{ school.name }}</h1>
+<h1>🔒 Ҷамъбасти чоряки {{ qs.ordinal }} — {{ school.name }}</h1>
 <p style="color:#6b7280;">Соли таҳсили {{ qs.year }}-{{ qs.year|add:1 }} · {{ qs.start|date:"d.m.Y" }} – {{ qs.end|date:"d.m.Y" }}</p>
 
 {% if qs.grading_still_open %}
 <div class="warn-box">
     ⚠ <strong>Диққат:</strong> холҳо то <strong>{{ qs.grading_until|date:"d.m.Y" }}</strong>
     (охири таътил) ба ҳамин чоряк сабт мешаванд — баъзӣ омӯзгорон баъд баҳо
-    мегузоранд. Якунлашдан кейин навиштан ғайриимкон мешавад.
+    мегузоранд. Ҷамъбастдан кейин навиштан ғайриимкон мешавад.
 </div>
 {% endif %}
 
 <div class="danger-box">
-    <strong>Якунлаш чӣ маъно дорад:</strong>
+    <strong>Ҷамъбаст чӣ маъно дорад:</strong>
     <ul style="margin:.4rem 0 0; padding-right:1.2rem;">
         <li>Ҳамаи {{ qs.total }} синф-фан дар чоряки {{ qs.ordinal }} <strong>баста</strong> мешавад — омӯзгорон дигар хол, давомат ва тарбия навишта наметавонанд.</li>
         <li><strong>Excel-архив</strong> ҳамин лаҳза сабт мегардад ва дар «Солҳои таҳсил» боқӣ мемонад.</li>
@@ -38,11 +38,11 @@
 </div>
 
 <div class="qc-card">
-    <h2>Камбудиҳо пеш аз якунланish</h2>
+    <h2>Камбудиҳо пеш аз ҷамъбаст</h2>
     {% if qs.missing_total == 0 %}
         <p class="ok-note">✔ Ҳамаи хонандагон холи чоряк гирифтаанд.</p>
     {% else %}
-        <p style="color:#b91c1c; font-weight:600;">⚠ {{ qs.missing_total }} хол чоряк ҳануз нагуфтааст — якунлаш мумкин, лекин онҳо бе хол мемонанд.</p>
+        <p style="color:#b91c1c; font-weight:600;">⚠ {{ qs.missing_total }} баҳогузорӣ ҳануз анҷом наёфтааст — ҷамъбаст мумкин, лекин онҳо бе хол мемонанд.</p>
         <table class="qc-table">
             <thead><tr>
                 <th style="width:100px;">Синф</th>
@@ -71,10 +71,10 @@
         <input type="hidden" name="school_id" value="{{ school.id }}">
         <input type="hidden" name="quarter" value="{{ qs.quarter }}">
         <input type="hidden" name="year" value="{{ qs.year }}">
-        <p>Барои якунланish калимаи <strong>ТАСДИҚ</strong>-ро нависед:</p>
+        <p>Барои ҷамъбаст калимаи <strong>ТАСДИҚ</strong>-ро нависед:</p>
         <div class="confirm-row">
             <input type="text" name="confirm" autocomplete="off" required>
-            <button type="submit" class="btn-danger">🔒 Якунлаш</button>
+            <button type="submit" class="btn-danger">🔒 Ҷамъбаст</button>
             <a href="{% url 'academic_years' %}{% if school %}?school_id={{ school.id }}{% endif %}">Бекор кардан</a>
         </div>
     </form>

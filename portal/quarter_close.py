@@ -109,14 +109,17 @@ def collect_quarter_close(school, quarter, year, today=None):
 
 def collect_academic_years(school, today=None):
     """Academic years to display: the current year plus every year the
-    school has QuarterGrade/QuarterLock rows for — newest first."""
+    school has QuarterLock rows for — i.e. years that were actually
+    closed/archived — newest first.
+
+    QuarterGrade data alone does not create a card: stray rows stamped
+    with an earlier year (e.g. summer entries attributed to the tail of
+    the previous Sep..Aug year) must not surface a phantom year card.
+    """
     from .views import academic_year_start  # local import avoids cycles
 
     current = academic_year_start(today)
     years = {current}
-    years.update(QuarterGrade.objects.filter(
-        student__school=school, academic_year__isnull=False
-    ).values_list('academic_year', flat=True))
     years.update(QuarterLock.objects.filter(
         school=school, academic_year__isnull=False
     ).values_list('academic_year', flat=True))

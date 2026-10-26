@@ -122,8 +122,10 @@ def collect_absence_students(school, period, min_hours=3, today=None):
                     attendance='-')
             .values('student__class_name', 'student__full_name')
             .annotate(n=Count('id'))
-            .filter(n__gte=min_hours)
-            .order_by('-n', 'student__class_name', 'student__full_name'))
+            .filter(n__gte=min_hours))
+    rows = sorted(rows, key=lambda r: (
+        class_numeric_part(r['student__class_name']) or 0,
+        r['student__class_name'], -r['n'], r['student__full_name']))
     return {'period': value, 'period_label': label, 'min': min_hours,
             'rows': [{'class_name': r['student__class_name'],
                       'name': r['student__full_name'], 'n': r['n']}
@@ -143,8 +145,10 @@ def collect_behavior_issues(school, period, today=None):
                     date__gte=start, date__lte=end,
                     behavior_score__isnull=False, behavior_score__lte=3)
             .values('student__class_name', 'student__full_name')
-            .annotate(n=Count('id'), worst=Min('behavior_score'))
-            .order_by('-n', 'student__class_name', 'student__full_name'))
+            .annotate(n=Count('id'), worst=Min('behavior_score')))
+    rows = sorted(rows, key=lambda r: (
+        class_numeric_part(r['student__class_name']) or 0,
+        r['student__class_name'], -r['n'], r['student__full_name']))
     return {'period': value, 'period_label': label,
             'rows': [{'class_name': r['student__class_name'],
                       'name': r['student__full_name'],

@@ -123,7 +123,7 @@
 </div>
 
 <div class="doc-card">
-    <h2>Хонандагони зиёд бесабаб қолдирган</h2>
+    <h2>Ғоибияти зиёди бесабаб</h2>
     <form method="get" action="{% url 'nazorat' %}" class="nz-toolbar no-print">
         {% if district_view %}
         <input type="hidden" name="school_id" value="{{ school.id }}">
@@ -162,7 +162,7 @@
 </div>
 
 <div class="doc-card">
-    <h2>Хонандагони дорои холҳои пасти хулқ-атвор (3 ва камтар)</h2>
+    <h2>Рафтори ғайриқаноатбахш (холҳои 3 ва камтар)</h2>
     {% if not behavior.rows %}
         <p class="ok-note">✔ Дар ин давра холҳои пасти хулқ-атвор сабт нашудааст.</p>
     {% else %}

@@ -30,7 +30,8 @@ def attendance_period_options(ay):
                for m in ACADEMIC_MONTHS]
     options += [(f'q{q}', f'Чоряки {QUARTER_WORD_ORDINALS[q]}')
                 for q in (1, 2, 3, 4)]
-    options.append(('all', f'Ҳамагӣ — соли таҳсили {ay}-{ay + 1}'))
+    options += [('s1', 'Нимсолаи якум'), ('s2', 'Нимсолаи дуюм')]
+    options.append(('all', f'Солона — соли таҳсили {ay}-{ay + 1}'))
     return options
 
 
@@ -41,13 +42,27 @@ def _month_bounds(year, month):
 
 
 def _period_bounds(period, ay, today):
-    """'m9'..'m8' / 'q1'..'q4' -> (start, end, label, value).
+    """'m9'..'m8' / 'q1'..'q4' / 's1'..'s2' / 'all' -> (start, end, label, value).
 
     Invalid/missing input falls back to the current calendar month.
+    Semester 1 = Q1+Q2 including the winter break (break days attribute
+    to the preceding quarter, exactly like the journal does); semester 2
+    runs to the end of the academic year.
     """
     if period == 'all':
         return (datetime.date(ay, 9, 1), datetime.date(ay + 1, 8, 31),
-                f'Соли таҳсили {ay}-{ay + 1}', 'all')
+                f'Солона {ay}-{ay + 1}', 'all')
+    if period and period[0] == 's' and period[1:].isdigit():
+        s = int(period[1:])
+        if s in (1, 2):
+            from .views import academic_year_quarter_windows
+            w = academic_year_quarter_windows(ay)
+            if s == 1:
+                start, end = w[1][0], w[3][0] - datetime.timedelta(days=1)
+            else:
+                start, end = w[3][0], datetime.date(ay + 1, 8, 31)
+            label = f'Нимсолаи {QUARTER_WORD_ORDINALS[s]}'
+            return start, end, label, period
     if period and period[0] == 'm' and period[1:].isdigit():
         m = int(period[1:])
         if m in ACADEMIC_MONTHS:

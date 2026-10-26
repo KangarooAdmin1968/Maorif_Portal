@@ -80,6 +80,10 @@ urlpatterns = [
     path('schools/documents/movements/add/', views.movement_add, name='movement_add'),
     path('schools/documents/movements/delete/', views.movement_delete, name='movement_delete'),
     path('monitoring-dashboard/export/', views.export_monitoring_excel, name='export_monitoring_excel'),
+    path('schools/years/', views.academic_years, name='academic_years'),
+    path('schools/years/close/', views.quarter_close, name='quarter_close'),
+    path('schools/years/reopen/', views.quarter_reopen, name='quarter_reopen'),
+    path('schools/years/archive/', views.quarter_archive_download, name='quarter_archive_download'),
     path('top-students/', views.top_students_ajax, name='top_students_ajax'),
     path('class-rankings/', views.class_rankings_ajax, name='class_rankings_ajax'),
 ]

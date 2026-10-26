@@ -1,0 +1,93 @@
+{% extends 'portal/base.html' %}
+{% block title %}Солҳои таҳсил{% endblock %}
+{% block extra_head %}
+<style>
+  .yr-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+  .yr-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .yr-toolbar select { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; min-width: 12rem; }
+  .yr-card { background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem; padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
+  .yr-card h2 { margin: 0 0 .6rem; font-size: 1.05rem; color: #003366; }
+  .q-grid { display: flex; flex-wrap: wrap; gap: .75rem; }
+  .q-card { border: 1px solid #e5e7eb; border-radius: .5rem; padding: .7rem 1rem; min-width: 230px; flex: 1; }
+  .q-card.closed { background: #f0fdf4; border-color: #86efac; }
+  .q-card .qt { font-weight: 700; color: #003366; font-size: 1rem; }
+  .q-card .qd { font-size: .82rem; color: #6b7280; margin: .15rem 0 .35rem; }
+  .q-badge { display: inline-block; font-size: .78rem; font-weight: 600; padding: .15rem .55rem; border-radius: 999px; margin-bottom: .45rem; }
+  .q-badge.open { background: #fef3c7; color: #92400e; }
+  .q-badge.partial { background: #dbeafe; color: #1e40af; }
+  .q-badge.closed { background: #dcfce7; color: #166534; }
+  .q-stats { font-size: .85rem; color: #374151; margin-bottom: .5rem; }
+  .q-stats .warn { color: #b91c1c; font-weight: 600; }
+  .q-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .btn-close-q { background: #003366; color: #fff; border: none; border-radius: .35rem; padding: .4rem .8rem; font-size: .85rem; cursor: pointer; text-decoration: none; }
+  .btn-open-q { background: #fff; color: #b91c1c; border: 1px solid #b91c1c; border-radius: .35rem; padding: .4rem .8rem; font-size: .85rem; cursor: pointer; }
+  .btn-arch { background: #fff; color: #003366; border: 1px solid #003366; border-radius: .35rem; padding: .4rem .8rem; font-size: .85rem; text-decoration: none; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>📁 Солҳои таҳсил{% if school %} — {{ school.name }}{% endif %}</h1>
+
+{% if district_view %}
+<div class="yr-toolbar no-print">
+    <form method="get" action="{% url 'academic_years' %}">
+        <label>Муассиса
+            <select name="school_id" onchange="this.form.submit()">
+                {% for s in schools %}
+                <option value="{{ s.id }}"{% if school and s.id == school.id %} selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn">Намоиш</button></noscript>
+    </form>
+</div>
+{% endif %}
+
+{% for y in years %}
+<div class="yr-card">
+    <h2>Соли таҳсили {{ y.year }}-{{ y.year|add:1 }}{% if y.year == current_year %} <span style="font-weight:400; font-size:.8rem; color:#6b7280;">(ҷорӣ)</span>{% endif %}</h2>
+    <div class="q-grid">
+        {% for q in y.quarters %}
+        <div class="q-card{% if q.closed %} closed{% endif %}">
+            <div class="qt">Чоряки {{ q.ordinal }}</div>
+            <div class="qd">{{ q.start|date:"d.m.Y" }} – {{ q.end|date:"d.m.Y" }}</div>
+            {% if q.closed %}
+                <span class="q-badge closed">🔒 Якунланда</span>
+            {% elif q.locked_count > 0 %}
+                <span class="q-badge partial">Қисман баста ({{ q.locked_count }}/{{ q.total }})</span>
+            {% else %}
+                <span class="q-badge open">Кушод</span>
+            {% endif %}
+            <div class="q-stats">
+                Фанҳо: {{ q.locked_count }}/{{ q.total }} баста<br>
+                {% if q.missing_total %}
+                <span class="warn">⚠ {{ q.missing_total }} хол чоряк нагуфтааст</span>
+                {% else %}
+                Ҳолҳои чорякӣ: пур
+                {% endif %}
+            </div>
+            <div class="q-actions">
+                {% if q.closed %}
+                    <a class="btn-arch" href="{% url 'quarter_archive_download' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">📥 Архив</a>
+                    {% if can_reopen %}
+                    <form method="post" action="{% url 'quarter_reopen' %}" onsubmit="return confirm('Чоряк кушода мешавад — омӯзгорон дубора хол гузошта метавонанд. Идома?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="school_id" value="{{ school.id }}">
+                        <input type="hidden" name="quarter" value="{{ q.quarter }}">
+                        <input type="hidden" name="year" value="{{ q.year }}">
+                        <button type="submit" class="btn-open-q">Кушодан</button>
+                    </form>
+                    {% endif %}
+                {% elif can_close and q.ended %}
+                    <a class="btn-close-q" href="{% url 'quarter_close' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">🔒 Якунлаш</a>
+                {% elif can_close %}
+                    <span style="font-size:.8rem; color:#9ca3af;">Чоряк ҳануз идома дорад</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% empty %}
+<p>Муассиса интихоб нашудааст.</p>
+{% endfor %}
+{% endblock %}

@@ -8184,6 +8184,159 @@ def movement_delete(request):
     return _movement_redirect(request, school, quarter)
 
 
+def _years_redirect(request, school):
+    url = reverse('academic_years')
+    if school and _maorif_report_access(request.user):
+        url += f"?school_id={school.id}"
+    return redirect(url)
+
+
+@login_required
+def academic_years(request):
+    """📁 Солҳои таҳсил — per-year quarter status + archive download.
+
+    Each quarter card shows how many class-subjects are locked, the
+    official window and an Excel archive download. Closing happens on
+    the separate confirmation page (quarter_close), so an accidental
+    click can never lock a quarter.
+    """
+    school, district_view, schools, allowed = _movement_scope(request)
+    if not allowed:
+        return redirect('dashboard')
+
+    years_data = []
+    if school is not None:
+        from .quarter_close import (archive_path,
+                                    collect_academic_years,
+                                    collect_quarter_close)
+        for ay in collect_academic_years(school):
+            quarters = []
+            for q in (1, 2, 3, 4):
+                qs = collect_quarter_close(school, q, ay)
+                qs['archive_ready'] = (
+                    qs['closed']
+                    or archive_path(school, q, ay).exists())
+                quarters.append(qs)
+            years_data.append({'year': ay, 'quarters': quarters})
+    return render(request, 'portal/academic_years.html', {
+        'school': school,
+        'schools': schools,
+        'district_view': district_view,
+        'years': years_data,
+        'can_close': bool(school) and _can_manage_school(
+            request.user, school),
+        'can_reopen': _maorif_report_access(request.user),
+        'current_year': academic_year_start(),
+    })
+
+
+@login_required
+def quarter_close(request):
+    """Якуни чоряк — two-step closeout for the завуч.
+
+    GET  renders the confirmation page: deficiencies (students without
+    a чорак grade per class-subject) + the warning the user must read.
+    POST requires the literal word ТАСДИҚ — only then are QuarterLock
+    rows written and the Excel archive frozen to media/archives/.
+    """
+    school, _, _, allowed = _movement_scope(request)
+    if (not allowed or school is None
+            or not _can_manage_school(request.user, school)):
+        return redirect('dashboard')
+
+    from .quarter_close import (close_quarter, collect_quarter_close,
+                                save_quarter_archive)
+    try:
+        quarter = int(request.POST.get('quarter') or
+                      request.GET.get('quarter'))
+        year = int(request.POST.get('year') or request.GET.get('year'))
+    except (TypeError, ValueError):
+        return _years_redirect(request, school)
+    if quarter not in (1, 2, 3, 4):
+        return _years_redirect(request, school)
+
+    qs = collect_quarter_close(school, quarter, year)
+    if qs['closed']:
+        messages.info(request, 'Ин чоряк аллакай якунландааст.')
+        return _years_redirect(request, school)
+
+    if request.method == 'POST':
+        if request.POST.get('confirm', '').strip().upper() != 'ТАСДИҚ':
+            messages.error(
+                request, 'Барои якунланish калимаи «ТАСДИҚ» навишта шавад.')
+            return render(request, 'portal/quarter_close.html', {
+                'school': school, 'qs': qs})
+        n = close_quarter(school, quarter, year)
+        save_quarter_archive(school, quarter, year)
+        messages.success(
+            request,
+            f'Чоряки {qs["ordinal"]} якунланда шуд — '
+            f'{n} фан баста гашт ва архив сабт гардид.')
+        return _years_redirect(request, school)
+
+    return render(request, 'portal/quarter_close.html', {
+        'school': school, 'qs': qs})
+
+
+@login_required
+@require_POST
+def quarter_reopen(request):
+    """Маориф/админ only: unlock a previously closed quarter."""
+    school, _, _, allowed = _movement_scope(request)
+    if not allowed or school is None:
+        return redirect('dashboard')
+    if not _maorif_report_access(request.user):
+        messages.error(request, 'Кушодани чоряк танҳо маориф метавонад.')
+        return _years_redirect(request, school)
+    try:
+        quarter = int(request.POST.get('quarter'))
+        year = int(request.POST.get('year'))
+    except (TypeError, ValueError):
+        return _years_redirect(request, school)
+    if quarter in (1, 2, 3, 4):
+        from .quarter_close import reopen_quarter
+        n = reopen_quarter(school, quarter, year)
+        messages.success(
+            request, f'Чоряк кушода шуд — {n} фан озод гардид.')
+    return _years_redirect(request, school)
+
+
+@login_required
+def quarter_archive_download(request):
+    """Serve the frozen archive; regenerates when the file is missing
+    (e.g. archived before this feature existed)."""
+    school, _, _, allowed = _movement_scope(request)
+    if not allowed or school is None:
+        return redirect('dashboard')
+    try:
+        quarter = int(request.GET.get('quarter'))
+        year = int(request.GET.get('year'))
+    except (TypeError, ValueError):
+        return _years_redirect(request, school)
+    if quarter not in (1, 2, 3, 4):
+        return _years_redirect(request, school)
+
+    from .quarter_close import (archive_path, build_quarter_archive,
+                                save_quarter_archive)
+    path = archive_path(school, quarter, year)
+    if path.exists():
+        output = io.BytesIO(path.read_bytes())
+    else:
+        output = build_quarter_archive(school, quarter, year)
+        if collect_quarter_close_marker(school, quarter, year):
+            save_quarter_archive(school, quarter, year)
+    return _maorif_xlsx_response(
+        output,
+        f"Архив_{get_school_number(school)}_чорак{quarter}_{year}-{year + 1}.xlsx")
+
+
+def collect_quarter_close_marker(school, quarter, year):
+    """True when the quarter is fully closed — archive snapshots are
+    then persisted so later downloads stay byte-identical."""
+    from .quarter_close import collect_quarter_close
+    return collect_quarter_close(school, quarter, year)['closed']
+
+
 @login_required
 def maorif_reports(request):
     """Ҳуҷҷатнигорӣ → Ҳисоботи маориф: list of district Excel reports.

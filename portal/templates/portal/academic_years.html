@@ -59,7 +59,7 @@
             {% endif %}
             <div class="q-stats">
                 Фанҳо: {{ q.locked_count }}/{{ q.total }} баста<br>
-                {% if q.year == current_year %}
+                {% if q.year == current_year and not q.not_started %}
                     {% if q.missing_total %}
                     <span class="warn">⚠ {{ q.missing_total }} баҳогузорӣ нашудааст</span>
                     {% else %}
@@ -82,7 +82,7 @@
                 {% elif can_close and q.ended %}
                     <a class="btn-close-q" href="{% url 'quarter_close' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">🔒 Ҷамъбаст</a>
                 {% elif can_close %}
-                    <span style="font-size:.8rem; color:#9ca3af;">Чоряк ҳануз идома дорад</span>
+                    <span style="font-size:.8rem; color:#9ca3af;">{% if q.not_started %}Чоряк ҳануз оғоз нашудааст{% else %}Чоряк идома дорад{% endif %}</span>
                 {% endif %}
             </div>
         </div>

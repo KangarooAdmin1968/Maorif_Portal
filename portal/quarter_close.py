@@ -97,6 +97,7 @@ def collect_quarter_close(school, quarter, year, today=None):
         'quarter': quarter,
         'ordinal': QUARTER_WORD_ORDINALS[quarter],
         'year': year, 'start': start, 'end': end,
+        'not_started': today < start,
         'ended': today > end,
         'grading_until': grading_until,
         'grading_still_open': today <= grading_until,

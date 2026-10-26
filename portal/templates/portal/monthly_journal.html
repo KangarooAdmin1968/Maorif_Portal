@@ -30,6 +30,9 @@
 .month-table th.date-head.status-empty { background: #4b5563; }
 .month-table th.sub-head { background: #f3f4f6; font-size: 0.75rem; color: #374151; white-space: nowrap; }
 .month-table th.sub-head.ctl { background: #fee2e2; color: #991b1b; }
+.ctl-tgl { margin-left: 0.25rem; padding: 0 0.3rem; border: 1px solid #d1d5db; border-radius: 0.3rem; background: #fff; color: #9ca3af; font-size: 0.72rem; cursor: pointer; }
+.ctl-tgl:hover { border-color: #ef4444; color: #b91c1c; }
+.ctl-tgl.on { background: #fee2e2; border-color: #ef4444; color: #991b1b; font-weight: 700; }
 .month-table td.cell-control { background: #fef2f2; color: #991b1b; font-weight: 600; }
 .month-table td.cell-absent { color: #b91c1c; }
 .month-table td.cell-empty { background: #fff; }
@@ -174,7 +177,7 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
     </tr>
     <tr>
       {% for col in columns %}
-      <th class="sub-head{% if col.control %} ctl{% endif %}">{% if col.lesson_number %}Д{{ col.lesson_number }}{% else %}—{% endif %}{% if col.control %} Н{% endif %}</th>
+      <th class="sub-head{% if col.control %} ctl{% endif %}">{% if col.lesson_number %}Д{{ col.lesson_number }}{% else %}—{% endif %}{% if col.can_toggle %}<button type="button" class="ctl-tgl{% if col.control %} on{% endif %}" data-date="{{ col.date|date:'Y-m-d' }}" data-lesson="{{ col.lesson_id|default:'' }}" data-ctl="{% if col.control %}1{% else %}0{% endif %}" title="{% if col.control %}Назоратро бекор кардан — холҳо ҷорӣ мемонанд{% else %}Ин сутунро назорат кардан{% endif %}">Н</button>{% elif col.control %} Н{% endif %}</th>
       {% endfor %}
     </tr>
   </thead>
@@ -218,7 +221,7 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
         <tr>
           <th></th>
           {% for col in d.columns %}
-          <th>{% if col.lesson_number %}Д{{ col.lesson_number }}{% else %}—{% endif %}{% if col.control %} Н{% endif %}</th>
+          <th>{% if col.lesson_number %}Д{{ col.lesson_number }}{% else %}—{% endif %}{% if col.can_toggle %}<button type="button" class="ctl-tgl{% if col.control %} on{% endif %}" data-date="{{ d.date|date:'Y-m-d' }}" data-lesson="{{ col.lesson_id|default:'' }}" data-ctl="{% if col.control %}1{% else %}0{% endif %}" title="{% if col.control %}Назоратро бекор кардан — холҳо ҷорӣ мемонанд{% else %}Ин сутунро назорат кардан{% endif %}">Н</button>{% elif col.control %} Н{% endif %}</th>
           {% endfor %}
         </tr>
         {% for r in d.mini %}
@@ -275,8 +278,10 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
 
 <script>
 const monthlySaveUrl = "{% url 'monthly_save' %}";
+const assessmentToggleUrl = "{% url 'assessment_toggle' %}";
 const csrfToken = "{{ csrf_token }}";
 const subjectName = "{{ subject|escapejs }}";
+const classSubjectId = "{{ class_subject_id|default:'' }}";
 const pendingEdits = {};   // key -> {score?, attendance?, behavior_score?}
 let pickerCell = null;
 
@@ -655,6 +660,33 @@ function toggleDay(btn) {
   const grid = btn.closest('.day-card').querySelector('.day-grid');
   grid.style.display = grid.style.display === 'none' ? 'block' : 'none';
 }
+
+// --- Column "Н" toggle: mark/unmark a whole column as Назорат -------------
+// One POST to the shared toggle endpoint, then a reload re-renders the
+// column in its new mode (plain rows are re-linked server-side — nothing
+// typed is ever lost).
+document.querySelectorAll('.ctl-tgl').forEach(btn => {
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (hasPending()) { showToast('Аввал тағйиротҳои сабтнашударо сабт кунед.'); return; }
+    const msg = btn.dataset.ctl === '1'
+      ? '«Н» белгӣ олинади — холҳои ин сутун ҷорӣ ҳолатида мемонанд. Идома?'
+      : 'Ин сутун Назорат мешавад — холҳои он кори санҷишӣ мегарданд. Идома?';
+    if (!confirm(msg)) return;
+    const body = new URLSearchParams({
+      class_subject_id: classSubjectId,
+      date: btn.dataset.date,
+      lesson_id: btn.dataset.lesson || '',
+    });
+    fetch(assessmentToggleUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body})
+      .then(r => r.json())
+      .then(resp => {
+        if (resp && resp.success) location.reload();
+        else showToast((resp && resp.message) || 'Хатo');
+      })
+      .catch(() => showToast('Алоқа канда шуд.'));
+  });
+});
 </script>
 {% endif %}
 {% endblock %}

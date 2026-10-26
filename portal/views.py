@@ -928,13 +928,16 @@ def _parse_score(raw):
     return score
 
 
-def _resolve_daily_scope(student, subject, date, lesson_id, user=None):
+def _resolve_daily_scope(student, subject, date, lesson_id, user=None,
+                         allow_control=False):
     """Validate the target slot of a regular (non-assessment) daily write.
 
     Returns the resolved Lesson or None for the legacy lesson-less slot.
     Raises ValueError with a teacher-safe message on forged/mismatched IDs,
     when a control assessment already owns the slot, or when a regular
-    teacher tries to use another group's lesson.
+    teacher tries to use another group's lesson. With allow_control=True
+    the control-slot check is skipped — the caller (the batched journal
+    pipeline) resolves and writes to the slot's assessment itself.
     """
     class_name = normalize_class_name(student.class_name)
     if lesson_id:
@@ -955,7 +958,7 @@ def _resolve_daily_scope(student, subject, date, lesson_id, user=None):
             raise ValueError('Дарс ба ин сана тааллуқ надорад.')
         # Mode exclusivity is lesson-scoped: only a control assessment
         # attached to THIS lesson blocks Ҷорӣ here.
-        if Assessment.objects.filter(
+        if not allow_control and Assessment.objects.filter(
             class_subject=lcs,
             category='control',
             lesson=lesson,
@@ -965,7 +968,7 @@ def _resolve_daily_scope(student, subject, date, lesson_id, user=None):
             raise ValueError('Дарс ба гурӯҳи шумо тааллуқ надорад.')
         return lesson
     # Lesson-less slot: only legacy lesson-less control assessments lock it.
-    if Assessment.objects.filter(
+    if not allow_control and Assessment.objects.filter(
         class_subject__school=student.school,
         class_subject__class_name=class_name,
         class_subject__subject=subject,
@@ -3920,8 +3923,12 @@ def monthly_journal(request, school_id, class_name, subject):
             lessons_by_date[l.date].append(l)
 
     # Control assessments in the month, keyed by (date, lesson_id) so each
-    # column can show its own Назорат marker.
+    # column can show its own Назорат marker. A column is writable as
+    # control only when its slot holds exactly one untyped assessment —
+    # typed works keep their dedicated daily-journal entry so work-type
+    # semantics are never bypassed from the month grid.
     control_slots = set()
+    ctl_by_slot = defaultdict(list)
     if class_subject is not None:
         assessment_qs = Assessment.objects.filter(
             class_subject=class_subject,
@@ -3935,6 +3942,11 @@ def monthly_journal(request, school_id, class_name, subject):
             )
         for a in assessment_qs:
             control_slots.add((a.date, a.lesson_id))
+            ctl_by_slot[(a.date, a.lesson_id)].append(a)
+    slot_simple_ctl = {
+        key: rows[0].id for key, rows in ctl_by_slot.items()
+        if len(rows) == 1 and not rows[0].work_type
+    }
 
     # Grade cells: (date, lesson_id) -> student_id -> [cell, ...]
     cells = defaultdict(dict)
@@ -3994,13 +4006,19 @@ def monthly_journal(request, school_id, class_name, subject):
             })
         day_quarter = get_date_quarter(d)
         for col in day_columns:
-            # A cell is writable only for a plain (non-control) slot in an
-            # unlocked quarter; assessment cells stay display-only here so
-            # work-type semantics are never bypassed from the month grid.
+            col['assessment_id'] = slot_simple_ctl.get(
+                (d, col['lesson_id']))
+            # A cell is writable in an unlocked quarter for a plain slot,
+            # and also for a slot whose single control assessment is
+            # untyped — writes on it land on the assessment-linked row
+            # through the shared journal pipeline.
             col['editable'] = (
                 can_edit
-                and not col['control']
+                and (not col['control'] or col['assessment_id'] is not None)
                 and day_quarter not in locked_quarters
+            )
+            col['can_toggle'] = (
+                can_edit and day_quarter not in locked_quarters
             )
         columns.extend(day_columns)
 
@@ -4075,6 +4093,7 @@ def monthly_journal(request, school_id, class_name, subject):
         'next_month': next_month,
         'month_label': month_start.strftime('%m.%Y'),
         'can_edit': can_edit,
+        'class_subject_id': class_subject.id if class_subject else '',
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — distinct metrics, one aggregate query.
         'journal': _journal_norm_status(
@@ -4277,7 +4296,7 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
             try:
                 outcome = (True, _resolve_daily_scope(
                     student, subject, date, item.get('lesson_id') or '',
-                    user=user,
+                    user=user, allow_control=True,
                 ))
             except ValueError as e:
                 outcome = (False, str(e))
@@ -4295,12 +4314,29 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
             ctx[qkey] = locked
         if locked:
             raise ValueError('Ин чоряк баста шудааст.')
+        # Slot-mode resolution: when the (date, lesson) column is marked
+        # Назорат, the cell writes to the control assessment's linked row —
+        # a control slot can never acquire a stray plain row. Typed works
+        # keep their dedicated daily-journal entry (component semantics
+        # are never bypassed from the month grid).
+        assessment = None
+        if cs is not None:
+            akey = ('slot_ctl', student.school_id, class_name, subject,
+                    date.isoformat(), lesson.pk if lesson else None)
+            assessment = ctx.get(akey, _MEMO_MISS)
+            if assessment is _MEMO_MISS:
+                assessment = Assessment.objects.filter(
+                    class_subject=cs, category='control',
+                    date=date, lesson=lesson).first()
+                ctx[akey] = assessment
+            if assessment is not None and assessment.work_type:
+                raise ValueError('Ин сана кори санҷишии махсус дорад — холҳоро дар журнали ҳаррӯза ворид кунед.')
         grade, _ = get_or_create_grade(
             student=student,
             subject=subject,
             period='Холҳои ҷорӣ (Онлайн)',
             date=date,
-            assessment=None,
+            assessment=assessment,
             lesson=lesson,
             defaults={'score': None, 'attendance': None,
                       'behavior_score': None, 'sticker': None},
@@ -4310,7 +4346,18 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
             for k in ('score', 'attendance', 'behavior_score', 'sticker')
             if k in item
         }
-        _apply_grade_fields(grade, values)
+        kept = _apply_grade_fields(grade, values)
+        if kept and assessment is not None and 'score' in values:
+            # A grid cell is always a plain single score — stale slash
+            # components or test points from an earlier entry must not
+            # shadow the new value.
+            if grade.components or grade.points_achieved is not None \
+                    or grade.points_possible is not None:
+                grade.components = None
+                grade.points_achieved = None
+                grade.points_possible = None
+                grade.save(update_fields=[
+                    'components', 'points_achieved', 'points_possible'])
     except (ValueError, TypeError) as e:
         return False, str(e)
     if affected is not None:
@@ -5570,6 +5617,173 @@ def assessment_delete(request):
             entry['quarter_live'] = deleted_quarter in live_flags
             students_payload[str(st.id)] = entry
         return JsonResponse({'success': True, 'students': students_payload}, status=200)
+    except Exception as e:
+        return JsonResponse({'success': False, 'message': str(e)}, status=200)
+
+
+@login_required
+@require_POST
+def assessment_toggle(request):
+    """Mark/unmark one journal slot (date + optional lesson) as Назорат.
+
+    Marking creates an auto-numbered, untitled, untyped control Assessment
+    and re-links the slot's existing plain Grade rows to it, so marks the
+    teacher already entered as Ҷорӣ become the control work's results in
+    place — no re-typing. Unmarking detaches the linked rows back into
+    plain Ҷорӣ rows and removes the single Assessment; scores,
+    attendance and behavior are preserved in both directions.
+
+    Slots with more than one control assessment are refused — they are
+    managed in the daily journal picker. Permission, group-scope and
+    quarter-lock rules mirror assessment_save/assessment_delete.
+    """
+    try:
+        class_subject_id = request.POST.get('class_subject_id', '').strip()
+        date_str = request.POST.get('date', '').strip()
+        lesson_id = request.POST.get('lesson_id', '').strip()
+
+        try:
+            cs = ClassSubject.objects.select_related('school').get(pk=class_subject_id)
+        except (ClassSubject.DoesNotExist, ValueError, TypeError):
+            return JsonResponse({'success': False, 'message': 'Фан ёфт нашуд.'}, status=200)
+        if not cs.is_active:
+            return JsonResponse({'success': False, 'message': 'Фан фаъол нест.'}, status=200)
+        if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
+            return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
+        try:
+            date = datetime.date.fromisoformat(date_str)
+        except ValueError:
+            return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
+        quarter = get_date_quarter(date)
+        if is_quarter_locked(
+                cs.school, cs.class_name, cs.subject, quarter,
+                academic_year_start(date)):
+            return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
+
+        lesson = None
+        if lesson_id:
+            try:
+                lesson = Lesson.objects.get(pk=lesson_id)
+            except (Lesson.DoesNotExist, ValueError, TypeError):
+                return JsonResponse({'success': False, 'message': 'Дарс ёфт нашуд.'}, status=200)
+            if lesson.class_subject_id != cs.id or lesson.date != date:
+                return JsonResponse({'success': False, 'message': 'Дарс ба ин сана ё фан тааллуқ надорад.'}, status=200)
+
+        is_regular = _is_regular_teacher(request.user)
+        cs_grouped = cs.groups.filter(is_active=True).exists()
+        own_group = teacher_group_for(request.user, cs) if is_regular else None
+        if cs_grouped and is_regular and (
+                own_group is None or lesson is None
+                or lesson.group_id != own_group.id):
+            return JsonResponse({'success': False, 'message': 'Ин сутун ба гурӯҳи шумо тааллуқ надорад.'}, status=200)
+
+        slot_qs = Assessment.objects.filter(
+            class_subject=cs, category='control', date=date, lesson=lesson)
+        slot_count = slot_qs.count()
+        if slot_count > 1:
+            return JsonResponse({'success': False, 'message': 'Ин сана чанд кори санҷишӣ дорад — дар журнали ҳаррӯза идора кунед.'}, status=200)
+
+        from .signals import defer_quarter_recalc  # local import avoids cycles
+
+        if slot_count == 1:
+            assessment = slot_qs.first()
+            if cs_grouped and is_regular and (
+                    assessment.lesson_id is None
+                    or assessment.lesson.group_id != own_group.id):
+                return JsonResponse({'success': False, 'message': 'Санҷиш ба гурӯҳи шумо тааллуқ надорад.'}, status=200)
+            with transaction.atomic(), defer_quarter_recalc() as deferred:
+                for g in Grade.objects.filter(assessment=assessment).order_by('pk'):
+                    sibling = Grade.objects.filter(
+                        student=g.student, subject=g.subject, period=g.period,
+                        date=g.date, lesson=g.lesson,
+                        assessment__isnull=True,
+                    ).exclude(pk=g.pk).first()
+                    if sibling is None:
+                        g.assessment = None
+                        g.save()
+                    else:
+                        # A plain row already occupies the slot for this
+                        # student — merge the control values into it (never
+                        # overwriting what it already holds) and drop the
+                        # linked row, so no duplicate Ҷорӣ rows are left.
+                        changed = False
+                        for field in ('score', 'attendance', 'behavior_score',
+                                      'sticker', 'components',
+                                      'points_achieved', 'points_possible'):
+                            if getattr(sibling, field) in (None, '') \
+                                    and getattr(g, field) not in (None, ''):
+                                setattr(sibling, field, getattr(g, field))
+                                changed = True
+                        if changed:
+                            sibling.save()
+                        g.delete()
+                assessment.delete()
+                recalculate_quarter_grades_bulk(deferred)
+            return JsonResponse({'success': True, 'control': False}, status=200)
+
+        max_number = Assessment.objects.filter(
+            class_subject=cs, quarter=quarter, category='control',
+        ).aggregate(m=Max('number'))['m'] or 0
+        with transaction.atomic(), defer_quarter_recalc() as deferred:
+            assessment, created = get_or_create_unique(
+                Assessment,
+                class_subject=cs, date=date, category='control',
+                number=max_number + 1,
+                defaults={
+                    'quarter': quarter,
+                    'title': '',
+                    'is_ajm': False,
+                    'lesson': lesson,
+                    'purpose': 'summative',
+                    'work_type': '',
+                    'summative_scope': 'none',
+                },
+            )
+            converted = 0
+            for g in Grade.objects.filter(
+                    student__school=cs.school,
+                    student__class_name=cs.class_name,
+                    subject=cs.subject,
+                    period='Холҳои ҷорӣ (Онлайн)',
+                    date=date, lesson=lesson,
+                    assessment__isnull=True).order_by('pk'):
+                g.assessment = assessment
+                g.save()
+                converted += 1
+            recalculate_quarter_grades_bulk(deferred)
+
+        grades_payload = {}
+        marks_payload = {}
+        sem = result_semantics_for(assessment)
+        for g in Grade.objects.filter(
+                assessment=assessment).select_related('assessment').order_by('pk'):
+            key = str(g.student_id)
+            if key not in grades_payload:
+                grades_payload[key] = result_display(g, sem)
+            if g.attendance or g.behavior_score is not None:
+                marks_payload[key] = {
+                    'att': g.attendance or '',
+                    'beh': g.behavior_score if g.behavior_score is not None else '',
+                }
+        return JsonResponse({'success': True, 'control': True,
+                             'converted': converted,
+                             'assessment': {
+                                 'id': assessment.id,
+                                 'label': _assessment_label(assessment),
+                                 'number': assessment.number,
+                                 'title': assessment.title,
+                                 'is_ajm': assessment.is_ajm,
+                                 'date': assessment.date.isoformat(),
+                                 'lesson_id': assessment.lesson_id,
+                                 'purpose': assessment.purpose,
+                                 'work_type': assessment.work_type,
+                                 'work_type_label': work_type_label(assessment.work_type),
+                                 'summative_scope': assessment.summative_scope,
+                                 'semantics': result_semantics_for(assessment).get('semantics'),
+                                 'locked': False,
+                             },
+                             'grades': grades_payload,
+                             'marks': marks_payload}, status=200)
     except Exception as e:
         return JsonResponse({'success': False, 'message': str(e)}, status=200)
 

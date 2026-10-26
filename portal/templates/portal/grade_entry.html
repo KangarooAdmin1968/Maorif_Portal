@@ -138,6 +138,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
       <select id="assessment-select" onchange="onAssessmentChange()"></select>
       <button type="button" class="btn btn-secondary mini-btn" onclick="editSelectedAssessment()" title="Таҳрир">✏️</button>
       <button type="button" class="btn btn-secondary mini-btn" onclick="toggleAssessmentForm(true, null)">+ Нав</button>
+      <button type="button" class="btn btn-secondary mini-btn" onclick="revertSlotToCurrent()" title="Назоратро ба ҷорӣ баргардонидан — холҳо ҳифз мемонанд">⟲</button>
       <button type="button" class="btn btn-secondary mini-btn" onclick="deleteSelectedAssessment()" title="Нест кардани кори санҷишӣ">🗑</button>
     </span>
     <span id="mode-hint" style="font-size:0.85rem; color:#92400e;"></span>
@@ -339,6 +340,7 @@ const saveUrl = "{% url 'save_grade_ajax' %}";
 const dailySaveBatchUrl = "{% url 'daily_save' %}";
 const assessmentSaveUrl = "{% url 'assessment_save' %}";
 const assessmentDeleteUrl = "{% url 'assessment_delete' %}";
+const assessmentToggleUrl = "{% url 'assessment_toggle' %}";
 const lessonSaveUrl = "{% url 'lesson_save' %}";
 const lessonDeleteUrl = "{% url 'lesson_delete' %}";
 const classSubjectId = "{{ class_subject_id|default:'' }}";
@@ -384,13 +386,11 @@ function selectLesson(id) {
 }
 function createLesson() {
     if (!navigator.onLine) { showOfflineBanner(); return; }
-    const topic = prompt('Мавзӯъи дарс (ихтиёрӣ):', '');
-    // Cancel/Escape aborts: no Lesson is created. An empty topic on OK is valid.
-    if (topic === null) return;
+    // One click creates the lesson — teachers are not asked for a topic
+    // (мавзӯъ боҳигарӣ нест; майдон барои оянда мемонад).
     const params = new URLSearchParams({
         class_subject_id: classSubjectId,
         date: pageDate,
-        topic: topic,
     });
     fetch(lessonSaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
     .then(r => r.json())
@@ -616,6 +616,20 @@ function setGradeKind(kind) {
   if (kind === gradeKind) return;
   if (kind === 'current' && controlDateLocked()) { updateModeHint(); return; }
   backupDrafts();
+  if (kind === 'control' && hasPending()) {
+    // Staged Ҷорӣ edits are flushed BEFORE the slot switches to Назорат —
+    // the server then converts them into control results in the same step.
+    savePendingNow(ok => {
+      if (!ok) {
+        const r = document.querySelector('input[name="grade_kind"][value="current"]');
+        if (r) r.checked = true;
+        return;
+      }
+      enterControlMode();
+      gradeKind = 'control';
+    });
+    return;
+  }
   if (kind === 'control') enterControlMode(); else exitControlMode();
   gradeKind = kind;
 }
@@ -629,6 +643,14 @@ function enterControlMode() {
   markInputs().forEach(el => { dailySnapshot[el.name] = el.value; });
   document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => { el.dataset.wasDisabled = el.disabled ? '1' : '0'; });
   const scoped = scopedAssessments();
+  if (!scoped.length) {
+    // First time Назорат is picked on this slot: the assessment is created
+    // automatically (auto number, no title, no АҶМ) and any Ҷорӣ marks
+    // already entered on the slot are converted into its results.
+    renderAssessmentPicker();
+    autoCreateControl();
+    return;
+  }
   if ((!currentAssessmentId || !findAssessment(currentAssessmentId) ||
        String(findAssessment(currentAssessmentId).lesson_id || '') !== selectedLessonId) && scoped.length) {
     currentAssessmentId = scoped[0].id;
@@ -637,6 +659,67 @@ function enterControlMode() {
   const sel = document.getElementById('assessment-select');
   sel.value = currentAssessmentId || '';
   loadAssessmentValues();
+}
+function revertToCurrentRadio() {
+  const r = document.querySelector('input[name="grade_kind"][value="current"]');
+  if (r) r.checked = true;
+}
+function autoCreateControl() {
+  const revert = () => {
+    exitControlMode();
+    gradeKind = 'current';
+    revertToCurrentRadio();
+  };
+  if (!navigator.onLine) { revert(); showOfflineBanner(); return; }
+  const params = new URLSearchParams({
+    class_subject_id: classSubjectId,
+    date: pageDate,
+    lesson_id: selectedLessonId,
+  });
+  fetch(assessmentToggleUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
+  .then(r => r.json())
+  .then(resp => {
+    if (!(resp && resp.success && resp.assessment)) {
+      alert((resp && resp.message) || 'Хатo');
+      revert();
+      return;
+    }
+    const a = resp.assessment;
+    assessments.push(a);
+    assessmentGrades[a.id] = resp.grades || {};
+    assessmentMarks[a.id] = resp.marks || {};
+    renderAssessmentPicker();
+    updateModeHint();
+    // The teacher may have switched back while the request was in flight —
+    // the new assessment must not clobber Ҷорӣ inputs, but the mode lock
+    // still reflects the now-control slot.
+    if (gradeKind !== 'control') return;
+    currentAssessmentId = a.id;
+    document.getElementById('assessment-select').value = String(a.id);
+    loadAssessmentValues();
+  })
+  .catch(() => { revert(); showOfflineBanner(); });
+}
+function revertSlotToCurrent() {
+  const onDate = assessments.filter(a => a.date === pageDate && String(a.lesson_id || '') === selectedLessonId);
+  if (onDate.length !== 1) {
+    alert('Ин сана чанд кори санҷишӣ дорад — аввал онҳоро дар рӯйхат идора кунед.');
+    return;
+  }
+  if (!confirm('Назорат белгиси олинади — холҳои ин сана ҷорӣ ҳолатида мемонанд. Идома?')) return;
+  if (!navigator.onLine) { showOfflineBanner(); return; }
+  const params = new URLSearchParams({
+    class_subject_id: classSubjectId,
+    date: pageDate,
+    lesson_id: selectedLessonId,
+  });
+  fetch(assessmentToggleUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
+  .then(r => r.json())
+  .then(resp => {
+    if (resp && resp.success && resp.control === false) { location.reload(); return; }
+    alert((resp && resp.message) || 'Хатo');
+  })
+  .catch(() => showOfflineBanner());
 }
 function loadAssessmentValues() {
   const aid = currentAssessmentId;

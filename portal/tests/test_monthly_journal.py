@@ -500,11 +500,35 @@ class MonthlySaveTests(GoldenBase):
         self.assertIn('баста', data['results'][0]['message'])
         self.assertFalse(Grade.objects.filter(student=self.s1).exists())
 
-    def test_control_slot_blocks_regular_write(self):
+    def test_control_slot_write_lands_on_linked_row(self):
+        """A cell write on a control-marked slot is stored on the
+        assessment's linked row — the column can never acquire a stray
+        plain row while marked Назорат."""
         l1 = make_lesson(self.cs_a, D_OCT_A, 1)
-        make_control(self.cs_a, date=D_OCT_A, lesson=l1)
+        a = make_control(self.cs_a, date=D_OCT_A, lesson=l1)
         resp = self._post([self._item(lesson=l1.id, score='8')])
-        self.assertEqual(resp.json()['saved'], 0)
+        self.assertEqual(resp.json()['saved'], 1)
+        g = Grade.objects.get(student=self.s1, lesson=l1)
+        self.assertEqual(g.assessment_id, a.id)
+        self.assertEqual(g.score, 8)
+        self.assertFalse(
+            Grade.objects.filter(
+                student=self.s1, lesson=l1,
+                assessment__isnull=True).exists()
+        )
+
+    def test_typed_control_slot_write_rejected(self):
+        """Typed works keep their dedicated daily entry — the month grid
+        never bypasses component semantics."""
+        l1 = make_lesson(self.cs_a, D_OCT_A, 1)
+        Assessment.objects.create(
+            class_subject=self.cs_a, date=D_OCT_A, quarter=1,
+            category='control', number=1, lesson=l1,
+            work_type='dictation')
+        resp = self._post([self._item(lesson=l1.id, score='8')])
+        data = resp.json()
+        self.assertEqual(data['saved'], 0)
+        self.assertFalse(data['results'][0]['ok'])
         self.assertFalse(
             Grade.objects.filter(student=self.s1, lesson=l1).exists()
         )
@@ -559,14 +583,32 @@ class MonthlySaveTests(GoldenBase):
 
     # -- editable flags -------------------------------------------------------
 
-    def test_control_column_not_editable(self):
+    def test_untyped_control_column_editable(self):
+        """A column marked with a single untyped control stays writable —
+        its cells write to the assessment-linked row."""
         l1 = make_lesson(self.cs_a, D_OCT_A, 1)
         make_control(self.cs_a, date=D_OCT_A, lesson=l1)
         resp = self.client.get(reverse('monthly_journal', kwargs={
             'school_id': self.school_a.id, 'class_name': '7-А', 'subject': MATH,
         }), {'month': OCT})
         idx = col_index(resp.context, D_OCT_A, l1.id)
-        self.assertFalse(resp.context['columns'][idx]['editable'])
+        col = resp.context['columns'][idx]
+        self.assertTrue(col['control'])
+        self.assertTrue(col['editable'])
+
+    def test_typed_control_column_not_editable(self):
+        l1 = make_lesson(self.cs_a, D_OCT_A, 1)
+        Assessment.objects.create(
+            class_subject=self.cs_a, date=D_OCT_A, quarter=1,
+            category='control', number=1, lesson=l1,
+            work_type='dictation')
+        resp = self.client.get(reverse('monthly_journal', kwargs={
+            'school_id': self.school_a.id, 'class_name': '7-А', 'subject': MATH,
+        }), {'month': OCT})
+        idx = col_index(resp.context, D_OCT_A, l1.id)
+        col = resp.context['columns'][idx]
+        self.assertTrue(col['control'])
+        self.assertFalse(col['editable'])
 
     def test_locked_quarter_columns_not_editable(self):
         from portal.tests.helpers import lock_quarter

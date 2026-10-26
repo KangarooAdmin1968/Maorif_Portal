@@ -785,20 +785,18 @@ class OfflineLessonKeyTests(GoldenBase):
 
 
 class LessonCreateCancelTests(GoldenBase):
-    """createLesson() POSTs lesson_save immediately, so Cancel/Escape on the
-    topic prompt must return early — regression guard on the template JS."""
+    """createLesson() is a single click: teachers are not asked for a
+    topic (мавзӯъ киритиб намешавад) — the JS must POST lesson_save
+    directly with no prompt() round-trip."""
 
-    def test_createlesson_aborts_on_prompt_cancel(self):
+    def test_createlesson_posts_without_topic_prompt(self):
         from pathlib import Path
         from django.conf import settings
         src = (Path(settings.BASE_DIR) / 'portal' / 'templates' / 'portal'
                / 'grade_entry.html').read_text(encoding='utf-8')
         fn = src[src.index('function createLesson()'):src.index('function deleteLesson()')]
-        self.assertIn('prompt(', fn)
-        # The null check sits between the prompt call and the POST.
-        self.assertIn('if (topic === null) return;', fn)
-        self.assertLess(fn.index('prompt('), fn.index('topic === null'))
-        self.assertLess(fn.index('topic === null'), fn.index('fetch('))
+        self.assertNotIn('prompt(', fn)
+        self.assertIn('lessonSaveUrl', fn)
 
     def test_delete_middle_lesson_keeps_siblings(self):
         # Cancelling an empty D2 must never touch D1 or D3.

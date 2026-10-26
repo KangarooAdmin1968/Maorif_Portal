@@ -16,6 +16,7 @@
   .q-badge.open { background: #fef3c7; color: #92400e; }
   .q-badge.partial { background: #dbeafe; color: #1e40af; }
   .q-badge.closed { background: #dcfce7; color: #166534; }
+  .q-badge.future { background: #f3f4f6; color: #6b7280; }
   .q-stats { font-size: .85rem; color: #374151; margin-bottom: .5rem; }
   .q-stats .warn { color: #b91c1c; font-weight: 600; }
   .q-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
@@ -54,6 +55,8 @@
                 <span class="q-badge closed">🔒 Ҷамъбаст шудааст</span>
             {% elif q.locked_count > 0 %}
                 <span class="q-badge partial">Қисман баста ({{ q.locked_count }}/{{ q.total }})</span>
+            {% elif q.not_started %}
+                <span class="q-badge future">Оғоз нашудааст</span>
             {% else %}
                 <span class="q-badge open">Кушода аст</span>
             {% endif %}

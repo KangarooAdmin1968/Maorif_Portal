@@ -26,6 +26,7 @@ urlpatterns = [
     path('daily-save/', views.daily_save, name='daily_save'),
     path('assessment-save/', views.assessment_save, name='assessment_save'),
     path('assessment-delete/', views.assessment_delete, name='assessment_delete'),
+    path('assessment-toggle/', views.assessment_toggle, name='assessment_toggle'),
     path('lesson-save/', views.lesson_save, name='lesson_save'),
     path('lesson-delete/', views.lesson_delete, name='lesson_delete'),
     path('school/<int:school_id>/class/<str:class_name>/subjects/', views.add_remove_subject, name='add_remove_subject'),

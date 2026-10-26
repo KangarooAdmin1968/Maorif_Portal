@@ -17,7 +17,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal import views
-from portal.models import Grade, SubjectGroupMembership, TeachingGroup
+from portal.models import Assessment, Grade, SubjectGroupMembership, TeachingGroup
 from portal.tests.helpers import (
     D_Q1, D_Q1_B, MATH, TAJIK, GoldenBase, lock_quarter, make_grade,
     make_student, make_teacher_profile,
@@ -215,20 +215,40 @@ class DailyBatchSaveTests(GoldenBase):
         self.assertFalse(
             Grade.objects.filter(student=self.s1, lesson=l_other_day).exists())
 
-    def test_control_lesson_blocks_daily_write(self):
+    def test_control_lesson_write_lands_on_linked_row(self):
+        """A staged Ҷорӣ write that flushes after the slot was marked
+        Назорат lands on the assessment's linked row — never a stray
+        plain row inside a control column."""
         l1 = make_lesson(self.cs_a, D, 1)
-        make_control(self.cs_a, date=D, lesson=l1)
+        a = make_control(self.cs_a, date=D, lesson=l1)
+        resp = self._post([self._item(self.s1, 'score', '8', lesson=l1.id)])
+        data = resp.json()
+        self.assertEqual(data['saved'], 1)
+        g = Grade.objects.get(student=self.s1, lesson=l1)
+        self.assertEqual(g.assessment_id, a.id)
+        self.assertEqual(g.score, 8)
+
+    def test_control_date_lessonless_write_lands_on_linked_row(self):
+        a = make_control(self.cs_a, date=D)
+        resp = self._post([self._item(self.s1, 'score', '8')])
+        data = resp.json()
+        self.assertEqual(data['saved'], 1)
+        g = Grade.objects.get(student=self.s1, date=D)
+        self.assertEqual(g.assessment_id, a.id)
+        self.assertEqual(g.score, 8)
+        self.assertFalse(Grade.objects.filter(
+            student=self.s1, date=D, assessment__isnull=True).exists())
+
+    def test_typed_control_lesson_write_rejected(self):
+        l1 = make_lesson(self.cs_a, D, 1)
+        Assessment.objects.create(
+            class_subject=self.cs_a, date=D, quarter=1,
+            category='control', number=1, lesson=l1,
+            work_type='dictation')
         resp = self._post([self._item(self.s1, 'score', '8', lesson=l1.id)])
         data = resp.json()
         self.assertEqual(data['saved'], 0)
-        self.assertIn('санҷишӣ', data['results'][0]['message'])
-
-    def test_control_date_blocks_lessonless_write(self):
-        make_control(self.cs_a, date=D)
-        resp = self._post([self._item(self.s1, 'score', '8')])
-        data = resp.json()
-        self.assertEqual(data['saved'], 0)
-        self.assertFalse(Grade.objects.filter(student=self.s1, date=D).exists())
+        self.assertFalse(Grade.objects.filter(student=self.s1, lesson=l1).exists())
 
     # -- quarter lock ----------------------------------------------------------
 

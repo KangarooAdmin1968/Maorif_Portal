@@ -9,7 +9,7 @@ import calendar
 import datetime
 from collections import defaultdict
 
-from django.db.models import Count
+from django.db.models import Count, Min
 
 from .curriculum_hours import UNGRADED_SUBJECTS
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
@@ -102,6 +102,54 @@ def collect_attendance_control(school, period, today=None):
         totals['total'] += t
     return {'period': value, 'period_label': label,
             'classes': classes, 'totals': totals}
+
+
+ABSENCE_MIN_OPTIONS = (1, 3, 5, 10)
+
+
+def collect_absence_students(school, period, min_hours=3, today=None):
+    """Students with >= min_hours unexcused absences in the period —
+    the 'skip list' the завуч asks parents about. Same period selector
+    (month/quarter) as the attendance table."""
+    from .views import academic_year_start  # local import avoids cycles
+
+    ay = academic_year_start(today)
+    today = today or datetime.date.today()
+    start, end, label, value = _period_bounds(period, ay, today)
+    rows = (Grade.objects
+            .filter(student__school=school,
+                    date__gte=start, date__lte=end,
+                    attendance='-')
+            .values('student__class_name', 'student__full_name')
+            .annotate(n=Count('id'))
+            .filter(n__gte=min_hours)
+            .order_by('-n', 'student__class_name', 'student__full_name'))
+    return {'period': value, 'period_label': label, 'min': min_hours,
+            'rows': [{'class_name': r['student__class_name'],
+                      'name': r['student__full_name'], 'n': r['n']}
+                     for r in rows]}
+
+
+def collect_behavior_issues(school, period, today=None):
+    """Students with low conduct marks (behavior_score <= 3) in the
+    period: who was marked, how many times, and the worst mark."""
+    from .views import academic_year_start  # local import avoids cycles
+
+    ay = academic_year_start(today)
+    today = today or datetime.date.today()
+    start, end, label, value = _period_bounds(period, ay, today)
+    rows = (Grade.objects
+            .filter(student__school=school,
+                    date__gte=start, date__lte=end,
+                    behavior_score__isnull=False, behavior_score__lte=3)
+            .values('student__class_name', 'student__full_name')
+            .annotate(n=Count('id'), worst=Min('behavior_score'))
+            .order_by('-n', 'student__class_name', 'student__full_name'))
+    return {'period': value, 'period_label': label,
+            'rows': [{'class_name': r['student__class_name'],
+                      'name': r['student__full_name'],
+                      'n': r['n'], 'worst': r['worst']}
+                     for r in rows]}
 
 
 def collect_teacher_control(school, quarter, today=None):

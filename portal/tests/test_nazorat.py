@@ -106,6 +106,40 @@ class NazoratTests(GoldenBase):
         self.assertIn('m8', options)
         self.assertIn('q4', options)
 
+    def test_absence_students_list(self):
+        # s1 skips 3 unexcused in October; s2 only 1 -> below the
+        # default 3+ threshold. School B's s3 never leaks in.
+        for _ in range(3):
+            make_grade(self.s1, attendance='-', date=D_Q1)
+        make_grade(self.s2, attendance='-', date=D_Q1)
+        make_grade(self.s3, attendance='-', date=D_Q1)
+        self.client.force_login(self.zavuch_a)
+
+        resp = self.client.get(reverse('nazorat'), {'att': 'm10'})
+        rows = resp.context['absence']['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['name'], 'Фирӯз Раҳимов')
+        self.assertEqual(rows[0]['n'], 3)
+
+        # The threshold selector widens the list.
+        resp = self.client.get(
+            reverse('nazorat'), {'att': 'm10', 'abm': '1'})
+        self.assertEqual(len(resp.context['absence']['rows']), 2)
+
+    def test_behavior_issues_list(self):
+        # s2 collects two low conduct marks (2 and 3); s1's 5 and s3's
+        # low mark in school B stay out of the list.
+        make_grade(self.s2, behavior=2, date=D_Q1)
+        make_grade(self.s2, behavior=3, date=D_Q1_B)
+        make_grade(self.s1, behavior=5, date=D_Q1)
+        make_grade(self.s3, behavior=1, date=D_Q1)
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'), {'att': 'm10'})
+        rows = resp.context['behavior']['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['name'], 'Мадина Каримова')
+        self.assertEqual((rows[0]['n'], rows[0]['worst']), (2, 2))
+
     def test_attendance_other_school_not_leaked(self):
         make_grade(self.s3, attendance='-', date=D_Q1)
         self.client.force_login(self.zavuch_a)

@@ -8018,16 +8018,28 @@ def nazorat(request):
             request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
 
     from .nazorat import (
-        attendance_period_options, collect_attendance_control,
-        collect_grading_control, collect_teacher_control)
-    stats = attendance = teachers = None
+        ABSENCE_MIN_OPTIONS, attendance_period_options,
+        collect_absence_students, collect_attendance_control,
+        collect_behavior_issues, collect_grading_control,
+        collect_teacher_control)
+    stats = attendance = teachers = absence = behavior = None
     att_options = []
+    try:
+        abm = int(request.GET.get('abm', 3))
+    except (TypeError, ValueError):
+        abm = 3
+    if abm not in ABSENCE_MIN_OPTIONS:
+        abm = 3
     if school is not None:
         stats = collect_grading_control(school, quarter)
         attendance = collect_attendance_control(
             school, request.GET.get('att'))
         att_options = attendance_period_options(stats['academic_year'])
         teachers = collect_teacher_control(school, quarter)
+        absence = collect_absence_students(
+            school, request.GET.get('att'), min_hours=abm)
+        behavior = collect_behavior_issues(
+            school, request.GET.get('att'))
     return render(request, 'portal/nazorat.html', {
         'school': school,
         'schools': schools,
@@ -8038,6 +8050,10 @@ def nazorat(request):
         'attendance': attendance,
         'att_options': att_options,
         'teachers': teachers,
+        'absence': absence,
+        'absence_min_options': ABSENCE_MIN_OPTIONS,
+        'abm': abm,
+        'behavior': behavior,
     })
 
 

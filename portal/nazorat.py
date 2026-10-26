@@ -30,6 +30,7 @@ def attendance_period_options(ay):
                for m in ACADEMIC_MONTHS]
     options += [(f'q{q}', f'Чоряки {QUARTER_WORD_ORDINALS[q]}')
                 for q in (1, 2, 3, 4)]
+    options.append(('all', f'Ҳамагӣ — соли таҳсили {ay}-{ay + 1}'))
     return options
 
 
@@ -44,6 +45,9 @@ def _period_bounds(period, ay, today):
 
     Invalid/missing input falls back to the current calendar month.
     """
+    if period == 'all':
+        return (datetime.date(ay, 9, 1), datetime.date(ay + 1, 8, 31),
+                f'Соли таҳсили {ay}-{ay + 1}', 'all')
     if period and period[0] == 'm' and period[1:].isdigit():
         m = int(period[1:])
         if m in ACADEMIC_MONTHS:
@@ -132,28 +136,42 @@ def collect_absence_students(school, period, min_hours=3, today=None):
                      for r in rows]}
 
 
-def collect_behavior_issues(school, period, today=None):
-    """Students with low conduct marks (behavior_score <= 3) in the
-    period: who was marked, how many times, and the worst mark."""
-    from .views import academic_year_start  # local import avoids cycles
+def collect_behavior_issues(school):
+    """Students whose current conduct is below Намунавӣ (avg < 4.5).
 
-    ay = academic_year_start(today)
-    today = today or datetime.date.today()
-    start, end, label, value = _period_bounds(period, ay, today)
-    rows = (Grade.objects
+    Replicates Student.behavior_status exactly — latest stored mark per
+    subject, unmarked active class subjects counting as the default 5 —
+    so the page never disagrees with the parent-facing student card.
+    """
+    latest_by_student = defaultdict(dict)
+    for sid, subj, val in (Grade.objects
             .filter(student__school=school,
-                    date__gte=start, date__lte=end,
-                    behavior_score__isnull=False, behavior_score__lte=3)
-            .values('student__class_name', 'student__full_name')
-            .annotate(n=Count('id'), worst=Min('behavior_score')))
-    rows = sorted(rows, key=lambda r: (
-        class_numeric_part(r['student__class_name']) or 0,
-        r['student__class_name'], -r['n'], r['student__full_name']))
-    return {'period': value, 'period_label': label,
-            'rows': [{'class_name': r['student__class_name'],
-                      'name': r['student__full_name'],
-                      'n': r['n'], 'worst': r['worst']}
-                     for r in rows]}
+                    behavior_score__isnull=False)
+            .order_by('-date', '-pk')
+            .values_list('student_id', 'subject', 'behavior_score')):
+        latest_by_student[sid].setdefault(normalize_subject(subj), val)
+
+    class_subj = defaultdict(set)
+    for cls, subj in (ClassSubject.objects
+            .filter(school=school, is_active=True)
+            .values_list('class_name', 'subject')):
+        class_subj[cls].add(normalize_subject(subj))
+
+    rows = []
+    for st in (Student.objects.filter(school=school)
+               .exclude(class_name='')):
+        vals = dict(latest_by_student.get(st.id, {}))
+        for s in class_subj.get(st.class_name, ()):
+            vals.setdefault(s, 5)
+        avg = sum(vals.values()) / len(vals) if vals else 5.0
+        if avg >= 4.5:
+            continue
+        status = 'Қаноатбахш' if avg >= 3.0 else 'Ноқаноатбахш'
+        rows.append({'class_name': st.class_name, 'name': st.full_name,
+                     'avg': round(avg, 2), 'status': status})
+    rows.sort(key=lambda r: (class_numeric_part(r['class_name']) or 0,
+                             r['class_name'], r['avg'], r['name']))
+    return {'rows': rows}
 
 
 def collect_teacher_control(school, quarter, today=None):

@@ -8038,8 +8038,7 @@ def nazorat(request):
         teachers = collect_teacher_control(school, quarter)
         absence = collect_absence_students(
             school, request.GET.get('att'), min_hours=abm)
-        behavior = collect_behavior_issues(
-            school, request.GET.get('att'))
+        behavior = collect_behavior_issues(school)
     return render(request, 'portal/nazorat.html', {
         'school': school,
         'schools': schools,

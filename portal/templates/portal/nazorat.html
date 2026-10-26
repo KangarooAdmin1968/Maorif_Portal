@@ -123,7 +123,7 @@
 </div>
 
 <div class="doc-card">
-    <h2>Ғоибияти зиёди бесабаб</h2>
+    <h2>Ғоибияти зиёди бесабаб <span style="font-weight:400; font-size:.8rem; color:#6b7280;">({{ absence.period_label }})</span></h2>
     <form method="get" action="{% url 'nazorat' %}" class="nz-toolbar no-print">
         {% if district_view %}
         <input type="hidden" name="school_id" value="{{ school.id }}">
@@ -162,24 +162,24 @@
 </div>
 
 <div class="doc-card">
-    <h2>Рафтори ғайриқаноатбахш (холҳои 3 ва камтар)</h2>
+    <h2>Рафтори ғайриқаноатбахш <span style="font-weight:400; font-size:.8rem; color:#6b7280;">(ҳолати ҳозирӣ — миёнаи хулқ-атвор)</span></h2>
     {% if not behavior.rows %}
-        <p class="ok-note">✔ Дар ин давра холҳои пасти хулқ-атвор сабт нашудааст.</p>
+        <p class="ok-note">✔ Ҳолати қаноатбахш ёки ноқаноатбахш нест — ҳама намунавӣ.</p>
     {% else %}
     <table class="nz-table">
         <thead><tr>
             <th style="width:110px;">Синф</th>
             <th>Хонанда</th>
-            <th class="center" style="width:120px;">Миқдор</th>
-            <th class="center" style="width:120px;">Пасттарин хол</th>
+            <th class="center" style="width:110px;">Миёна</th>
+            <th class="center" style="width:150px;">Ҳолат</th>
         </tr></thead>
         <tbody>
             {% for row in behavior.rows %}
             <tr>
                 <td>{{ row.class_name }}</td>
                 <td class="names">{{ row.name }}</td>
-                <td class="center">{{ row.n }}</td>
-                <td class="center"><strong>{{ row.worst }}</strong></td>
+                <td class="center">{{ row.avg }}</td>
+                <td class="center"><strong>{% if row.status == 'Ноқаноатбахш' %}<span style="color:#b91c1c;">{{ row.status }}</span>{% else %}{{ row.status }}{% endif %}</strong></td>
             </tr>
             {% endfor %}
         </tbody>

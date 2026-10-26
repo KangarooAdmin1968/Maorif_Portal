@@ -7,7 +7,7 @@ students for the selected quarter.
 from django.urls import reverse
 
 from .helpers import (
-    D_Q1, D_Q1_B, D_Q2, GoldenBase, MATH, make_grade,
+    D_Q1, D_Q1_B, D_Q2, GoldenBase, MATH, TAJIK, make_grade,
     make_quarter_grade, make_user,
 )
 
@@ -126,19 +126,31 @@ class NazoratTests(GoldenBase):
             reverse('nazorat'), {'att': 'm10', 'abm': '1'})
         self.assertEqual(len(resp.context['absence']['rows']), 2)
 
-    def test_behavior_issues_list(self):
-        # s2 collects two low conduct marks (2 and 3); s1's 5 and s3's
-        # low mark in school B stay out of the list.
-        make_grade(self.s2, behavior=2, date=D_Q1)
-        make_grade(self.s2, behavior=3, date=D_Q1_B)
-        make_grade(self.s1, behavior=5, date=D_Q1)
-        make_grade(self.s3, behavior=1, date=D_Q1)
+        # 'all' — the whole academic year, matching the student card's
+        # all-time count (17-vs-10 confusion scenario).
+        make_grade(self.s1, attendance='-', date=D_Q2)  # November = Q2
+        resp = self.client.get(
+            reverse('nazorat'), {'att': 'all', 'abm': '3'})
+        rows = resp.context['absence']['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['n'], 4)
+
+    def test_behavior_issues_match_student_card(self):
+        # The list replicates the student card's conduct semantics:
+        # latest mark per subject + default 5 elsewhere. Class 7 has 17
+        # subjects, so s2 needs several low marks for avg < 4.5;
+        # s1's single 5 and s3 (school B) stay out.
+        for subj in (MATH, TAJIK, 'АДАБИЁТИ ТОҶИК', 'ЗАБОНИ РУСӢ'):
+            make_grade(self.s2, subject=subj, behavior=2, date=D_Q1)
+        make_grade(self.s1, subject=MATH, behavior=5, date=D_Q1)
+        make_grade(self.s3, subject=MATH, behavior=1, date=D_Q1)
         self.client.force_login(self.zavuch_a)
         resp = self.client.get(reverse('nazorat'), {'att': 'm10'})
         rows = resp.context['behavior']['rows']
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['name'], 'Мадина Каримова')
-        self.assertEqual((rows[0]['n'], rows[0]['worst']), (2, 2))
+        self.assertEqual(rows[0]['status'], 'Қаноатбахш')
+        self.assertLess(rows[0]['avg'], 4.5)
 
     def test_attendance_other_school_not_leaked(self):
         make_grade(self.s3, attendance='-', date=D_Q1)

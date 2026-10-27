@@ -1151,8 +1151,23 @@ document.querySelectorAll('.daily-input').forEach(el => {
 document.querySelectorAll('.daily-att, .daily-behavior, .q-input, .att-input').forEach(el => {
   el.addEventListener('keydown', onGradeKeydown);
 });
+// Mobile keyboards keep focus while typing: 'change'/'blur' may never fire
+// before the page is left, so a staged/saved value would silently stay
+// local. A short debounce on 'input' runs the same save path as soon as
+// typing pauses — identical semantics, just earlier.
+const _inputSaveTimers = {};
+function _saveOnInput(el, fn) {
+  el.addEventListener('input', () => {
+    clearTimeout(_inputSaveTimers[el.name]);
+    _inputSaveTimers[el.name] = setTimeout(() => {
+      el.dataset.touched = '1';
+      fn(el);
+    }, 500);
+  });
+}
 document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(el => {
   el.addEventListener('input', backupDrafts);
+  _saveOnInput(el, saveDaily);
   // 'change' only fires on a real user modification — it marks the field as
   // explicitly touched (batch submit skips untouched behavior selects) and
   // triggers the immediate save; the blur handler below is the fallback.
@@ -1161,6 +1176,7 @@ document.querySelectorAll('.daily-input, .daily-att, .daily-behavior').forEach(e
 });
 document.querySelectorAll('.q-input, .att-input').forEach(el => {
   el.addEventListener('input', backupDrafts);
+  _saveOnInput(el, saveQuarter);
   el.addEventListener('change', () => saveQuarter(el));
   el.addEventListener('blur', () => saveQuarter(el));
 });

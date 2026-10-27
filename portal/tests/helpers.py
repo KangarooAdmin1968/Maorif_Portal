@@ -18,6 +18,7 @@ Users mirror production conventions:
     teacher_2    — role='teacher', School B, assigned to 7-Б МАТЕМАТИКА
 """
 import datetime
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -181,6 +182,22 @@ class GoldenBase(TestCase):
                                       teacher=cls.teacher_a)
         cls.cs_b = make_class_subject(cls.school_b, '7-Б', MATH,
                                       teacher=cls.teacher_b)
+
+    def _pre_setup(self):
+        super()._pre_setup()
+        # The future-date write guard compares Grade/Assessment dates to
+        # the real clock — but the suite's quarter fixtures (D_Q2, D_Q3,
+        # …) lie ahead of today for most of the academic year, and which
+        # dates are 'future' shifts with the calendar. Pin the cutoff
+        # far ahead so endpoint tests exercise fixture semantics, not
+        # wall-clock luck. This lives in _pre_setup (Django's own hook)
+        # so subclass setUp() overrides cannot skip it; the guard itself
+        # is verified by dedicated tests that re-patch the real date.
+        self._write_cutoff = patch(
+            'portal.views._journal_write_today',
+            return_value=datetime.date(2100, 1, 1))
+        self._write_cutoff.start()
+        self.addCleanup(self._write_cutoff.stop)
 
     def setUp(self):
         # Ranking-result caches live outside the test transaction — clear

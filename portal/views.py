@@ -928,6 +928,16 @@ def _parse_score(raw):
     return score
 
 
+def _journal_write_today():
+    """'Today' for the future-date write cutoff.
+
+    One seam for every journal write guard: production always returns
+    the local date; tests that must exercise quarter fixtures dated
+    ahead of the real clock patch this function.
+    """
+    return timezone.localdate()
+
+
 def _resolve_daily_scope(student, subject, date, lesson_id, user=None,
                          allow_control=False):
     """Validate the target slot of a regular (non-assessment) daily write.
@@ -938,7 +948,13 @@ def _resolve_daily_scope(student, subject, date, lesson_id, user=None,
     teacher tries to use another group's lesson. With allow_control=True
     the control-slot check is skipped — the caller (the batched journal
     pipeline) resolves and writes to the slot's assessment itself.
+
+    Future-dated writes are always refused — a lesson that has not
+    happened yet cannot carry a real score/attendance mark; phantom rows
+    otherwise pollute the quarter pools.
     """
+    if date > _journal_write_today():
+        raise ValueError('Санаи ояндада хол ё давомат гузошта намешавад.')
     class_name = normalize_class_name(student.class_name)
     if lesson_id:
         try:
@@ -3351,6 +3367,8 @@ def grade_entry(request, school_id, class_name, subject):
             date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
         except ValueError:
             date = datetime.date.today()
+        if date > _journal_write_today():
+            return HttpResponse('Санаи ояндада хол ё давомат гузошта намешавад.', status=400)
 
         # Batch POST may carry a lesson context — same scope validation as
         # the AJAX path: the Lesson must belong to this school/class/subject
@@ -3824,6 +3842,7 @@ def grade_entry(request, school_id, class_name, subject):
         'assessment_grade_map': assessment_grade_map,
         'assessment_marks': assessment_marks,
         'date_is_control': date_is_control,
+        'future_date': selected_date > timezone.localdate(),
         'work_type_choices': work_type_choices(),
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — display-only, never gates grade entry.
@@ -3976,6 +3995,7 @@ def monthly_journal(request, school_id, class_name, subject):
 
     # Flat column list: for each day, one column per Lesson; the lesson-less
     # legacy slot only appears when it actually holds data for that date.
+    today = timezone.localdate()
     columns = []
     header_groups = []
     day_rows = []
@@ -4016,6 +4036,7 @@ def monthly_journal(request, school_id, class_name, subject):
                 can_edit
                 and (not col['control'] or col['assessment_id'] is not None)
                 and day_quarter not in locked_quarters
+                and d <= today
             )
             col['can_toggle'] = (
                 can_edit and day_quarter not in locked_quarters
@@ -5153,6 +5174,8 @@ def save_grade_ajax(request):
                 # assessment date/quarter, never to a client-supplied date.
                 date = assessment.date
                 lock_quarter = assessment.quarter
+                if date > _journal_write_today():
+                    return JsonResponse({'success': False, 'message': 'Санаи ояндада хол ё давомат гузошта намешавад.'}, status=200)
             else:
                 try:
                     date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
@@ -5476,6 +5499,8 @@ def assessment_save(request):
 
         with transaction.atomic():
             if assessment is None:
+                if date > _journal_write_today():
+                    return JsonResponse({'success': False, 'message': 'Санаи ояндада санҷиш яратилмайди.'}, status=200)
                 if number is None:
                     max_number = Assessment.objects.filter(
                         class_subject=cs, quarter=quarter, category='control'
@@ -5721,6 +5746,8 @@ def assessment_toggle(request):
                 recalculate_quarter_grades_bulk(deferred)
             return JsonResponse({'success': True, 'control': False}, status=200)
 
+        if date > _journal_write_today():
+            return JsonResponse({'success': False, 'message': 'Санаи ояндада санҷиш яратилмайди.'}, status=200)
         max_number = Assessment.objects.filter(
             class_subject=cs, quarter=quarter, category='control',
         ).aggregate(m=Max('number'))['m'] or 0

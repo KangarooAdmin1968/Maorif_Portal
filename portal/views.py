@@ -58,7 +58,8 @@ from .class_report import ClassReportError, build_class_report_workbook
 from .maorif_report import (
     build_maorif_grades_district_workbook, build_maorif_grades_workbook,
     build_maorif_report_workbook, build_maorif_total_workbook)
-from .zavuch_report import build_zavuch_report_workbook
+from .zavuch_report import (
+    build_zavuch_grades_workbook, build_zavuch_report_workbook)
 from .tariff_rates import suggested_rate_map, tariff_data_available
 from .monitoring import (
     can_access_monitoring, get_activity_summary, scope_monitoring_stats,
@@ -8200,6 +8201,37 @@ def zavuch_report_export(request):
 
     filename = (
         f"Ҳисоботи_завуч_{get_school_number(school)}_чорак{quarter}.xlsx")
+    encoded_filename = urllib.parse.quote(filename)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = (
+        f"attachment; filename*=utf-8''{encoded_filename}")
+    return response
+
+
+@login_required
+def zavuch_grades_export(request):
+    """Ҳуҷҷатнигорӣ → АЧЧ form: per-level quarterly summary as xlsx.
+
+    Same gate, school isolation and quarter param as zavuch_report_export —
+    the АЧЧ variant adds per-mark (10..1) columns, group subtotals
+    (1-4 / 5-9 / 10-11) and a grand-total row.
+    """
+    if not _tabel_access(request.user):
+        return redirect('dashboard')
+    school = _class_report_school(request)
+    if not school:
+        messages.warning(request, 'Ҳисобот учун муассисани танланг.')
+        return redirect('dashboard')
+    if not has_school_access(request.user, school):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    output = build_zavuch_grades_workbook(school, quarter)
+
+    filename = (
+        f"АЧЧ{quarter}_{get_school_number(school)}_чорак{quarter}.xlsx")
     encoded_filename = urllib.parse.quote(filename)
     response = HttpResponse(
         output.read(),

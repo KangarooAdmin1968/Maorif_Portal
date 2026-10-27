@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 from .class_report import _school_short_name
 from .models import QuarterGrade, School, Student
 from .utils import academic_schools, class_numeric_part, get_school_number
-from .zavuch_report import _band
+from .zavuch_report import _band, _whole_grade
 
 LEVELS = range(2, 12)          # the table counts grade levels 2..11
 QUARTER_WORD_ORDINALS = {1: 'якуми', 2: 'дуюми', 3: 'сеюми', 4: 'чоруми'}
@@ -124,12 +124,6 @@ def collect_maorif_stats(quarter, today=None):
 def _district_director_name():
     dept = School.objects.filter(type='Идораи маориф').first()
     return (dept.director or '').strip() if dept else ''
-
-
-def _whole_grade(avg):
-    """Round-half-up the quarter average to the nearest mark 1..10 —
-    feeds the per-grade Хол columns of the oblast report variant."""
-    return max(1, min(10, int(avg + 0.5)))
 
 
 def _pct(part, whole):

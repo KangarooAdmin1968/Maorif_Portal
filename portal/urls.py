@@ -70,6 +70,7 @@ urlpatterns = [
     path('schools/documents/class-reports/', views.class_reports, name='class_reports'),
     path('schools/documents/class-reports/export/', views.class_report_export, name='class_report_export'),
     path('schools/documents/zavuch-report/', views.zavuch_report_export, name='zavuch_report_export'),
+    path('schools/documents/zavuch-grades/', views.zavuch_grades_export, name='zavuch_grades_export'),
     path('schools/documents/maorif-report/', views.maorif_reports, name='maorif_reports'),
     path('schools/documents/maorif-report/by-schools/', views.maorif_report_export, name='maorif_report_export'),
     path('schools/documents/maorif-report/total/', views.maorif_report_total_export, name='maorif_report_total_export'),

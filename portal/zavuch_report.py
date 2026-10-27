@@ -287,11 +287,14 @@ def _grades_row(ws, r, index, name, data, bold=False):
     """One АЧЧ table row. `data` carries roster/movement/graded fields."""
     # Taller rows fill the landscape page — the sheet otherwise prints
     # shrunk into the top corner with half the page blank.
-    ws.row_dimensions[r].height = 30
+    ws.row_dimensions[r].height = 36
+    font = Font(size=11, bold=bold)
     if index is not None:
-        ws.cell(row=r, column=1, value=index)
+        c = ws.cell(row=r, column=1, value=index)
+        c.font = font
     name_cell = ws.cell(row=r, column=2, value=name)
     name_cell.alignment = _LEFT
+    name_cell.font = font
     values = (
         data['classes'],
         data['start'], data['start_f'],
@@ -303,19 +306,16 @@ def _grades_row(ws, r, index, name, data, bold=False):
     )
     for col, value in zip(range(3, 15), values):
         c = ws.cell(row=r, column=col, value=value)
-        if bold:
-            c.font = Font(bold=True)
+        c.font = font
     col = 15
     g = data['graded']
     for mark in range(10, 0, -1):
         n = data['dist'][mark]
         c = ws.cell(row=r, column=col, value=n)
-        if bold:
-            c.font = Font(bold=True)
+        c.font = font
         c = ws.cell(row=r, column=col + 1,
                     value=round(_pct(n, g)))
-        if bold:
-            c.font = Font(bold=True)
+        c.font = font
         col += 2
     dist = data['dist']
     quality = sum(dist[m] for m in range(7, 11))
@@ -323,10 +323,7 @@ def _grades_row(ws, r, index, name, data, bold=False):
     for col, value in ((35, round(_pct(quality, g))),
                        (36, round(_pct(mastery, g)))):
         c = ws.cell(row=r, column=col, value=value)
-        if bold:
-            c.font = Font(bold=True)
-    if bold:
-        name_cell.font = Font(bold=True)
+        c.font = font
 
 
 def _level_data(lvl, levels, class_counts, moved, graded):

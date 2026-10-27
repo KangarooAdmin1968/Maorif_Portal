@@ -285,6 +285,9 @@ def _grades_header(ws, quarter):
 
 def _grades_row(ws, r, index, name, data, bold=False):
     """One АЧЧ table row. `data` carries roster/movement/graded fields."""
+    # Taller rows fill the landscape page — the sheet otherwise prints
+    # shrunk into the top corner with half the page blank.
+    ws.row_dimensions[r].height = 30
     if index is not None:
         ws.cell(row=r, column=1, value=index)
     name_cell = ws.cell(row=r, column=2, value=name)
@@ -377,6 +380,7 @@ def build_zavuch_grades_workbook(school, quarter):
                 f'дар {school.name} дар соли таҳсили {ay}-{ay + 1}')
     ws['A1'].font = Font(bold=True, size=12)
     ws['A1'].alignment = _CENTER
+    ws.row_dimensions[1].height = 24
 
     _grades_header(ws, quarter)
 

@@ -22,7 +22,7 @@ from openpyxl.utils import get_column_letter
 
 from .class_report import QUARTER_ORDINALS, _director_name
 from .models import QuarterGrade, Student, StudentMovement
-from .utils import class_numeric_part
+from .utils import class_numeric_part, is_non_graded
 
 TEMPLATE_PATH = (
     Path(settings.BASE_DIR) / 'portal' / 'excel_templates' / 'zavuch_report.xlsx'
@@ -116,7 +116,7 @@ def _collect_level_stats(school, quarter, ay, windows):
         entry[0] += float(row['grade'])
         entry[1] += 1
 
-    graded = {lvl: {'total': 0, 'f': 0,
+    graded = {lvl: {'total': 0, 'f': 0, 'avg_sum': 0.0,
                     'bands': defaultdict(int),
                     'dist': defaultdict(int)}
               for lvl in range(1, 12)}
@@ -126,6 +126,7 @@ def _collect_level_stats(school, quarter, ay, windows):
         if gender == 'F':
             g['f'] += 1
         avg = total / count
+        g['avg_sum'] += avg   # feeds the Холи миёна column
         g['bands'][_band(avg)] += 1
         g['dist'][_whole_grade(avg)] += 1
 
@@ -219,7 +220,7 @@ def build_zavuch_report_workbook(school, quarter):
 # 10-11) and a grand total — the official school quarterly form.
 # ----------------------------------------------------------------------
 
-GRADES_LAST_COL = 36       # A..AJ
+GRADES_LAST_COL = 37       # A..AK
 GRADES_FIRST_DATA_ROW = 5
 GRADES_GROUPS = ((1, 4), (5, 9), (10, 11))   # paper groupings
 
@@ -282,6 +283,7 @@ def _grades_header(ws, quarter):
         col += 2
     merge('Сифати таҳсилот % (холҳои 7-10)', 35)
     merge('Азхудкунии барномаҳои таълимӣ % (холҳои 4-10)', 36)
+    merge('Холи миёна', 37)
     ws.row_dimensions[2].height = 110
     ws.row_dimensions[3].height = 100
     ws.row_dimensions[4].height = 110
@@ -325,7 +327,8 @@ def _grades_row(ws, r, index, name, data, bold=False):
     quality = sum(dist[m] for m in range(7, 11))
     mastery = g - sum(dist[m] for m in range(1, 4))
     for col, value in ((35, round(_pct(quality, g))),
-                       (36, round(_pct(mastery, g)))):
+                       (36, round(_pct(mastery, g))),
+                       (37, round(data['avg_sum'] / g, 1) if g else 0)):
         c = ws.cell(row=r, column=col, value=value)
         c.font = font
 
@@ -341,6 +344,7 @@ def _level_data(lvl, levels, class_counts, moved, graded):
         'dep': dep_t, 'dep_f': dep_f,
         'end': end, 'end_f': end_f,
         'graded': g['total'], 'graded_f': g['f'],
+        'avg_sum': g['avg_sum'],
         'dist': g['dist'],
     }
 
@@ -350,12 +354,32 @@ def _sum_data(items):
     out = {k: sum(i[k] for i in items)
            for k in ('classes', 'start', 'start_f', 'arr', 'arr_f',
                      'dep', 'dep_f', 'end', 'end_f',
-                     'graded', 'graded_f')}
+                     'graded', 'graded_f', 'avg_sum')}
     out['dist'] = defaultdict(int)
     for i in items:
         for m, n in i['dist'].items():
             out['dist'][m] += n
     return out
+
+
+def _ungraded_by_class(school, quarter, ay):
+    """class_name -> students without any QuarterGrade this quarter —
+    feeds the «Баҳо нагирифтаанд» footer. Non-graded (1-ум) classes are
+    excluded: they never receive marks."""
+    graded_ids = {
+        row['student_id'] for row in QuarterGrade.objects.filter(
+            student__school=school, quarter=quarter,
+            academic_year=ay, grade__isnull=False).values('student_id')}
+    counts = defaultdict(int)
+    for s in Student.objects.filter(school=school).values(
+            'id', 'class_name'):
+        if s['class_name'] and not is_non_graded(s['class_name']) \
+                and s['id'] not in graded_ids:
+            counts[s['class_name']] += 1
+    return counts
+
+
+_QUARTER_WORD_ORDINALS = {1: 'якум', 2: 'дуюм', 3: 'сеюм', 4: 'чорум'}
 
 
 def build_zavuch_grades_workbook(school, quarter):
@@ -387,7 +411,9 @@ def build_zavuch_grades_workbook(school, quarter):
 
     r = GRADES_FIRST_DATA_ROW
     index = 0
-    present = [lvl for lvl in range(1, 12) if class_counts[lvl]]
+    # Grade-1 classes are excluded from the table — the paper form
+    # covers 2-11 and counts grade-1 students only in the Эзоҳ footer.
+    present = [lvl for lvl in range(2, 12) if class_counts[lvl]]
     all_data = []
     for lo, hi in GRADES_GROUPS:
         band = [lvl for lvl in present if lo <= lvl <= hi]
@@ -420,12 +446,35 @@ def build_zavuch_grades_workbook(school, quarter):
             if c.alignment.horizontal is None:
                 c.alignment = _CENTER
 
-    sig = r + 1
+    # Footer notes like the district form's bottom block, scoped to
+    # this school's own classes.
+    note_r = r + 1
+    n1, f1 = levels[1]
+    if n1:
+        ws.cell(row=note_r, column=1, value=(
+            'Эзоҳ: Шумораи хонандагони синфи 1-ум '
+            f'{n1} нафар, аз он ҷумла духтар {f1} нафарро ташкил медиҳад.'))
+        note_r += 1
+    ordinal_w = _QUARTER_WORD_ORDINALS.get(quarter, f'{quarter}-ум')
+    ws.cell(row=note_r, column=1,
+            value=f'Баҳо нагирифтаанд дар чоряки {ordinal_w}:'
+            ).font = Font(bold=True)
+    ungraded = _ungraded_by_class(school, quarter, ay)
+    total_u = sum(ungraded.values())
+    detail = ('Ҳамаи хонандагон баҳо гирифтаанд.' if not total_u else
+              ', '.join(f'{cn} ({n})' for cn, n in sorted(
+                  ungraded.items(),
+                  key=lambda kv: (class_numeric_part(kv[0]), kv[0])))
+              + f' — ҷами {total_u} нафар')
+    ws.cell(row=note_r + 1, column=1, value=detail)
+    note_r += 2
+
+    sig = note_r + 1
     ws.cell(row=sig, column=2, value='Директор').font = Font(bold=True)
     ws.cell(row=sig, column=20, value=_director_name(school)).font = (
         Font(bold=True, underline='single'))
 
-    widths = {1: 4, 2: 16, 14: 7, 35: 8, 36: 8}
+    widths = {1: 4, 2: 16, 14: 7, 35: 8, 36: 8, 37: 8}
     for col in range(1, GRADES_LAST_COL + 1):
         ws.column_dimensions[get_column_letter(col)].width = (
             widths.get(col, 6))

@@ -153,18 +153,51 @@ class ZavuchGradesExportTests(GoldenBase):
         self.assertNotIn('Ҳамагӣ (синфҳои 10-11)', names)
 
     def test_groups_and_grand_total(self):
-        make_student(self.school_a, '1-А', 'Кишвар Одинаев')
         make_student(self.school_a, '10-А', 'Сабоҳ Неъматова')
         ws = self._ws(self._get(self.zavuch_a))
         self.assertEqual(
-            self._names(ws)[:7],
-            ['Синфи 1', 'Ҳамагӣ (синфҳои 1-4)', 'Синфи 7',
-             'Ҳамагӣ (синфҳои 5-9)', 'Синфи 10', 'Ҳамагӣ (синфҳои 10-11)',
-             'Ҳамагӣ (синфҳои 1-10)'])
-        # Grand total: 4 students across levels 1, 7, 10.
-        r = self.ROW5 + 6
-        self.assertEqual(ws.cell(row=r, column=10).value, 4)
-        self.assertEqual(ws.cell(row=r, column=3).value, 3)  # 3 синфа
+            self._names(ws)[:5],
+            ['Синфи 7', 'Ҳамагӣ (синфҳои 5-9)', 'Синфи 10',
+             'Ҳамагӣ (синфҳои 10-11)', 'Ҳамагӣ (синфҳои 7-10)'])
+        # Grand total: 3 students across levels 7 and 10.
+        r = self.ROW5 + 4
+        self.assertEqual(ws.cell(row=r, column=10).value, 3)
+        self.assertEqual(ws.cell(row=r, column=3).value, 2)  # 2 синфа
+
+    def test_grade_1_excluded_but_noted(self):
+        # Grade-1 rows leave the table; their roster count lands in the
+        # Эзоҳ footer like the district form.
+        make_student(self.school_a, '1-А', 'Кишвар Одинаев')
+        ws = self._ws(self._get(self.zavuch_a))
+        self.assertNotIn('Синфи 1', self._names(ws))
+        self.assertNotIn('Ҳамагӣ (синфҳои 1-4)', self._names(ws))
+        texts = [ws.cell(row=i, column=1).value for i in range(5, 20)]
+        self.assertTrue(any(
+            isinstance(t, str) and 'синфи 1-ум 1 нафар' in t
+            for t in texts))
+
+    def test_avg_mark_column(self):
+        # Холи миёна = mean of the per-student quarter averages (col 37).
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
+        make_quarter_grade(self.s1, '7-А', TAJIK, 1, grade=7)
+        ws = self._ws(self._get(self.zavuch_a))
+        r = self.ROW5
+        self.assertEqual(ws.cell(row=r, column=37).value, 8.0)  # avg 8
+        # Header carries the label too.
+        self.assertEqual(ws.cell(row=2, column=37).value, 'Холи миёна')
+
+    def test_ungraded_footer_lists_classes(self):
+        # s2 (7-А) has no quarter grade -> the Баҳо нагирифтаанд footer
+        # lists her class with the ungraded count.
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
+        ws = self._ws(self._get(self.zavuch_a))
+        texts = [ws.cell(row=i, column=1).value for i in range(5, 20)]
+        self.assertTrue(any(
+            isinstance(t, str) and 'Баҳо нагирифтаанд дар чоряки' in t
+            for t in texts))
+        self.assertTrue(any(
+            isinstance(t, str) and '7-А (1)' in t and 'ҷами 1 нафар' in t
+            for t in texts))
 
     def test_per_student_average_rounds_to_whole_mark(self):
         # s1: 9 and 7 -> avg 8 -> the «8» column, not «9».

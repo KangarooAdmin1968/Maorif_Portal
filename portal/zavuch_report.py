@@ -227,43 +227,47 @@ _thin = Side(style='thin')
 _BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 _CENTER = Alignment(horizontal='center', vertical='center',
                     wrap_text=True)
+_VERTICAL = Alignment(horizontal='center', vertical='center',
+                      textRotation=90)
 _LEFT = Alignment(horizontal='left', vertical='center', wrap_text=True)
 
 
 def _grades_header(ws, quarter):
-    """Rows 2-4 of the АЧЧ form: group captions + sub-headers."""
+    """Rows 2-4 of the АЧЧ form: group captions + sub-headers.
 
-    def cell(r, c, text, size=9, bold=True):
+    Long labels run vertically (rotated 90°) in narrow columns exactly
+    like the paper form; only №, Синфҳо, Омад, Рафт, Баҳо and the mark
+    digits stay horizontal.
+    """
+
+    def cell(r, c, text, size=9, bold=True, vertical=False):
         x = ws.cell(row=r, column=c, value=text)
         x.font = Font(bold=bold, size=size)
-        x.alignment = _CENTER
+        x.alignment = _VERTICAL if vertical else _CENTER
 
-    def merge(text, col, r1=2, r2=4, c2=None):
+    def merge(text, col, r1=2, r2=4, c2=None, vertical=True):
         ws.merge_cells(start_row=r1, start_column=col,
                        end_row=r2, end_column=c2 or col)
-        cell(r1, col, text)
+        cell(r1, col, text, vertical=vertical)
 
-    merge('№', 1)
-    merge('Синфҳо', 2)
+    merge('№', 1, vertical=False)
+    merge('Синфҳо', 2, vertical=False)
     merge('Миқдори синфҳо', 3)
-    # Paired roster columns: group caption on row 2, Ҳамагӣ / аз ҷумла,
-    # духтарон merged down rows 3-4.
+    # Paired roster columns: caption spans rows 2-3 (vertical like the
+    # paper), Ҳамагӣ / аз ҷумла, духтарон sit vertically on row 4.
     pairs = (
-        (4, f'Шумораи хонандагон дар аввали чоряки {quarter}'),
-        (6, 'Омад'),
-        (8, 'Рафт'),
-        (10, f'Шумораи хонандагон дар охири чоряки {quarter}'),
-        (12, 'Баҳо гирифтан'),
+        (4, f'Шумораи хонандагон дар аввали чоряки {quarter}', True),
+        (6, 'Омад', False),
+        (8, 'Рафт', False),
+        (10, f'Шумораи хонандагон дар охири чоряки {quarter}', True),
+        (12, 'Баҳо гирифтан', True),
     )
-    for col, text in pairs:
+    for col, text, vertical in pairs:
         ws.merge_cells(start_row=2, start_column=col,
-                       end_row=2, end_column=col + 1)
-        cell(2, col, text)
-        for sub, label in ((col, 'Ҳамагӣ'),
-                           (col + 1, 'аз ҷумла, духтарон')):
-            ws.merge_cells(start_row=3, start_column=sub,
-                           end_row=4, end_column=sub)
-            cell(3, sub, label)
+                       end_row=3, end_column=col + 1)
+        cell(2, col, text, vertical=vertical)
+        cell(4, col, 'Ҳамагӣ', vertical=True)
+        cell(4, col + 1, 'аз ҷумла, духтарон', vertical=True)
     merge('%-и баҳо гирифтани', 14)
     ws.merge_cells(start_row=2, start_column=15,
                    end_row=2, end_column=34)
@@ -273,14 +277,14 @@ def _grades_header(ws, quarter):
         ws.merge_cells(start_row=3, start_column=col,
                        end_row=3, end_column=col + 1)
         cell(3, col, str(g))
-        cell(4, col, 'Шумора')
-        cell(4, col + 1, '%')
+        cell(4, col, 'Шумора', vertical=True)
+        cell(4, col + 1, '%', vertical=True)
         col += 2
     merge('Сифати таҳсилот % (холҳои 7-10)', 35)
     merge('Азхудкунии барномаҳои таълимӣ % (холҳои 4-10)', 36)
-    ws.row_dimensions[2].height = 34
-    ws.row_dimensions[3].height = 46
-    ws.row_dimensions[4].height = 26
+    ws.row_dimensions[2].height = 110
+    ws.row_dimensions[3].height = 100
+    ws.row_dimensions[4].height = 110
 
 
 def _grades_row(ws, r, index, name, data, bold=False):
@@ -421,7 +425,7 @@ def build_zavuch_grades_workbook(school, quarter):
     ws.cell(row=sig, column=20, value=_director_name(school)).font = (
         Font(bold=True, underline='single'))
 
-    widths = {1: 4, 2: 16, 14: 9, 35: 10, 36: 12}
+    widths = {1: 4, 2: 16, 14: 7, 35: 8, 36: 8}
     for col in range(1, GRADES_LAST_COL + 1):
         ws.column_dimensions[get_column_letter(col)].width = (
             widths.get(col, 6))

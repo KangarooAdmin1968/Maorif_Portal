@@ -7704,7 +7704,8 @@ def _compute_school_readiness_payload(schools, gpa_map):
 
 @login_required
 def school_documents(request):
-    """Ҳуҷҷатнигорӣ — documents hub for superusers, staff and school Zavuchs.
+    """Ҳуҷҷатнигорӣ — documents hub for superusers, staff, school Zavuchs
+    and school directors (principal — view/export, not journal edits).
 
     First document: weekly lesson-hours distribution per teacher, built from
     active ClassSubject rows (allocated_teacher preferred, teacher as fallback).
@@ -7716,7 +7717,7 @@ def school_documents(request):
     is_zavuch = (role and role.lower() == 'zavuch') or request.user.username.lower().startswith('zavuch_')
     can_maorif = _maorif_report_access(request.user)
     if not (request.user.is_superuser or request.user.is_staff or is_zavuch
-            or role == settings.ROLE_DIRECTOR):
+            or role in (settings.ROLE_DIRECTOR, settings.ROLE_PRINCIPAL)):
         return redirect('dashboard')
 
     school = get_user_school(request.user)
@@ -7814,9 +7815,12 @@ def school_documents(request):
 # ---------------------------------------------------------------------------
 
 def _tabel_access(user):
-    """Same audience as school_documents: superuser, staff, or school zavuch."""
+    """Same audience as school_documents: superuser, staff, school zavuch
+    or the school director (principal — read/export only; saves stay
+    behind _can_manage_school / the zavuch-only write checks)."""
     role = get_user_role(user)
-    return user.is_superuser or user.is_staff or _is_zavuch(user, role)
+    return (user.is_superuser or user.is_staff or _is_zavuch(user, role)
+            or role == settings.ROLE_PRINCIPAL)
 
 
 def _tabel_school(request):
@@ -8252,9 +8256,11 @@ def _maorif_report_access(user):
 
 
 def _nazorat_access(user):
-    """The school-control tab: zavuch (own school) + district viewers."""
-    return _maorif_report_access(user) or _is_zavuch(
-        user, get_user_role(user))
+    """The school-control tab: zavuch / school director (own school)
+    + district viewers."""
+    role = get_user_role(user)
+    return (_maorif_report_access(user) or _is_zavuch(user, role)
+            or role == settings.ROLE_PRINCIPAL)
 
 
 @login_required

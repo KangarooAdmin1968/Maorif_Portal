@@ -188,6 +188,26 @@ class NazoratTests(GoldenBase):
                      if r['subject'] == MATH]
         self.assertEqual(math_rows, [])
 
+    def test_principal_sees_own_school_only(self):
+        # School directors get the same own-school scope as zavuchs.
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
+        self.client.force_login(self.principal_a)
+        resp = self.client.get(reverse('nazorat'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Мадина Каримова')
+        self.assertNotContains(resp, 'Ҷаҳонгир Назаров')
+        # No school picker; ?school_id= cannot escape the scope.
+        self.assertNotContains(resp, 'name="school_id"')
+        resp2 = self.client.get(
+            reverse('nazorat'), {'school_id': self.school_b.id})
+        self.assertNotContains(resp2, 'Ҷаҳонгир Назаров')
+
+    def test_principal_nav_shows_nazorat_and_documents(self):
+        self.client.force_login(self.principal_a)
+        resp = self.client.get(reverse('dashboard'))
+        self.assertContains(resp, reverse('nazorat'))
+        self.assertContains(resp, reverse('school_documents'))
+
     def test_teacher_control_school_isolated(self):
         # School A fully graded -> gaps only come from the auto-seeded
         # unassigned subjects; school B's 7-Б never shows up.

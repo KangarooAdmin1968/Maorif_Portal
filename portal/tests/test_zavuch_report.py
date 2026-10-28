@@ -207,3 +207,14 @@ class ZavuchGradesExportTests(GoldenBase):
         self.assertIn(self.school_b.name, ws['A1'].value)
         self.assertEqual(self._names(ws)[0], 'Синфи 7')
         self.assertEqual(ws.cell(row=self.ROW5, column=10).value, 1)
+
+    def test_principal_exports_own_school(self):
+        resp = self._get(self.principal_a)
+        self.assertEqual(resp.status_code, 200)
+        ws = self._ws(resp)
+        self.assertIn(self.school_a.name, ws['A1'].value)
+
+    def test_principal_cannot_pick_other_school(self):
+        resp = self._get(self.principal_a, school_id=self.school_b.id)
+        ws = self._ws(resp)
+        self.assertIn(self.school_a.name, ws['A1'].value)

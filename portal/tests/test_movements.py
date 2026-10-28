@@ -106,6 +106,21 @@ class MovementJournalTests(GoldenBase):
         resp = self._get(self.teacher_a)
         self.assertEqual(resp.status_code, 302)
 
+    def test_principal_reads_journal_but_cannot_edit(self):
+        resp = self._get(self.principal_a)
+        self.assertEqual(resp.status_code, 200)
+        rows = {r['class_name']: r
+                for r in resp.context['summary']['rows']}
+        self.assertIn('7-А', rows)
+        self.assertNotIn('7-Б', rows)
+        # Director sees the journal but no manual-entry form.
+        self.assertNotContains(resp, 'name="full_name"')
+        # Writes stay zavuch-only even inside their own school.
+        self.client.post(reverse('movement_add'), {
+            'full_name': 'Ҳаким Валиев', 'class_name': '7-А',
+            'movement_type': 'arrival', 'date': D_Q1.isoformat()})
+        self.assertFalse(StudentMovement.objects.exists())
+
     def test_staff_sees_picker_but_no_edit(self):
         from .helpers import make_user
         staff = make_user('maorif_staff_mv', staff=True)

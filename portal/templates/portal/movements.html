@@ -15,6 +15,19 @@
   .tag-manual { font-size: .72rem; background: #fef3c7; color: #92400e; border-radius: .3rem; padding: .05rem .35rem; }
   .tag-arr { color: #166534; font-weight: 600; }
   .tag-dep { color: #b91c1c; font-weight: 600; }
+  .sign-area { display: none; }
+  @media print {
+    .navbar, .site-footer, .no-print, .messages, nav, header, footer { display: none !important; }
+    body { background: #fff; }
+    .container { max-width: 100%; padding: 0; }
+    .doc-card { border: none; padding: 0; }
+    table.nz-table th, table.nz-table td { border: 1px solid #000; padding: 3px 6px; }
+    .sign-area { display: block; margin-top: 2.5rem; font-size: 10pt; page-break-inside: avoid; }
+    .sign-line { display: flex; justify-content: space-between; align-items: flex-end; margin: 1.4rem 0; }
+    .sign-line .lbl { font-weight: 600; }
+    .sign-line .blank { border-bottom: 1px solid #000; min-width: 200px; height: 1rem; }
+    @page { margin: 12mm; }
+  }
 </style>
 {% endblock %}
 {% block content %}
@@ -41,6 +54,7 @@
         <noscript><button type="submit" class="btn">Намоиш</button></noscript>
     </form>
     <a href="{% url 'nazorat' %}{% if district_view and school %}?school_id={{ school.id }}{% endif %}" class="btn">🔎 Назорат</a>
+    <button type="button" class="btn" onclick="window.print()">🖨️ Чоп кардан</button>
 </div>
 
 {% if summary %}
@@ -96,7 +110,7 @@
             <th class="center" style="width:70px;">Навъ</th>
             <th class="center" style="width:80px;">Ҷинс</th>
             <th>Эзоҳ</th>
-            {% if can_edit %}<th class="center" style="width:60px;"></th>{% endif %}
+            {% if can_edit %}<th class="center no-print" style="width:80px;"></th>{% endif %}
         </tr></thead>
         <tbody>
             {% for m in summary.movements %}
@@ -111,15 +125,21 @@
                 <td class="center">{% if m.gender == 'F' %}Духтар{% elif m.gender == 'M' %}Писар{% else %}—{% endif %}</td>
                 <td>{{ m.note }}</td>
                 {% if can_edit %}
-                <td class="center">
-                    <form method="post" action="{% url 'movement_delete' %}"
-                          onsubmit="return confirm('Қайд нест карда шавад?');">
-                        {% csrf_token %}
-                        <input type="hidden" name="movement_id" value="{{ m.id }}">
-                        <input type="hidden" name="school_id" value="{{ school.id }}">
-                        <input type="hidden" name="quarter" value="{{ quarter }}">
-                        <button type="submit" class="btn" style="padding:.1rem .45rem;">✕</button>
-                    </form>
+                <td class="center no-print">
+                    <div style="display:flex; gap:.25rem; justify-content:center;">
+                        {% if m.is_manual %}
+                        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}&edit={{ m.id }}"
+                           class="btn" style="padding:.1rem .45rem;" title="Таҳрир">✏️</a>
+                        {% endif %}
+                        <form method="post" action="{% url 'movement_delete' %}"
+                              onsubmit="return confirm('Қайд нест карда шавад?');">
+                            {% csrf_token %}
+                            <input type="hidden" name="movement_id" value="{{ m.id }}">
+                            <input type="hidden" name="school_id" value="{{ school.id }}">
+                            <input type="hidden" name="quarter" value="{{ quarter }}">
+                            <button type="submit" class="btn" style="padding:.1rem .45rem;">✕</button>
+                        </form>
+                    </div>
                 </td>
                 {% endif %}
             </tr>
@@ -133,43 +153,52 @@
 
 {% if can_edit %}
 <div class="doc-card no-print">
-    <h2>Қайди нав (дастӣ)</h2>
-    <form method="post" action="{% url 'movement_add' %}" class="nz-toolbar">
+    <h2>{% if edit_row %}Қайдни таҳрир кардан{% else %}Қайди нав (дастӣ){% endif %}</h2>
+    <form method="post" action="{% if edit_row %}{% url 'movement_edit' %}{% else %}{% url 'movement_add' %}{% endif %}" class="nz-toolbar">
         {% csrf_token %}
         <input type="hidden" name="school_id" value="{{ school.id }}">
         <input type="hidden" name="quarter" value="{{ quarter }}">
+        {% if edit_row %}<input type="hidden" name="movement_id" value="{{ edit_row.id }}">{% endif %}
         <label>Ному насаб
-            <input type="text" name="full_name" required>
+            <input type="text" name="full_name" value="{{ edit_row.student_name|default:'' }}" required>
         </label>
         <label>Синф
-            <input type="text" name="class_name" list="class-list" required placeholder="масалан 7-А">
+            <input type="text" name="class_name" list="class-list" value="{{ edit_row.class_name|default:'' }}" required placeholder="масалан 7-А">
             <datalist id="class-list">
                 {% for c in class_options %}<option value="{{ c }}">{% endfor %}
             </datalist>
         </label>
         <label>Навъ
             <select name="movement_type">
-                <option value="arrival">Омад</option>
-                <option value="departure">Рафт</option>
+                <option value="arrival"{% if edit_row and edit_row.movement_type == 'arrival' %} selected{% endif %}>Омад</option>
+                <option value="departure"{% if edit_row and edit_row.movement_type == 'departure' %} selected{% endif %}>Рафт</option>
             </select>
         </label>
         <label>Сана
-            <input type="date" name="date" value="{{ today }}" required>
+            <input type="date" name="date" value="{% if edit_row %}{{ edit_row.date|date:'Y-m-d' }}{% else %}{{ today }}{% endif %}" required>
         </label>
         <label>Ҷинс
             <select name="gender">
-                <option value="">Автоматик</option>
-                <option value="M">Писар</option>
-                <option value="F">Духтар</option>
+                <option value=""{% if not edit_row or not edit_row.gender %} selected{% endif %}>Автоматик</option>
+                <option value="M"{% if edit_row and edit_row.gender == 'M' %} selected{% endif %}>Писар</option>
+                <option value="F"{% if edit_row and edit_row.gender == 'F' %} selected{% endif %}>Духтар</option>
             </select>
         </label>
         <label>Эзоҳ
-            <input type="text" name="note">
+            <input type="text" name="note" value="{{ edit_row.note|default:'' }}">
         </label>
-        <button type="submit" class="btn btn-success">Сабт кардан</button>
+        <button type="submit" class="btn btn-success">{% if edit_row %}Сақлаш{% else %}Сабт кардан{% endif %}</button>
+        {% if edit_row %}
+        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}" class="btn">Болидан</a>
+        {% endif %}
     </form>
 </div>
 {% endif %}
+
+<div class="sign-area">
+    <div class="sign-line"><span class="lbl">Директори муассиса:</span><span class="blank"></span></div>
+    <div class="sign-line"><span class="lbl">Муовини директор оид ба таълим:</span><span class="blank"></span></div>
+</div>
 {% else %}
 <p>Муассиса интихоб нашудааст.</p>
 {% endif %}

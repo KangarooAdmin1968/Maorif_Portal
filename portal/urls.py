@@ -81,6 +81,7 @@ urlpatterns = [
     path('schools/documents/movements/', views.student_movements, name='student_movements'),
     path('schools/documents/movements/add/', views.movement_add, name='movement_add'),
     path('schools/documents/movements/delete/', views.movement_delete, name='movement_delete'),
+    path('schools/documents/movements/edit/', views.movement_edit, name='movement_edit'),
     path('monitoring-dashboard/export/', views.export_monitoring_excel, name='export_monitoring_excel'),
     path('schools/years/', views.academic_years, name='academic_years'),
     path('schools/years/close/', views.quarter_close, name='quarter_close'),

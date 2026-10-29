@@ -8386,6 +8386,7 @@ def student_movements(request):
 
     summary = None
     class_options = []
+    can_edit = bool(school) and _can_manage_school(request.user, school)
     if school is not None:
         from .movements import collect_movements
         summary = collect_movements(school, quarter)
@@ -8394,6 +8395,11 @@ def student_movements(request):
                 .exclude(class_name='')
                 .values_list('class_name', flat=True)),
             key=lambda n: (class_numeric_part(n) or 0, n))
+    edit_row = None
+    if can_edit and request.GET.get('edit'):
+        # ?edit=N pre-fills the manual-entry form for correction.
+        edit_row = StudentMovement.objects.filter(
+            pk=request.GET['edit'], school=school, is_manual=True).first()
     return render(request, 'portal/movements.html', {
         'school': school,
         'schools': schools,
@@ -8402,8 +8408,8 @@ def student_movements(request):
         'quarters': [1, 2, 3, 4],
         'summary': summary,
         'class_options': class_options,
-        'can_edit': bool(school)
-        and _can_manage_school(request.user, school),
+        'can_edit': can_edit,
+        'edit_row': edit_row,
         'today': timezone.localdate().isoformat(),
     })
 
@@ -8460,6 +8466,60 @@ def movement_delete(request):
     StudentMovement.objects.filter(
         pk=request.POST.get('movement_id'), school=school).delete()
     messages.success(request, 'Қайд нест карда шуд.')
+    return _movement_redirect(request, school, quarter)
+
+
+@login_required
+@require_POST
+def movement_edit(request):
+    """Correct a manual journal row — same validation as movement_add.
+
+    Only is_manual rows are editable; auto rows (written by add/remove
+    student) stay untouched — fixing them means delete + re-add.
+    """
+    school, _, _, allowed = _movement_scope(request)
+    if (not allowed or school is None
+            or not _can_manage_school(request.user, school)):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    movement = StudentMovement.objects.filter(
+        pk=request.POST.get('movement_id'), school=school,
+        is_manual=True).first()
+    if movement is None:
+        messages.error(request, 'Қайд топилмади ёки таҳрирга рухсат йўқ.')
+        return _movement_redirect(request, school, quarter)
+
+    full_name = request.POST.get('full_name', '').strip()
+    class_name = _validate_class_name(request.POST.get('class_name'))
+    mtype = request.POST.get('movement_type', '')
+    gender = request.POST.get('gender', '').strip()
+    note = request.POST.get('note', '').strip()
+    try:
+        date = datetime.date.fromisoformat(
+            request.POST.get('date', '').strip())
+    except ValueError:
+        date = None
+
+    if not full_name or not class_name \
+            or mtype not in ('arrival', 'departure') or date is None:
+        messages.error(request, 'Иттилоот нопурра — тағйирот сабт нашуд.')
+        return _movement_redirect(request, school, quarter)
+
+    if gender not in ('M', 'F'):
+        from .gender_detector import detect_student_gender
+        gender = detect_student_gender(full_name) or ''
+    movement.student = Student.objects.filter(
+        school=school, class_name=class_name,
+        full_name=full_name).first()
+    movement.student_name = full_name
+    movement.class_name = class_name
+    movement.gender = gender
+    movement.movement_type = mtype
+    movement.date = date
+    movement.academic_year = None   # save() recomputes from the new date
+    movement.note = note
+    movement.save()
+    messages.success(request, 'Қайд таҳрир шуд.')
     return _movement_redirect(request, school, quarter)
 
 

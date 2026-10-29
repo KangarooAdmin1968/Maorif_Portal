@@ -151,6 +151,57 @@ class MovementJournalTests(GoldenBase):
         self.assertFalse(StudentMovement.objects.filter(
             school=self.school_a).exists())
 
+    def test_manual_row_edit_prefills_form_and_saves(self):
+        m = StudentMovement.objects.create(
+            school=self.school_a, student_name='Олим Саидов',
+            class_name='7-А', gender='M', movement_type='arrival',
+            date=D_Q1, academic_year=D_Q1.year, is_manual=True)
+        self.client.force_login(self.zavuch_a)
+        # ?edit=N prefills the form and points it at movement_edit.
+        resp = self._get(self.zavuch_a, quarter=1, edit=m.id)
+        self.assertContains(resp, 'Қайдни таҳрир кардан')
+        self.assertContains(resp, 'name="movement_id"')
+        self.assertContains(resp, 'value="Олим Саидов"')
+        # Saving posts to movement_edit and updates the row in place.
+        resp = self.client.post(reverse('movement_edit'), {
+            'movement_id': m.id,
+            'school_id': self.school_a.id,
+            'quarter': 1,
+            'full_name': 'Ҳаким Валиев',
+            'class_name': '7-А',
+            'movement_type': 'departure',
+            'date': D_Q1_B.isoformat(),
+            'gender': '',
+            'note': 'Таҳрир шуд',
+        })
+        self.assertEqual(resp.status_code, 302)
+        m.refresh_from_db()
+        self.assertEqual(m.student_name, 'Ҳаким Валиев')
+        self.assertEqual(m.movement_type, 'departure')
+        self.assertEqual(m.note, 'Таҳрир шуд')
+        self.assertEqual(m.gender, 'M')   # авто-аникит → писар
+        self.assertTrue(m.is_manual)
+
+    def test_edit_rejects_auto_and_other_school_rows(self):
+        auto = StudentMovement.objects.create(
+            school=self.school_a, student_name='Авто Қайд',
+            class_name='7-А', gender='M', movement_type='arrival',
+            date=D_Q1, academic_year=D_Q1.year, is_manual=False)
+        other = StudentMovement.objects.create(
+            school=self.school_b, student_name='Ҷаҳонгир Назаров',
+            class_name='7-Б', gender='M', movement_type='arrival',
+            date=D_Q1, academic_year=D_Q1.year, is_manual=True)
+        self.client.force_login(self.zavuch_a)
+        for row in (auto, other):
+            self.client.post(reverse('movement_edit'), {
+                'movement_id': row.id,
+                'school_id': self.school_a.id,
+                'quarter': 1,
+                'full_name': 'Тағйир Ёфт', 'class_name': '7-А',
+                'movement_type': 'departure', 'date': D_Q1.isoformat()})
+            row.refresh_from_db()
+            self.assertNotEqual(row.student_name, 'Тағйир Ёфт')
+
     def test_zavuch_cannot_touch_other_school(self):
         # A manual row for school B exists; school A's zavuch can neither
         # see nor delete it.

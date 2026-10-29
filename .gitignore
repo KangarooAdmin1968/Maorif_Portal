@@ -17,3 +17,6 @@ db.sqlite3
 
 # Shared ranking cache files (runtime artifacts, recreated on demand)
 data/cache/
+
+# Local server ops scripts — run manually, never pushed to the repo
+server_healthcheck.py

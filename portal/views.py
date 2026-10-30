@@ -8397,9 +8397,9 @@ def student_movements(request):
             key=lambda n: (class_numeric_part(n) or 0, n))
     edit_row = None
     if can_edit and request.GET.get('edit'):
-        # ?edit=N pre-fills the manual-entry form for correction.
+        # ?edit=N pre-fills the entry form for correction.
         edit_row = StudentMovement.objects.filter(
-            pk=request.GET['edit'], school=school, is_manual=True).first()
+            pk=request.GET['edit'], school=school).first()
     return render(request, 'portal/movements.html', {
         'school': school,
         'schools': schools,
@@ -8472,10 +8472,11 @@ def movement_delete(request):
 @login_required
 @require_POST
 def movement_edit(request):
-    """Correct a manual journal row — same validation as movement_add.
+    """Correct a journal row — same validation as movement_add.
 
-    Only is_manual rows are editable; auto rows (written by add/remove
-    student) stay untouched — fixing them means delete + re-add.
+    Manual and auto rows are both editable (e.g. fixing a departure
+    recorded with the wrong date); the is_manual badge keeps marking
+    where the row came from.
     """
     school, _, _, allowed = _movement_scope(request)
     if (not allowed or school is None
@@ -8483,10 +8484,9 @@ def movement_edit(request):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
     movement = StudentMovement.objects.filter(
-        pk=request.POST.get('movement_id'), school=school,
-        is_manual=True).first()
+        pk=request.POST.get('movement_id'), school=school).first()
     if movement is None:
-        messages.error(request, 'Қайд топилмади ёки таҳрирга рухсат йўқ.')
+        messages.error(request, 'Қайд топилмади.')
         return _movement_redirect(request, school, quarter)
 
     full_name = request.POST.get('full_name', '').strip()

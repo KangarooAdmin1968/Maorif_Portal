@@ -182,25 +182,40 @@ class MovementJournalTests(GoldenBase):
         self.assertEqual(m.gender, 'M')   # авто-аникит → писар
         self.assertTrue(m.is_manual)
 
-    def test_edit_rejects_auto_and_other_school_rows(self):
+    def test_edit_works_on_auto_rows_but_not_other_school(self):
+        # Auto rows are editable too — e.g. fixing a departure recorded
+        # with the wrong date; the is_manual badge stays as the origin.
         auto = StudentMovement.objects.create(
             school=self.school_a, student_name='Авто Қайд',
             class_name='7-А', gender='M', movement_type='arrival',
             date=D_Q1, academic_year=D_Q1.year, is_manual=False)
+        self.client.force_login(self.zavuch_a)
+        resp = self._get(self.zavuch_a, quarter=1, edit=auto.id)
+        self.assertContains(resp, 'Қайдни таҳрир кардан')
+        self.client.post(reverse('movement_edit'), {
+            'movement_id': auto.id,
+            'school_id': self.school_a.id,
+            'quarter': 1,
+            'full_name': 'Авто Қайд', 'class_name': '7-А',
+            'movement_type': 'departure', 'date': D_Q1_B.isoformat()})
+        auto.refresh_from_db()
+        self.assertEqual(auto.movement_type, 'departure')
+        self.assertEqual(auto.date, D_Q1_B)
+        self.assertFalse(auto.is_manual)   # badge keeps the origin
+
+        # A row belonging to another school is never touched.
         other = StudentMovement.objects.create(
             school=self.school_b, student_name='Ҷаҳонгир Назаров',
             class_name='7-Б', gender='M', movement_type='arrival',
             date=D_Q1, academic_year=D_Q1.year, is_manual=True)
-        self.client.force_login(self.zavuch_a)
-        for row in (auto, other):
-            self.client.post(reverse('movement_edit'), {
-                'movement_id': row.id,
-                'school_id': self.school_a.id,
-                'quarter': 1,
-                'full_name': 'Тағйир Ёфт', 'class_name': '7-А',
-                'movement_type': 'departure', 'date': D_Q1.isoformat()})
-            row.refresh_from_db()
-            self.assertNotEqual(row.student_name, 'Тағйир Ёфт')
+        self.client.post(reverse('movement_edit'), {
+            'movement_id': other.id,
+            'school_id': self.school_a.id,
+            'quarter': 1,
+            'full_name': 'Тағйир Ёфт', 'class_name': '7-А',
+            'movement_type': 'departure', 'date': D_Q1.isoformat()})
+        other.refresh_from_db()
+        self.assertNotEqual(other.student_name, 'Тағйир Ёфт')
 
     def test_zavuch_cannot_touch_other_school(self):
         # A manual row for school B exists; school A's zavuch can neither

@@ -20,7 +20,8 @@
     .navbar, .site-footer, .no-print, .messages, nav, header, footer { display: none !important; }
     body { background: #fff; }
     .container { max-width: 100%; padding: 0; }
-    .doc-card { border: none; padding: 0; }
+    .doc-card { border: none; padding: 0; page-break-inside: avoid; }
+    .doc-card.records-card { page-break-before: always; page-break-inside: auto; }
     table.nz-table th, table.nz-table td { border: 1px solid #000; padding: 3px 6px; }
     .sign-area { display: block; margin-top: 2.5rem; font-size: 10pt; page-break-inside: avoid; }
     .sign-line { display: flex; justify-content: space-between; align-items: flex-end; margin: 1.4rem 0; }
@@ -99,7 +100,7 @@
     </table>
 </div>
 
-<div class="doc-card">
+<div class="doc-card records-card">
     <h2>Қайдҳо</h2>
     {% if summary.movements %}
     <table class="nz-table">
@@ -127,10 +128,8 @@
                 {% if can_edit %}
                 <td class="center no-print">
                     <div style="display:flex; gap:.25rem; justify-content:center;">
-                        {% if m.is_manual %}
                         <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}&edit={{ m.id }}"
                            class="btn" style="padding:.1rem .45rem;" title="Таҳрир">✏️</a>
-                        {% endif %}
                         <form method="post" action="{% url 'movement_delete' %}"
                               onsubmit="return confirm('Қайд нест карда шавад?');">
                             {% csrf_token %}
@@ -187,9 +186,9 @@
         <label>Эзоҳ
             <input type="text" name="note" value="{{ edit_row.note|default:'' }}">
         </label>
-        <button type="submit" class="btn btn-success">{% if edit_row %}Сақлаш{% else %}Сабт кардан{% endif %}</button>
+        <button type="submit" class="btn btn-success">Сабт кардан</button>
         {% if edit_row %}
-        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}" class="btn">Болидан</a>
+        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}" class="btn">Бекор кардан</a>
         {% endif %}
     </form>
 </div>

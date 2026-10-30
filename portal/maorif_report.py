@@ -17,8 +17,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
-from .class_report import _school_short_name
-from .models import QuarterGrade, School, Student
+from .class_report import _school_short_name, merged_quarter_marks
+from .curriculum_hours import UNGRADED_SUBJECTS
+from .models import (ClassSubject, School, Student,
+                     normalize_subject)
 from .utils import academic_schools, class_numeric_part, get_school_number
 from .zavuch_report import _band, _whole_grade
 
@@ -72,14 +74,15 @@ def collect_maorif_stats(quarter, today=None):
             where[row['id']] = (row['school_id'], row['class_name'])
 
     # Per-student quarter average -> band, attributed to the school.
-    sums = {}
-    for row in QuarterGrade.objects.filter(
-            student__school_id__in=school_ids, quarter=quarter,
-            academic_year=ay, grade__isnull=False).values(
-            'student_id', 'grade'):
-        entry = sums.setdefault(row['student_id'], [0.0, 0])
-        entry[0] += float(row['grade'])
-        entry[1] += 1
+    # Same merged source the Ҳисобот prints: stored QuarterGrade rows
+    # win, gaps take the journal's live Ҷ value.
+    students_qs = Student.objects.filter(school_id__in=school_ids)
+    subjects = {normalize_subject(s) for s in ClassSubject.objects.filter(
+        school_id__in=school_ids, is_active=True).values_list(
+        'subject', flat=True)} - UNGRADED_SUBJECTS
+    marks = merged_quarter_marks(students_qs, subjects, quarter, ay)
+    sums = {sid: [sum(map(float, m.values())), len(m)]
+            for sid, m in marks.items() if m}
 
     stats = {s.id: {'graded': 0, 'hi': 0, 'md': 0, 'rm': 0, 'lo': 0,
                     'dist': {g: 0 for g in range(1, 11)}}

@@ -133,6 +133,25 @@ def _live_quarter_grade_map(students, subjects, quarter, year):
     return out
 
 
+def merged_quarter_marks(students, subjects, quarter, year):
+    """{student_id: {subject: mark}} — the merged picture the Ҳисобот
+    prints: stored QuarterGrade rows win, and a subject with no stored
+    row is filled with the journal's live provisional value (the Ҷ
+    marker). Shared by every summary document (А.Ҷ.Ч., АЧЧ, маориф,
+    назорат, аълохон) so they all count the same marks the class
+    report displays."""
+    marks = defaultdict(dict)
+    for sid, subj, grade in QuarterGrade.objects.filter(
+            student__in=students, quarter=quarter,
+            academic_year=year, grade__isnull=False).values_list(
+            'student_id', 'subject', 'grade'):
+        marks[sid][normalize_subject(subj)] = grade
+    for (sid, subj), value in _live_quarter_grade_map(
+            students, subjects, quarter, year).items():
+        marks[sid].setdefault(subj, value)
+    return marks
+
+
 def _school_short_name(school):
     """Short institution label for the signature line, derived from the
     school's own type/name: 'МТМУ №20', 'Литсей №1', 'Гимназия №1'.

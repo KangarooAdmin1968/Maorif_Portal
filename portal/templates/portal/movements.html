@@ -56,7 +56,7 @@
         </label>
         <noscript><button type="submit" class="btn">Намоиш</button></noscript>
     </form>
-    <a href="{% url 'nazorat' %}{% if district_view and school %}?school_id={{ school.id }}{% endif %}" class="btn">🔎 Назорат</a>
+    <a href="{% url 'school_documents' %}{% if district_view and school %}?school_id={{ school.id }}{% endif %}" class="btn">� Ҳуҷҷатнигорӣ</a>
     <a href="{% url 'movements_export' %}?quarter={{ quarter }}{% if district_view and school %}&school_id={{ school.id }}{% endif %}" class="btn">📊 Excel</a>
     <button type="button" class="btn" onclick="window.print()">🖨️ Чоп кардан</button>
 </div>

@@ -2,8 +2,12 @@
 
 collect_excellent_students() powers the Ҳуҷҷатнигорӣ preview page and the
 Excel export. A student qualifies when EVERY graded subject of their
-class carries a QuarterGrade of 9 or 10 for the chosen quarter and the
-current academic year — a missing mark disqualifies like a low one does.
+class shows a quarter mark of 9 or 10 for the chosen quarter and the
+current academic year. Marks are read exactly like the official Ҳисобот:
+the stored QuarterGrade wins, and a subject with no stored row is filled
+with the journal's live provisional value (the Ҷ marker) derived from
+daily marks — so the list can never disagree with the report a zavuch
+prints. A subject with no mark at all still disqualifies the student.
 Grade-1 sticker classes and UNGRADED_SUBJECTS never take part.
 """
 import io
@@ -13,7 +17,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from .curriculum_hours import UNGRADED_SUBJECTS
-from .models import ClassSubject, QuarterGrade, Student
+from .models import ClassSubject, Student
 from .utils import (class_numeric_part, is_non_graded,
                     normalize_class_name, normalize_subject)
 
@@ -46,16 +50,18 @@ def collect_excellent_students(school, quarter, today=None):
         expected[normalize_class_name(cs.class_name)].add(
             normalize_subject(cs.subject))
 
-    marks = defaultdict(dict)
-    for row in (QuarterGrade.objects
-                .filter(student__school=school, quarter=quarter,
-                        academic_year=ay)
-                .values('student_id', 'subject', 'grade')):
-        marks[row['student_id']][normalize_subject(row['subject'])] = row['grade']
+    # Match the Ҳисобот's merged picture: stored QuarterGrade rows win
+    # and cells without one are filled with the journal's live
+    # provisional mark (Ҷ) — the shared report source.
+    students = list(
+        Student.objects.filter(school=school).exclude(class_name=''))
+    all_subjects = {s for subs in expected.values() for s in subs}
+    from .class_report import merged_quarter_marks
+    marks = merged_quarter_marks(students, all_subjects, quarter, ay) \
+        if all_subjects else defaultdict(dict)
 
-    students = []
-    for st in (Student.objects.filter(school=school)
-               .exclude(class_name='')):
+    result = []
+    for st in students:
         cn = normalize_class_name(st.class_name)
         if is_non_graded(cn):
             continue
@@ -69,11 +75,11 @@ def collect_excellent_students(school, quarter, today=None):
         # Stray marks in non-curricular subjects count too.
         if any(g not in EXCELLENT_MARKS for g in grades.values()):
             continue
-        students.append(st)
-    students.sort(key=lambda s: (class_numeric_part(s.class_name) or 0,
-                                 normalize_class_name(s.class_name),
-                                 s.full_name))
-    return {'quarter': quarter, 'academic_year': ay, 'students': students,
+        result.append(st)
+    result.sort(key=lambda s: (class_numeric_part(s.class_name) or 0,
+                               normalize_class_name(s.class_name),
+                               s.full_name))
+    return {'quarter': quarter, 'academic_year': ay, 'students': result,
             'title': excellent_list_title(school, ay)}
 
 

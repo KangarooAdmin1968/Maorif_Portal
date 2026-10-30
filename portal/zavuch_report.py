@@ -6,7 +6,7 @@ header block, band formulas and signature lines preserved.
 
 Data sources (existing portal data only):
   - Student (class level, gender)               -> C, D (+Эзоҳ row for level 1)
-  - QuarterGrade.grade for the chosen quarter    -> K, L and band cells N/P/T
+  - merged quarter marks (stored + live Ҷ)      -> K, L and band cells N/P/T
   - StudentMovement (Омад/Рафт journal)          -> E..H, and the
     quarter-start baseline inside C/D
   - School.name / School.director                -> title + signature
@@ -20,8 +20,11 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 
-from .class_report import QUARTER_ORDINALS, _director_name
-from .models import QuarterGrade, Student, StudentMovement
+from .class_report import (QUARTER_ORDINALS, _director_name,
+                           merged_quarter_marks)
+from .curriculum_hours import UNGRADED_SUBJECTS
+from .models import (ClassSubject, Student, StudentMovement,
+                     normalize_subject)
 from .utils import class_numeric_part, is_non_graded
 
 TEMPLATE_PATH = (
@@ -73,17 +76,21 @@ def _collect_level_stats(school, quarter, ay, windows):
     1..11. ``levels`` = live roster [total, girls]; ``class_counts`` =
     parallel-class count; ``moved`` = quarter-window mobility
     [arr, arr_f, dep, dep_f]; ``graded`` = {'total', 'f', 'bands', 'dist'}
-    where dist maps the rounded per-student average 1..10 to a count.
+    where dist maps the rounded per-student average 1..10 to a count;
+    ``marks`` = the merged quarter map so callers can reuse it (e.g.
+    for the «Баҳо нагирифтаанд» footnote) without a second live pass.
     """
     levels = {lvl: [0, 0] for lvl in range(1, 12)}   # [total, girls]
     class_counts = defaultdict(set)
-    for s in Student.objects.filter(school=school).values(
-            'class_name', 'gender'):
-        lvl = class_numeric_part(s['class_name'])
+    sinfo = {}   # student_id -> (level, gender)
+    students = list(Student.objects.filter(school=school))
+    for s in students:
+        lvl = class_numeric_part(s.class_name)
         if lvl in levels:
+            sinfo[s.id] = (lvl, s.gender)
             levels[lvl][0] += 1
-            class_counts[lvl].add(s['class_name'])
-            if s['gender'] == 'F':
+            class_counts[lvl].add(s.class_name)
+            if s.gender == 'F':
                 levels[lvl][1] += 1
 
     qstart, qend = windows[quarter]
@@ -99,22 +106,20 @@ def _collect_level_stats(school, quarter, ay, windows):
         if m['gender'] == 'F':
             moved[lvl][i + 1] += 1
 
-    # Quarter grades -> per-student average -> band + whole mark,
-    # grouped by level.
+    # Quarter marks -> per-student average -> band + whole mark,
+    # grouped by level. Same merged source the Ҳисобот prints: stored
+    # QuarterGrade rows win, gaps take the journal's live Ҷ value.
+    subjects = {normalize_subject(s) for s in ClassSubject.objects.filter(
+        school=school, is_active=True).values_list(
+        'subject', flat=True)} - UNGRADED_SUBJECTS
+    marks = merged_quarter_marks(students, subjects, quarter, ay)
     sums = {}
-    for row in QuarterGrade.objects.filter(
-            student__school=school, quarter=quarter,
-            academic_year=ay, grade__isnull=False).values(
-            'student_id', 'student__class_name', 'student__gender',
-            'grade'):
-        lvl = class_numeric_part(row['student__class_name'])
-        if lvl not in levels:
+    for sid, subj_marks in marks.items():
+        if sid not in sinfo or not subj_marks:
             continue
-        entry = sums.setdefault(
-            row['student_id'],
-            [0.0, 0, lvl, row['student__gender']])
-        entry[0] += float(row['grade'])
-        entry[1] += 1
+        lvl, gender = sinfo[sid]
+        sums[sid] = [sum(map(float, subj_marks.values())),
+                     len(subj_marks), lvl, gender]
 
     graded = {lvl: {'total': 0, 'f': 0, 'avg_sum': 0.0,
                     'bands': defaultdict(int),
@@ -130,15 +135,16 @@ def _collect_level_stats(school, quarter, ay, windows):
         g['bands'][_band(avg)] += 1
         g['dist'][_whole_grade(avg)] += 1
 
-    return levels, class_counts, moved, graded
+    return levels, class_counts, moved, graded, marks
 
 
 def build_zavuch_report_workbook(school, quarter):
     """Fill the owner's А.Ҷ.Ч. template for one school + quarter.
 
     Returns a BytesIO xlsx. Per-student band = average of the student's
-    QuarterGrade.grade rows in the chosen quarter/current academic year;
-    students without any quarter grade land in Бе хол (V = I-K).
+    merged quarter marks in the chosen quarter/current academic year
+    (stored QuarterGrade wins, gaps take the journal's live Ҷ value);
+    students without any mark land in Бе хол (V = I-K).
     """
     from .views import (  # local imports avoid cycles
         academic_year_start, academic_year_quarter_windows)
@@ -149,7 +155,7 @@ def build_zavuch_report_workbook(school, quarter):
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb.active
     ay = academic_year_start()
-    levels, _cc, moved, graded = _collect_level_stats(
+    levels, _cc, moved, graded, _marks = _collect_level_stats(
         school, quarter, ay, academic_year_quarter_windows(ay))
 
     # Header wording: the template's «Шумораи» clips to «мор» in narrow
@@ -362,14 +368,11 @@ def _sum_data(items):
     return out
 
 
-def _ungraded_by_class(school, quarter, ay):
-    """class_name -> students without any QuarterGrade this quarter —
-    feeds the «Баҳо нагирифтаанд» footer. Non-graded (1-ум) classes are
-    excluded: they never receive marks."""
-    graded_ids = {
-        row['student_id'] for row in QuarterGrade.objects.filter(
-            student__school=school, quarter=quarter,
-            academic_year=ay, grade__isnull=False).values('student_id')}
+def _ungraded_by_class(school, marks):
+    """class_name -> students without any quarter mark (stored or live
+    provisional) — feeds the «Баҳо нагирифтаанд» footer. Non-graded
+    (1-ум) classes are excluded: they never receive marks."""
+    graded_ids = set(marks)
     counts = defaultdict(int)
     for s in Student.objects.filter(school=school).values(
             'id', 'class_name'):
@@ -392,7 +395,7 @@ def build_zavuch_grades_workbook(school, quarter):
         raise ZavuchReportError('Чораки нодуруст.')
 
     ay = academic_year_start()
-    levels, class_counts, moved, graded = _collect_level_stats(
+    levels, class_counts, moved, graded, marks = _collect_level_stats(
         school, quarter, ay, academic_year_quarter_windows(ay))
 
     wb = Workbook()
@@ -459,7 +462,7 @@ def build_zavuch_grades_workbook(school, quarter):
     ws.cell(row=note_r, column=1,
             value=f'Баҳо нагирифтаанд дар чоряки {ordinal_w}:'
             ).font = Font(bold=True)
-    ungraded = _ungraded_by_class(school, quarter, ay)
+    ungraded = _ungraded_by_class(school, marks)
     total_u = sum(ungraded.values())
     detail = ('Ҳамаи хонандагон баҳо гирифтаанд.' if not total_u else
               ', '.join(f'{cn} ({n})' for cn, n in sorted(

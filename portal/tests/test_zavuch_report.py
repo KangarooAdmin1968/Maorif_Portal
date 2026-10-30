@@ -9,12 +9,12 @@ import io
 from django.urls import reverse
 from openpyxl import load_workbook
 
-from portal.models import StudentMovement
+from portal.models import QuarterGrade, StudentMovement
 from portal.zavuch_report import GRADES_FIRST_DATA_ROW
 
 from .helpers import (
-    D_Q1, D_Q1_B, GoldenBase, MATH, TAJIK, make_quarter_grade,
-    make_student,
+    D_Q1, D_Q1_B, GoldenBase, MATH, TAJIK, make_grade,
+    make_quarter_grade, make_student,
 )
 
 
@@ -69,6 +69,17 @@ class ZavuchReportExportTests(GoldenBase):
         self.assertEqual(ws[f'K{r}'].value, 1)
         self.assertEqual(ws[f'N{r}'].value, 0)
         self.assertEqual(ws[f'P{r}'].value, 1)
+
+    def test_provisional_only_student_counts_in_bands(self):
+        # s1 has only journal marks — her stored quarter row is gone.
+        # The Ҳисобот prints her Ҷ value, so the А.Ҷ.Ч. must count her
+        # in the graded total and the 9-10 band, not «Бе хол».
+        make_grade(self.s1, subject=MATH, score=9, date=D_Q1)
+        QuarterGrade.objects.filter(student=self.s1).delete()
+        ws = self._ws(self._get(self.zavuch_a))
+        r = self.ROW7
+        self.assertEqual(ws[f'K{r}'].value, 1)
+        self.assertEqual(ws[f'N{r}'].value, 1)
 
     def test_parallel_classes_aggregate_into_one_level_row(self):
         make_student(self.school_a, '7-Б', 'Ҳаким Валиев')

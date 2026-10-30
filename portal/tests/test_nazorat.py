@@ -6,6 +6,8 @@ students for the selected quarter.
 """
 from django.urls import reverse
 
+from portal.models import QuarterGrade
+
 from .helpers import (
     D_Q1, D_Q1_B, D_Q2, GoldenBase, MATH, TAJIK, make_grade,
     make_quarter_grade, make_user,
@@ -52,6 +54,20 @@ class NazoratTests(GoldenBase):
         resp = self.client.get(reverse('nazorat'))
         self.assertContains(resp, 'Ҳамаи хонандагон баҳо гирифтаанд')
 
+    def test_provisional_only_student_counts_as_graded(self):
+        # s1 has only journal marks — her stored quarter row is gone.
+        # The Ҳисобот still prints her Ҷ values, so the shared merged
+        # source must count her as graded, not «нагирифтаанд».
+        make_grade(self.s1, subject=MATH, score=9, date=D_Q1)
+        QuarterGrade.objects.filter(student=self.s1).delete()
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'))
+        stats = resp.context['stats']
+        self.assertEqual(stats['totals']['graded'], 1)
+        self.assertEqual(stats['totals']['ungraded'], 1)
+        self.assertNotContains(resp, 'Фирӯз Раҳимов')
+        self.assertContains(resp, 'Мадина Каримова')
+
     def test_teacher_and_anonymous_denied(self):
         resp = self.client.get(reverse('nazorat'))
         self.assertEqual(resp.status_code, 302)          # -> login
@@ -63,6 +79,14 @@ class NazoratTests(GoldenBase):
         self.client.force_login(self.zavuch_a)
         resp = self.client.get(reverse('dashboard'))
         self.assertContains(resp, reverse('nazorat'))
+
+    def test_movements_link_moved_to_documents(self):
+        # Омад-рафт lives under Ҳуҷҷатнигорӣ — the Назорат page no
+        # longer links to it.
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, reverse('student_movements'))
 
     def test_staff_sees_school_picker(self):
         staff = make_user('maorif_staff_nz', staff=True)

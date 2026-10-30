@@ -11,9 +11,10 @@ from collections import defaultdict
 
 from django.db.models import Count, Min
 
+from .class_report import merged_quarter_marks
 from .curriculum_hours import UNGRADED_SUBJECTS
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
-from .models import ClassSubject, Grade, QuarterGrade, Student, normalize_subject
+from .models import ClassSubject, Grade, Student, normalize_subject
 from .utils import class_numeric_part
 
 # Academic-year order: September..August; quarter bounds come from the
@@ -256,8 +257,8 @@ def collect_grading_control(school, quarter, today=None):
       * ungraded — students with NO quarter grade at all
       * low      — students whose quarter average sits in the 1-3 band
 
-    Both derive from the same single QuarterGrade pass the reports use,
-    so the numbers always agree with the А.Ҷ.Ч. exports.
+    Both derive from the same merged marks pass the reports use, so
+    the numbers always agree with the А.Ҷ.Ч. exports.
     """
     from .views import academic_year_start  # local import avoids cycles
 
@@ -271,13 +272,16 @@ def collect_grading_control(school, quarter, today=None):
         students[row['id']] = row
         per_class[row['class_name']]['total'] += 1
 
-    sums = {}
-    for row in QuarterGrade.objects.filter(
-            student__school=school, quarter=quarter, academic_year=ay,
-            grade__isnull=False).values('student_id', 'grade'):
-        entry = sums.setdefault(row['student_id'], [0.0, 0])
-        entry[0] += float(row['grade'])
-        entry[1] += 1
+    # Same merged source the Ҳисобот prints: stored QuarterGrade rows
+    # win, gaps take the journal's live Ҷ value — so a student whose
+    # report shows quarter marks never lands in «нагирифтаанд».
+    subjects = {normalize_subject(s) for s in ClassSubject.objects.filter(
+        school=school, is_active=True).values_list(
+        'subject', flat=True)} - UNGRADED_SUBJECTS
+    marks = merged_quarter_marks(
+        Student.objects.filter(school=school), subjects, quarter, ay)
+    sums = {sid: [sum(map(float, m.values())), len(m)]
+            for sid, m in marks.items() if m}
 
     totals = {'total': 0, 'graded': 0, 'ungraded': 0, 'low': 0}
     for sid, st in students.items():

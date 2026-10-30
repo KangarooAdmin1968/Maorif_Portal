@@ -40,16 +40,26 @@
 <h1>📄 Ҳуҷҷатнигорӣ</h1>
 
 <div class="print-toolbar no-print">
+    {% if can_pick_school %}
+    <form method="get" action="{% url 'school_documents' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        <label style="font-size:.85rem; color:#374151; display:flex; flex-direction:column; gap:.15rem;">Муассиса
+            <select name="school_id" onchange="this.form.submit()" style="padding:.4rem .6rem; border:1px solid #d1d5db; border-radius:.35rem; min-width:14rem;">
+                <option value="">— интихоб кунед —</option>
+                {% for s in schools %}
+                <option value="{{ s.id }}"{% if school and s.id == school.id %} selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+    {% endif %}
     <button type="button" class="btn btn-success" onclick="window.print()">🖨️ Чоп кардан</button>
     {% if can_school_docs %}
-    <a href="{% url 'workload_tabel' %}" class="btn">📋 Табели сарборӣ</a>
-    <a href="{% url 'class_reports' %}" class="btn">📊 Ҳисоботи синфҳо</a>
-    <a href="{% url 'student_movements' %}" class="btn">🔁 Омад-рафт</a>
-    <a href="{% url 'zavuch_report_export' %}" class="btn">📈 Ҳисоботи завуч</a>
-    <a href="{% url 'zavuch_grades_export' %}" class="btn">📑 АЧЧ — ҷамъбастии чоряк</a>
-    {% endif %}
-    {% if can_school_docs or can_maorif %}
-    <a href="{% url 'excellent_students' %}" class="btn">⭐ Аълохон</a>
+    <a href="{% url 'workload_tabel' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📋 Табели сарборӣ</a>
+    <a href="{% url 'class_reports' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📊 Ҳисоботи синфҳо</a>
+    <a href="{% url 'student_movements' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">🔁 Омад-рафт</a>
+    <a href="{% url 'zavuch_report_export' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📈 Ҳисоботи завуч</a>
+    <a href="{% url 'zavuch_grades_export' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📑 АЧЧ — ҷамъбастии чоряк</a>
+    <a href="{% url 'excellent_students' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">⭐ Аълохон</a>
     {% endif %}
     {% if can_maorif %}
     <a href="{% url 'maorif_reports' %}" class="btn">🏛 Ҳисоботи маориф</a>
@@ -108,7 +118,7 @@
 </div>
 {% else %}
 <div class="doc-card">
-    <p>Барои дидани ҳуҷҷатҳо бояд ба муассиса вобаста бошед.</p>
+    <p>{% if can_pick_school %}Барои дидани ҳуҷҷатҳо аввал муассисаро интихоб кунед.{% else %}Барои дидани ҳуҷҷатҳо бояд ба муассиса вобаста бошед.{% endif %}</p>
 </div>
 {% endif %}
 {% endblock %}

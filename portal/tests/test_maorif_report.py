@@ -99,6 +99,38 @@ class MaorifReportExportTests(GoldenBase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, reverse('maorif_reports'))
 
+    def test_district_users_pick_school_on_documents_page(self):
+        # Маориф staff and the district director get a school selector;
+        # once a school is chosen every document link carries school_id.
+        staff = make_user('maorif_staff_docs', staff=True)
+        for user in (self.director, staff):
+            self.client.force_login(user)
+            resp = self.client.get(reverse('school_documents'))
+            self.assertEqual(resp.status_code, 200, user.username)
+            self.assertContains(resp, 'name="school_id"')
+            resp = self.client.get(
+                reverse('school_documents'),
+                {'school_id': self.school_a.id})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.context['school'], self.school_a)
+            self.assertContains(
+                resp, f'school_id={self.school_a.id}')
+            self.assertContains(resp, 'Ҳисоботи завуч')
+
+    def test_district_users_download_school_reports(self):
+        # The per-school exports that used to kick district users back to
+        # the dashboard now accept ?school_id= — read-only access.
+        staff = make_user('maorif_staff_zr', staff=True)
+        for user in (self.director, staff):
+            self.client.force_login(user)
+            for url_name in ('zavuch_report_export',
+                             'zavuch_grades_export'):
+                resp = self.client.get(reverse(url_name), {
+                    'quarter': 1, 'school_id': self.school_a.id})
+                self.assertEqual(resp.status_code, 200,
+                                 f'{user.username} {url_name}')
+                self.assertIn('attachment', resp['Content-Disposition'])
+
     def test_reports_page_lists_files(self):
         self.client.force_login(self.director)
         resp = self.client.get(reverse('maorif_reports'), {'quarter': 2})

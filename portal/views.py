@@ -7742,7 +7742,10 @@ def school_documents(request):
             or role in (settings.ROLE_DIRECTOR, settings.ROLE_PRINCIPAL)):
         return redirect('dashboard')
 
-    school = get_user_school(request.user)
+    school = _class_report_school(request)
+    can_pick_school = _maorif_report_access(request.user)
+    schools = sorted(
+        academic_schools(), key=lambda s: s.name) if can_pick_school else []
     workload = []
     if school:
         class_subjects = ClassSubject.objects.filter(
@@ -7825,6 +7828,8 @@ def school_documents(request):
         'workload': workload,
         'can_maorif': can_maorif,
         'can_school_docs': _tabel_access(request.user),
+        'can_pick_school': can_pick_school,
+        'schools': schools,
     })
 
 
@@ -7837,18 +7842,19 @@ def school_documents(request):
 # ---------------------------------------------------------------------------
 
 def _tabel_access(user):
-    """Same audience as school_documents: superuser, staff, school zavuch
-    or the school director (principal — read/export only; saves stay
-    behind _can_manage_school / the zavuch-only write checks)."""
+    """Same audience as school_documents: superuser, staff, school zavuch,
+    the school director (principal) or the district director (мудири
+    маориф — read/export only; saves stay behind _can_manage_school /
+    the zavuch-only write checks)."""
     role = get_user_role(user)
     return (user.is_superuser or user.is_staff or _is_zavuch(user, role)
-            or role == settings.ROLE_PRINCIPAL)
+            or role in (settings.ROLE_PRINCIPAL, settings.ROLE_DIRECTOR))
 
 
 def _tabel_school(request):
-    """User's own school; a superuser may inspect another school via id."""
+    """User's own school; district viewers may inspect another via id."""
     school = get_user_school(request.user)
-    if request.user.is_superuser:
+    if _maorif_report_access(request.user):
         school_id = request.GET.get('school_id') or request.POST.get('school_id')
         if school_id:
             try:
@@ -7856,6 +7862,14 @@ def _tabel_school(request):
             except (ValueError, School.DoesNotExist):
                 pass
     return school
+
+
+def _has_school_doc_access(user, school):
+    """Read-only school-documents access: own school via has_school_access,
+    or any district viewer (superuser/staff/director) inspecting a school.
+    Write endpoints keep has_school_access/_can_manage_school — district
+    viewers never get those through this helper."""
+    return has_school_access(user, school) or _maorif_report_access(user)
 
 
 def _tabel_month(request):
@@ -7906,7 +7920,7 @@ def workload_tabel(request):
     if not _tabel_access(request.user):
         return redirect('dashboard')
     school = _tabel_school(request)
-    if school and not has_school_access(request.user, school):
+    if school and not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     year, month, invalid_month = _tabel_month(request)
     if invalid_month:
@@ -8069,7 +8083,7 @@ def workload_tabel_export(request):
     if not _tabel_access(request.user):
         return redirect('dashboard')
     school = _tabel_school(request)
-    if not school or not has_school_access(request.user, school):
+    if not school or not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     year, month, invalid_month = _tabel_month(request)
     if invalid_month:
@@ -8097,10 +8111,9 @@ def workload_tabel_export(request):
 # ---------------------------------------------------------------------------
 
 def _class_report_school(request):
-    """User's own school; superusers and district directors may pick one."""
+    """User's own school; district viewers may pick one via ?school_id=."""
     school = get_user_school(request.user)
-    role = get_user_role(request.user)
-    if request.user.is_superuser or role == settings.ROLE_DIRECTOR:
+    if _maorif_report_access(request.user):
         school_id = request.GET.get('school_id') or request.POST.get('school_id')
         if school_id:
             try:
@@ -8148,14 +8161,13 @@ def class_reports(request):
     if not _tabel_access(request.user):
         return redirect('dashboard')
     school = _class_report_school(request)
-    if school and not has_school_access(request.user, school):
+    if school and not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     quarter, invalid_quarter = _class_report_quarter(request)
     if invalid_quarter:
         messages.warning(request, 'Чораки нодуруст — чораки ҷорӣ нишон дода шуд.')
 
-    can_pick_school = request.user.is_superuser or (
-        get_user_role(request.user) == settings.ROLE_DIRECTOR)
+    can_pick_school = _maorif_report_access(request.user)
     schools = sorted(
         academic_schools(), key=lambda s: s.name) if can_pick_school else []
     classes = _class_report_classes(school) if school else []
@@ -8180,7 +8192,7 @@ def class_report_export(request):
     if not _tabel_access(request.user):
         return redirect('dashboard')
     school = _class_report_school(request)
-    if not school or not has_school_access(request.user, school):
+    if not school or not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
     class_name = normalize_class_name(request.GET.get('class_name') or '')
@@ -8220,7 +8232,7 @@ def zavuch_report_export(request):
     if not school:
         messages.warning(request, 'Ҳисобот учун муассисани танланг.')
         return redirect('dashboard')
-    if not has_school_access(request.user, school):
+    if not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
     output = build_zavuch_report_workbook(school, quarter)
@@ -8251,7 +8263,7 @@ def zavuch_grades_export(request):
     if not school:
         messages.warning(request, 'Ҳисобот учун муассисани танланг.')
         return redirect('dashboard')
-    if not has_school_access(request.user, school):
+    if not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
     output = build_zavuch_grades_workbook(school, quarter)
@@ -8268,28 +8280,21 @@ def zavuch_grades_export(request):
     return response
 
 
-def _excellent_access(user):
-    """⭐ Аълохон list: the school-documents audience plus the district
-    director/маориф staff (they pick a school like on Ҳисоботи синфҳо)."""
-    return _tabel_access(user) or _maorif_report_access(user)
-
-
 @login_required
 def excellent_students(request):
     """Ҳуҷҷатнигорӣ → Аълохон: preview + Excel download of the
     «Рӯйхати хонандагони аълохон (бо холи 9 ва 10)» document."""
-    if not _excellent_access(request.user):
+    if not _tabel_access(request.user):
         return redirect('dashboard')
     school = _class_report_school(request)
-    if school and not has_school_access(request.user, school):
+    if school and not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     quarter, invalid_quarter = _class_report_quarter(request)
     if invalid_quarter:
         messages.warning(
             request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
 
-    can_pick_school = request.user.is_superuser or (
-        get_user_role(request.user) == settings.ROLE_DIRECTOR)
+    can_pick_school = _maorif_report_access(request.user)
     schools = sorted(
         academic_schools(), key=lambda s: s.name) if can_pick_school else []
     data = None
@@ -8309,10 +8314,10 @@ def excellent_students(request):
 @login_required
 def excellent_students_export(request):
     """Excel download of the same list — same gate and school isolation."""
-    if not _excellent_access(request.user):
+    if not _tabel_access(request.user):
         return redirect('dashboard')
     school = _class_report_school(request)
-    if not school or not has_school_access(request.user, school):
+    if not school or not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
     from .excellent import build_excellent_workbook

@@ -10,9 +10,10 @@ from openpyxl import load_workbook
 
 from portal.curriculum_hours import UNGRADED_SUBJECTS
 from portal.excellent import collect_excellent_students
-from portal.models import ClassSubject, normalize_subject
+from portal.models import ClassSubject, QuarterGrade, normalize_subject
 
-from .helpers import GoldenBase, make_quarter_grade, make_student
+from .helpers import (D_Q1, GoldenBase, make_grade, make_quarter_grade,
+                      make_student, make_user)
 
 
 class ExcellentStudentsTests(GoldenBase):
@@ -49,6 +50,19 @@ class ExcellentStudentsTests(GoldenBase):
                            quarter=1, grade=8)
         data = collect_excellent_students(self.school_a, 1)
         self.assertNotIn(self.s1, data['students'])
+
+    def test_live_provisional_mark_fills_missing_row(self):
+        # Mirrors the Ҳисобот: no stored QuarterGrade for МАТЕМАТИКА, but
+        # a daily 10 makes the journal's Ҷ provisional value a 10 — the
+        # student still makes the list.
+        self._fill(self.s1, self.school_a, skip='МАТЕМАТИКА')
+        make_grade(self.s1, subject='МАТЕМАТИКА', score=10, date=D_Q1)
+        # Simulate the stored row never having been written (bulk import,
+        # a failed recalc — however the gap arose in production).
+        QuarterGrade.objects.filter(
+            student=self.s1, subject='МАТЕМАТИКА', quarter=1).delete()
+        data = collect_excellent_students(self.school_a, 1)
+        self.assertIn(self.s1, data['students'])
 
     def test_missing_subject_excludes(self):
         self._fill(self.s1, self.school_a, skip='МАТЕМАТИКА')
@@ -106,6 +120,22 @@ class ExcellentStudentsViewTests(GoldenBase):
         resp = self.client.get(reverse('excellent_students'), {'quarter': 1})
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Фирӯз Раҳимов')
+
+    def test_maorif_staff_picks_school(self):
+        # The маориф staff account (no school of its own) gets the same
+        # picker as the director and can view/export any school.
+        self._seed()
+        staff = make_user('maorif_staff_ex', staff=True)
+        self.client.force_login(staff)
+        resp = self.client.get(reverse('excellent_students'), {'quarter': 1})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'name="school_id"')
+        resp = self.client.get(reverse('excellent_students'), {
+            'quarter': 1, 'school_id': self.school_a.id})
+        self.assertContains(resp, 'Фирӯз Раҳимов')
+        resp = self.client.get(reverse('excellent_students_export'), {
+            'quarter': 1, 'school_id': self.school_a.id})
+        self.assertEqual(resp.status_code, 200)
 
     def test_director_picks_school(self):
         self._seed()

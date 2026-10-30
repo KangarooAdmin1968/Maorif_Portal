@@ -8389,6 +8389,14 @@ def _movement_redirect(request, school, quarter):
     return redirect(url + '#records')
 
 
+def _movement_list_title(school):
+    """Official header shown above the Қайдҳо list and reused by the
+    Excel export — «Рӯйхати хонандагони ба муассиса қабулшуда…»"""
+    ay = academic_year_start()
+    return ('Рӯйхати хонандагони ба муассиса қабулшуда ва аз муассиса '
+            f'хориҷшуда дар соли таҳсили {ay}–{ay + 1} дар {school.name}')
+
+
 @login_required
 def student_movements(request):
     """📋 Омад-рафт — the school's student mobility journal.
@@ -8432,8 +8440,82 @@ def student_movements(request):
         'class_options': class_options,
         'can_edit': can_edit,
         'edit_row': edit_row,
+        'list_title': _movement_list_title(school) if school else '',
         'today': timezone.localdate().isoformat(),
     })
+
+
+@login_required
+def movements_export(request):
+    """📊 Excel of the Қайдҳо list — same quarter scope and official
+    header as the printed journal page."""
+    school, _, _, allowed = _movement_scope(request)
+    if not allowed or school is None:
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    from .movements import collect_movements
+    summary = collect_movements(school, quarter)
+
+    thin = Side(style='thin')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Омад-рафт'
+    for col, width in zip('ABCDEFG', (6, 13, 32, 10, 10, 12, 34)):
+        ws.column_dimensions[col].width = width
+
+    ws.merge_cells('A1:G1')
+    cell = ws.cell(row=1, column=1, value=_movement_list_title(school))
+    cell.font = Font(size=12, bold=True)
+    cell.alignment = Alignment(horizontal='center', vertical='center',
+                               wrap_text=True)
+    ws.row_dimensions[1].height = 48
+
+    header_font = Font(size=11, bold=True)
+    for c, label in enumerate(
+            ('№', 'Сана', 'Ному насаб', 'Синф', 'Навъ', 'Ҷинс', 'Эзоҳ'),
+            start=1):
+        cell = ws.cell(row=3, column=c, value=label)
+        cell.font = header_font
+        cell.border = border
+        cell.alignment = Alignment(horizontal='center', vertical='center',
+                                   wrap_text=True)
+        cell.fill = PatternFill('solid', start_color='E8EEF7')
+
+    r = 4
+    for i, m in enumerate(summary['movements'], start=1):
+        nav = 'Омад' if m['movement_type'] == 'arrival' else 'Рафт'
+        jins = {'F': 'Духтар', 'M': 'Писар'}.get(m['gender'], '—')
+        values = (i, m['date'].strftime('%d.%m.%Y'), m['student_name'],
+                  m['class_name'], nav, jins, m['note'] or '')
+        for c, value in enumerate(values, start=1):
+            cell = ws.cell(row=r, column=c, value=value)
+            cell.font = Font(size=11)
+            cell.border = border
+            cell.alignment = Alignment(
+                horizontal='left' if c in (3, 7) else 'center',
+                vertical='center', wrap_text=True)
+        r += 1
+    if not summary['movements']:
+        ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=7)
+        cell = ws.cell(row=4, column=1,
+                       value='Дар ин чоряк ҳаракат сабт нашудааст.')
+        cell.font = Font(size=11)
+        r += 1
+
+    r += 1
+    for label in ('Директори муассиса: ______________',
+                  'Муовини директор оид ба таълим: ______________'):
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+        ws.cell(row=r, column=1, value=label).font = Font(size=11)
+        r += 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return _maorif_xlsx_response(
+        output,
+        f"Омад-рафт_{get_school_number(school)}_чорак{quarter}.xlsx")
 
 
 @login_required

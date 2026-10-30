@@ -265,3 +265,56 @@ class MovementExportTests(GoldenBase):
         self.assertEqual(
             [ws[f'{c}{r}'].value for c in 'CDEFGH'],
             [2, 1, 0, 0, 0, 0])
+
+
+class MovementListExportTests(GoldenBase):
+    """The official «Рӯйхати хонандагони…» header and the Excel export."""
+
+    def test_page_shows_official_list_title(self):
+        from portal.views import academic_year_start
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('student_movements'), {'quarter': 1})
+        ay = academic_year_start()
+        self.assertContains(
+            resp,
+            'Рӯйхати хонандагони ба муассиса қабулшуда ва аз муассиса '
+            f'хориҷшуда дар соли таҳсили {ay}–{ay + 1} '
+            f'дар {self.school_a.name}')
+
+    def test_excel_export_carries_header_and_rows(self):
+        StudentMovement.objects.create(
+            school=self.school_a, student_name='Мадина Каримова',
+            class_name='7-А', gender='F', movement_type='departure',
+            date=D_Q1, academic_year=D_Q1.year, note='Ҳуҷҷат №5')
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('movements_export'), {'quarter': 1})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('attachment', resp['Content-Disposition'])
+        ws = load_workbook(io.BytesIO(resp.content)).active
+        self.assertIn('Рӯйхати хонандагони ба муассиса қабулшуда',
+                      ws['A1'].value)
+        self.assertIn(self.school_a.name, ws['A1'].value)
+        self.assertEqual(
+            [ws.cell(row=3, column=c).value for c in range(1, 8)],
+            ['№', 'Сана', 'Ному насаб', 'Синф', 'Навъ', 'Ҷинс', 'Эзоҳ'])
+        self.assertEqual(
+            [ws.cell(row=4, column=c).value for c in range(1, 8)],
+            [1, D_Q1.strftime('%d.%m.%Y'), 'Мадина Каримова',
+             '7-А', 'Рафт', 'Духтар', 'Ҳуҷҷат №5'])
+
+    def test_excel_export_scoped_to_school_and_quarter(self):
+        # Other school's row and another quarter's row stay out.
+        StudentMovement.objects.create(
+            school=self.school_b, student_name='Ҷаҳонгир Назаров',
+            class_name='7-Б', gender='M', movement_type='arrival',
+            date=D_Q1, academic_year=D_Q1.year)
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('movements_export'), {'quarter': 2})
+        self.assertEqual(resp.status_code, 200)
+        ws = load_workbook(io.BytesIO(resp.content)).active
+        self.assertIn('сабт нашудааст', ws['A4'].value)
+
+    def test_teacher_denied_export(self):
+        self.client.force_login(self.teacher_a)
+        resp = self.client.get(reverse('movements_export'), {'quarter': 1})
+        self.assertEqual(resp.status_code, 302)

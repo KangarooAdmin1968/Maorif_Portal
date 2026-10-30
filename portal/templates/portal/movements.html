@@ -7,6 +7,8 @@
   .nz-toolbar select, .nz-toolbar input { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; }
   .doc-card { background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem; padding: 1rem 1.25rem; margin-bottom: 1.25rem; }
   .doc-card h2 { margin: 0 0 .6rem; font-size: 1.05rem; color: #003366; }
+  .doc-card h2.list-title { font-size: .95rem; font-weight: 600; line-height: 1.35; }
+  @media print { .doc-card h2.list-title { text-align: center; font-size: 12pt; } }
   table.nz-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
   table.nz-table th, table.nz-table td { border: 1px solid #d1d5db; padding: .4rem .65rem; text-align: left; vertical-align: top; }
   table.nz-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
@@ -55,6 +57,7 @@
         <noscript><button type="submit" class="btn">Намоиш</button></noscript>
     </form>
     <a href="{% url 'nazorat' %}{% if district_view and school %}?school_id={{ school.id }}{% endif %}" class="btn">🔎 Назорат</a>
+    <a href="{% url 'movements_export' %}?quarter={{ quarter }}{% if district_view and school %}&school_id={{ school.id }}{% endif %}" class="btn">📊 Excel</a>
     <button type="button" class="btn" onclick="window.print()">🖨️ Чоп кардан</button>
 </div>
 
@@ -101,7 +104,7 @@
 </div>
 
 <div class="doc-card records-card" id="records">
-    <h2>Қайдҳо</h2>
+    <h2 class="list-title">{{ list_title }}</h2>
     {% if summary.movements %}
     <table class="nz-table">
         <thead><tr>

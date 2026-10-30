@@ -79,6 +79,7 @@ urlpatterns = [
     path('monitoring-dashboard/', views.monitoring_dashboard, name='monitoring_dashboard'),
     path('nazorat/', views.nazorat, name='nazorat'),
     path('schools/documents/movements/', views.student_movements, name='student_movements'),
+    path('schools/documents/movements/export/', views.movements_export, name='movements_export'),
     path('schools/documents/movements/add/', views.movement_add, name='movement_add'),
     path('schools/documents/movements/delete/', views.movement_delete, name='movement_delete'),
     path('schools/documents/movements/edit/', views.movement_edit, name='movement_edit'),

@@ -100,7 +100,7 @@
     </table>
 </div>
 
-<div class="doc-card records-card">
+<div class="doc-card records-card" id="records">
     <h2>Қайдҳо</h2>
     {% if summary.movements %}
     <table class="nz-table">
@@ -128,7 +128,7 @@
                 {% if can_edit %}
                 <td class="center no-print">
                     <div style="display:flex; gap:.25rem; justify-content:center;">
-                        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}&edit={{ m.id }}"
+                        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}&edit={{ m.id }}#entry-form"
                            class="btn" style="padding:.1rem .45rem;" title="Таҳрир">✏️</a>
                         <form method="post" action="{% url 'movement_delete' %}"
                               onsubmit="return confirm('Қайд нест карда шавад?');">
@@ -151,7 +151,7 @@
 </div>
 
 {% if can_edit %}
-<div class="doc-card no-print">
+<div class="doc-card no-print" id="entry-form">
     <h2>{% if edit_row %}Қайдни таҳрир кардан{% else %}Қайди нав (дастӣ){% endif %}</h2>
     <form method="post" action="{% if edit_row %}{% url 'movement_edit' %}{% else %}{% url 'movement_add' %}{% endif %}" class="nz-toolbar">
         {% csrf_token %}
@@ -188,7 +188,7 @@
         </label>
         <button type="submit" class="btn btn-success">Сабт кардан</button>
         {% if edit_row %}
-        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}" class="btn">Бекор кардан</a>
+        <a href="{% url 'student_movements' %}?quarter={{ quarter }}{% if district_view %}&school_id={{ school.id }}{% endif %}#records" class="btn">Бекор кардан</a>
         {% endif %}
     </form>
 </div>

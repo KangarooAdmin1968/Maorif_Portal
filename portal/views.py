@@ -3516,6 +3516,12 @@ def grade_entry(request, school_id, class_name, subject):
         back = f"?date={date.isoformat()}"
         if post_lesson is not None:
             back += f"&lesson={post_lesson.id}"
+        # The submit may come from the Ҷадвали чорякҳо tab — the hidden
+        # `tab` field lets the redirect reopen that tab instead of
+        # always landing on Холҳои ҳаррӯза.
+        tab = request.POST.get('tab', '')
+        if tab in ('daily', 'quarterly'):
+            back += f"&tab={tab}"
         return redirect(
             reverse('grade_entry', kwargs={
                 'school_id': school.id, 'class_name': class_name, 'subject': subject
@@ -5387,7 +5393,23 @@ def calc_quarter_from_daily(request, school_id, class_name, subject):
     # saved on this path, so ranking caches need explicit invalidation.
     from .signals import invalidate_ranking_caches  # local import
     invalidate_ranking_caches(None)
-    return redirect('grade_entry', school_id=school.id, class_name=class_name, subject=subject)
+    # Return to the same journal state the button was pressed in: the
+    # posted date and the Ҷадвали чорякҳо tab (hidden `tab` field).
+    back = []
+    date_str = request.POST.get('date', '').strip()
+    try:
+        back.append('date=' + datetime.date.fromisoformat(date_str).isoformat())
+    except ValueError:
+        pass
+    tab = request.POST.get('tab', '') or request.GET.get('tab', '')
+    if tab in ('daily', 'quarterly'):
+        back.append(f'tab={tab}')
+    url = reverse('grade_entry', kwargs={
+        'school_id': school.id, 'class_name': class_name, 'subject': subject
+    })
+    if back:
+        url += '?' + '&'.join(back)
+    return redirect(url)
 
 
 @login_required
@@ -8364,7 +8386,7 @@ def _movement_redirect(request, school, quarter):
     url = f"{reverse('student_movements')}?quarter={quarter}"
     if school and _maorif_report_access(request.user):
         url += f"&school_id={school.id}"
-    return redirect(url)
+    return redirect(url + '#records')
 
 
 @login_required

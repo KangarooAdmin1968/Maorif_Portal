@@ -8,7 +8,8 @@ the stored QuarterGrade wins, and a subject with no stored row is filled
 with the journal's live provisional value (the Ҷ marker) derived from
 daily marks — so the list can never disagree with the report a zavuch
 prints. A subject with no mark at all still disqualifies the student.
-Grade-1 sticker classes and UNGRADED_SUBJECTS never take part.
+Only the class's own graded subjects decide; Grade-1 sticker classes
+and UNGRADED_SUBJECTS never take part.
 """
 import io
 from collections import defaultdict
@@ -69,11 +70,11 @@ def collect_excellent_students(school, quarter, today=None):
         grades = marks.get(st.id, {})
         if not subjects or not grades:
             continue
+        # Only her own class's subjects decide — a mark in a subject
+        # the class does not study never shows in her Ҳисобот row,
+        # so it cannot keep her off this list either.
         if any(grades.get(subj) not in EXCELLENT_MARKS
                for subj in subjects):
-            continue
-        # Stray marks in non-curricular subjects count too.
-        if any(g not in EXCELLENT_MARKS for g in grades.values()):
             continue
         result.append(st)
     result.sort(key=lambda s: (class_numeric_part(s.class_name) or 0,

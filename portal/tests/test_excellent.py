@@ -64,6 +64,16 @@ class ExcellentStudentsTests(GoldenBase):
         data = collect_excellent_students(self.school_a, 1)
         self.assertIn(self.s1, data['students'])
 
+    def test_stray_mark_outside_curriculum_does_not_exclude(self):
+        # A stored mark in a subject her class does not study (an old
+        # or deactivated ClassSubject) never shows in her Ҳисобот row —
+        # so it must not keep her off the аъло list either.
+        self._fill(self.s1, self.school_a)
+        make_quarter_grade(self.s1, '7-А', 'ФАНИ НОМАЪЛУМ',
+                           quarter=1, grade=4)
+        data = collect_excellent_students(self.school_a, 1)
+        self.assertIn(self.s1, data['students'])
+
     def test_missing_subject_excludes(self):
         self._fill(self.s1, self.school_a, skip='МАТЕМАТИКА')
         data = collect_excellent_students(self.school_a, 1)

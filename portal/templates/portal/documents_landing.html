@@ -48,6 +48,9 @@
     <a href="{% url 'zavuch_report_export' %}" class="btn">📈 Ҳисоботи завуч</a>
     <a href="{% url 'zavuch_grades_export' %}" class="btn">📑 АЧЧ — ҷамъбастии чоряк</a>
     {% endif %}
+    {% if can_school_docs or can_maorif %}
+    <a href="{% url 'excellent_students' %}" class="btn">⭐ Аълохон</a>
+    {% endif %}
     {% if can_maorif %}
     <a href="{% url 'maorif_reports' %}" class="btn">🏛 Ҳисоботи маориф</a>
     {% endif %}

@@ -8268,6 +8268,60 @@ def zavuch_grades_export(request):
     return response
 
 
+def _excellent_access(user):
+    """⭐ Аълохон list: the school-documents audience plus the district
+    director/маориф staff (they pick a school like on Ҳисоботи синфҳо)."""
+    return _tabel_access(user) or _maorif_report_access(user)
+
+
+@login_required
+def excellent_students(request):
+    """Ҳуҷҷатнигорӣ → Аълохон: preview + Excel download of the
+    «Рӯйхати хонандагони аълохон (бо холи 9 ва 10)» document."""
+    if not _excellent_access(request.user):
+        return redirect('dashboard')
+    school = _class_report_school(request)
+    if school and not has_school_access(request.user, school):
+        return redirect('dashboard')
+    quarter, invalid_quarter = _class_report_quarter(request)
+    if invalid_quarter:
+        messages.warning(
+            request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
+
+    can_pick_school = request.user.is_superuser or (
+        get_user_role(request.user) == settings.ROLE_DIRECTOR)
+    schools = sorted(
+        academic_schools(), key=lambda s: s.name) if can_pick_school else []
+    data = None
+    if school:
+        from .excellent import collect_excellent_students
+        data = collect_excellent_students(school, quarter)
+    return render(request, 'portal/excellent_students.html', {
+        'school': school,
+        'schools': schools,
+        'can_pick_school': can_pick_school,
+        'quarter': quarter,
+        'quarters': [1, 2, 3, 4],
+        'data': data,
+    })
+
+
+@login_required
+def excellent_students_export(request):
+    """Excel download of the same list — same gate and school isolation."""
+    if not _excellent_access(request.user):
+        return redirect('dashboard')
+    school = _class_report_school(request)
+    if not school or not has_school_access(request.user, school):
+        return redirect('dashboard')
+    quarter, _ = _class_report_quarter(request)
+    from .excellent import build_excellent_workbook
+    output = build_excellent_workbook(school, quarter)
+    return _maorif_xlsx_response(
+        output,
+        f"Аълохон_{get_school_number(school)}_чорак{quarter}.xlsx")
+
+
 def _maorif_report_access(user):
     """District summary: superuser, маориф staff and the district director.
 

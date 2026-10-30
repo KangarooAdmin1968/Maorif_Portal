@@ -1,0 +1,107 @@
+{% extends 'portal/base.html' %}
+{% block title %}Аълохон{% endblock %}
+{% block extra_head %}
+<style>
+  .cr-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+  .cr-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .cr-toolbar select { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; min-width: 12rem; }
+  .doc-card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem;
+    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  .doc-card h2 { margin: 0 0 .75rem; font-size: 1.05rem; color: #003366; }
+  table.ex-table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  table.ex-table th, table.ex-table td { border: 1px solid #d1d5db; padding: .45rem .7rem; text-align: left; }
+  table.ex-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
+  table.ex-table td.center { text-align: center; }
+  .quarter-labels { font-size: .78rem; color: #6b7280; margin-top: .6rem; }
+  .sign-area { display: none; }
+  @media print {
+    .navbar, .site-footer, .cr-toolbar, .messages, nav, header, footer { display: none !important; }
+    body { background: #fff; }
+    .container { max-width: 100%; padding: 0; margin: 0; }
+    .doc-card { border: none; padding: 0; }
+    .doc-card h2 { font-size: 12pt; text-align: center; }
+    table.ex-table th, table.ex-table td { border: 1px solid #000; padding: 4px 6px; }
+    .sign-area { display: block; margin-top: 2.5rem; font-size: 10pt; page-break-inside: avoid; }
+    .sign-line { display: flex; justify-content: space-between; align-items: flex-end; margin: 1.4rem 0; }
+    .sign-line .lbl { font-weight: 600; }
+    .sign-line .blank { border-bottom: 1px solid #000; min-width: 200px; height: 1rem; }
+    @page { margin: 12mm; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>⭐ Аълохон</h1>
+
+<div class="cr-toolbar no-print">
+    {% if can_pick_school %}
+    <form method="get" action="{% url 'excellent_students' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        <label>Муассиса
+            <select name="school_id" onchange="this.form.submit()">
+                <option value="">— интихоб кунед —</option>
+                {% for s in schools %}
+                <option value="{{ s.id }}"{% if school and s.id == school.id %} selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+    {% endif %}
+    {% if school %}
+    <form method="get" action="{% url 'excellent_students' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        {% if can_pick_school %}<input type="hidden" name="school_id" value="{{ school.id }}">{% endif %}
+        <label>Чоряк
+            <select name="quarter" onchange="this.form.submit()">
+                {% for q in quarters %}
+                <option value="{{ q }}"{% if q == quarter %} selected{% endif %}>{{ q }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn">Нишон додан</button></noscript>
+    </form>
+    <a class="btn btn-success" href="{% url 'excellent_students_export' %}?quarter={{ quarter }}{% if can_pick_school %}&school_id={{ school.id }}{% endif %}">⬇️ Excel</a>
+    <button type="button" class="btn" onclick="window.print()">🖨️ Чоп кардан</button>
+    {% endif %}
+    <a href="{% url 'school_documents' %}" class="btn">Ҳуҷҷатнигорӣ</a>
+</div>
+
+{% if school %}
+<div class="doc-card">
+    <h2>{{ data.title }} — чоряки {{ quarter }}</h2>
+    <table class="ex-table">
+        <thead>
+            <tr>
+                <th style="width:40px;">№</th>
+                <th>Ному насаб</th>
+                <th style="width:80px;" class="center">Синф</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for st in data.students %}
+            <tr>
+                <td class="center">{{ forloop.counter }}</td>
+                <td>{{ st.full_name }}</td>
+                <td class="center">{{ st.class_name }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3">Дар ин чоряк хонандаи аълохон ёфт нашуд.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="quarter-labels">
+        Ба рӯйхат хонандагоне дохил мешаванд, ки дар ҳамаи фанҳои баҳогузорандаи
+        синф ҳоли чорякии 9 ё 10 гирифтаанд (соли таҳсили ҷорӣ). Холи
+        вуҷуднадошта низ монеъ мешавад.
+    </p>
+
+    <div class="sign-area">
+        <div class="sign-line"><span class="lbl">Директори муассиса:</span><span class="blank"></span></div>
+        <div class="sign-line"><span class="lbl">Муовини директор оид ба таълим:</span><span class="blank"></span></div>
+    </div>
+</div>
+{% else %}
+<div class="doc-card">
+    <p>{% if can_pick_school %}Барои дидани рӯйхат аввал муассисаро интихоб кунед.{% else %}Барои дидани рӯйхат бояд ба муассиса вобаста бошед.{% endif %}</p>
+</div>
+{% endif %}
+{% endblock %}

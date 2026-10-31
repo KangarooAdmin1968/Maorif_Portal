@@ -8756,9 +8756,16 @@ def academic_years(request):
 
     years_data = []
     if school is not None:
-        from .quarter_close import (archive_path,
+        from .quarter_close import (archive_path, auto_close_due,
                                     collect_academic_years,
                                     collect_quarter_close)
+        # Automatic closeout: a quarter whose grading window has ended
+        # locks itself (with archive) the next time this page opens.
+        for q, ay in auto_close_due(school):
+            messages.info(
+                request,
+                f'Чоряки {q} соли {ay}-{ay + 1} муддати баҳогузорӣ '
+                'гузашта буд — автоматик ҷамъбаст шуд.')
         for ay in collect_academic_years(school):
             quarters = []
             for q in (1, 2, 3, 4):

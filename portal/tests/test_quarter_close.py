@@ -13,7 +13,8 @@ from django.urls import reverse
 from openpyxl import load_workbook
 
 from portal.models import QuarterLock
-from portal.quarter_close import (archive_path, collect_quarter_close,
+from portal.quarter_close import (archive_path, auto_close_due,
+                                  collect_quarter_close,
                                   save_quarter_archive)
 
 from .helpers import (GoldenBase, MATH, TAJIK, make_class_subject,
@@ -182,3 +183,51 @@ class QuarterCloseTests(GoldenBase):
         self.assertIn('spreadsheetml', resp['Content-Type'])
         self.assertTrue(archive_path(
             self.school_a, 1, self.ay).exists())
+
+    # ------------------------------------------------------- auto close
+
+    def _q2_start(self):
+        """First day of Q2 — Q1's grading window ended the day before."""
+        from portal.academic_calendar import quarter_windows
+        return quarter_windows(self.ay)[2][0]
+
+    def test_auto_close_closes_due_quarter(self):
+        closed = auto_close_due(self.school_a, today=self._q2_start())
+        self.assertEqual(closed, [(1, self.ay)])
+        self.assertTrue(collect_quarter_close(
+            self.school_a, 1, self.ay)['closed'])
+        self.assertTrue(archive_path(self.school_a, 1, self.ay).exists())
+        # Q2 itself is not due yet.
+        self.assertFalse(collect_quarter_close(
+            self.school_a, 2, self.ay)['closed'])
+
+    def test_auto_close_skips_open_window(self):
+        from portal.academic_calendar import quarter_windows
+        inside_q1 = quarter_windows(self.ay)[1][0]
+        self.assertEqual(
+            auto_close_due(self.school_a, today=inside_q1), [])
+        self.assertFalse(QuarterLock.objects.filter(
+            school=self.school_a).exists())
+
+    def test_auto_close_never_relocks_reopened(self):
+        """A маориф reopen leaves locked=False rows — automation must
+        leave that quarter open for the zavuch to close by hand."""
+        self._close_q1()
+        QuarterLock.objects.filter(
+            school=self.school_a, quarter=1,
+            academic_year=self.ay).update(locked=False)
+        closed = auto_close_due(self.school_a, today=self._q2_start())
+        self.assertEqual(closed, [])
+        self.assertFalse(QuarterLock.objects.filter(
+            school=self.school_a, quarter=1, locked=True).exists())
+
+    def test_close_due_quarters_command(self):
+        import io as _io
+        from django.core.management import call_command
+        out = _io.StringIO()
+        # Dry-run writes nothing even when the window has passed —
+        # force it by running with --apply only.
+        call_command('close_due_quarters', stdout=out)
+        self.assertIn('DRY-RUN', out.getvalue())
+        self.assertFalse(QuarterLock.objects.filter(
+            school=self.school_a).exists())

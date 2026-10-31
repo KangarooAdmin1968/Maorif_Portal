@@ -84,6 +84,11 @@
                     {% endif %}
                 {% elif can_close and q.ended %}
                     <a class="btn-close-q" href="{% url 'quarter_close' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">🔒 Ҷамъбаст</a>
+                    {% if q.grading_still_open %}
+                    <span style="font-size:.78rem; color:#92400e;">ҳануз вақт ҳаст — баҳогузорӣ то {{ q.grading_until|date:"d.m.Y" }}</span>
+                    {% else %}
+                    <span style="font-size:.78rem; color:#b91c1c;">муддат гузашта — бо аввалин дидан автоматик ҷамъбаст мешавад</span>
+                    {% endif %}
                 {% elif can_close %}
                     <span style="font-size:.8rem; color:#9ca3af;">{% if q.not_started %}Чоряк ҳануз оғоз нашудааст{% else %}Чоряк идома дорад{% endif %}</span>
                 {% endif %}

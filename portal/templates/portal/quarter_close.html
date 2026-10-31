@@ -42,7 +42,9 @@
     {% if qs.missing_total == 0 %}
         <p class="ok-note">✔ Ҳамаи хонандагон холи чоряк гирифтаанд.</p>
     {% else %}
-        <p style="color:#b91c1c; font-weight:600;">⚠ {{ qs.missing_total }} баҳогузорӣ ҳануз анҷом наёфтааст — ҷамъбаст мумкин, лекин онҳо бе хол мемонанд.</p>
+        <p style="color:#b91c1c; font-weight:600;">⚠ {{ qs.missing_total }} баҳогузорӣ ҳануз анҷом наёфтааст — ҷамъбаст мумкин, лекин онҳо бе хол мемонанд.
+            <a href="{% url 'ungraded_students' %}?quarter={{ qs.quarter }}{% if school %}&school_id={{ school.id }}{% endif %}">⚠️ Рӯйхати хонандагони бебаҳо →</a>
+        </p>
         <table class="qc-table">
             <thead><tr>
                 <th style="width:100px;">Синф</th>

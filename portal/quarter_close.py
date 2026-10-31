@@ -143,6 +143,40 @@ def close_quarter(school, quarter, year):
     return n
 
 
+def auto_close_due(school, today=None):
+    """Close every quarter whose grading window has already ended.
+
+    A quarter becomes due the day the next one opens (01.11-style
+    breaks still write to the finished quarter until then). Two guards
+    keep the action safe:
+
+    * already closed quarters are skipped;
+    * a quarter that has ANY QuarterLock rows is skipped — a маориф
+      «Кушодан» leaves locked=False rows behind, and a reopened
+      quarter must never be silently re-locked by automation; the
+      zavuch closes it again by hand.
+
+    Returns [(quarter, year)] for the quarters it actually closed
+    (each gets its frozen Excel archive, exactly like a manual close).
+    """
+    from .views import academic_year_start  # local import avoids cycles
+    today = today or datetime.date.today()
+    year = academic_year_start(today)
+    closed = []
+    for quarter in (1, 2, 3, 4):
+        status = collect_quarter_close(school, quarter, year, today)
+        if status['closed'] or today <= status['grading_until']:
+            continue
+        if QuarterLock.objects.filter(
+                school=school, quarter=quarter,
+                academic_year=year).exists():
+            continue
+        close_quarter(school, quarter, year)
+        save_quarter_archive(school, quarter, year)
+        closed.append((quarter, year))
+    return closed
+
+
 def reopen_quarter(school, quarter, year):
     """Маориф/админ undo: keeps the lock rows (locked=False) so the
     admin history shows who closed the quarter and when."""

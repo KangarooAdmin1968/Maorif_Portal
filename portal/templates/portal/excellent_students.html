@@ -27,7 +27,17 @@
     .sign-line { display: flex; justify-content: space-between; align-items: flex-end; margin: 1.4rem 0; }
     .sign-line .lbl { font-weight: 600; }
     .sign-line .blank { border-bottom: 1px solid #000; min-width: 200px; height: 1rem; }
-    @page { margin: 12mm; }
+    /* Force portrait A4 and let the table take the full sheet width —
+       the official list is designed for китобий varak. */
+    body, main, .container, .doc-card {
+      width: auto !important; max-width: none !important;
+      margin: 0 !important; padding: 0 !important;
+    }
+    table.ex-table { width: 100% !important; font-size: 11.5pt; }
+    table.ex-table th, table.ex-table td { padding: 6px 9px; }
+    table.ex-table th:first-child, table.ex-table td:first-child { width: 9mm; }
+    table.ex-table th:last-child, table.ex-table td:last-child { width: 24mm; }
+    @page { size: A4 portrait; margin: 10mm; }
   }
 </style>
 {% endblock %}

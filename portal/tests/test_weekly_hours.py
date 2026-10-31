@@ -6,6 +6,7 @@ permission and school isolation, persistence, and the single storage
 field (ClassSubject.hours_per_week — consumed by curriculum_hours).
 """
 import re
+from decimal import Decimal
 
 from django.conf import settings
 from django.test import TestCase
@@ -227,8 +228,42 @@ class WeeklyHoursSaveTests(GoldenBase):
     def test_rejects_negative(self):
         self._assert_rejected('-2')
 
-    def test_rejects_decimal(self):
-        self._assert_rejected('2.5')
+    def test_rejects_odd_decimal_step(self):
+        # 0.5-step domain: quarters/tenths that are not half-steps fail.
+        for raw in ('2.7', '0.7', '1.25', '2,3'):
+            self._assert_rejected(raw)
+            self.cs_a.hours_per_week = None  # reset for the next case
+
+    def test_accepts_half_step_dot_and_comma(self):
+        # Combined cross-class groups: the shared weekly hour is split
+        # as 0.5 per class — both «0.5» and «0,5» input spellings work.
+        for raw in ('0.5', '0,5', '2.5', '1.0'):
+            self._post_hours(self.cs_a, raw)
+            self.cs_a.refresh_from_db()
+            self.assertEqual(self.cs_a.hours_per_week,
+                             Decimal(raw.replace(',', '.')))
+            self.cs_a.hours_per_week = None
+            self.cs_a.save()
+
+    def test_half_step_displayed_and_resolved(self):
+        from decimal import Decimal as _D
+        self.cs_a.hours_per_week = _D('0.5')
+        self.cs_a.save()
+        # Canonical resolver returns the stored half-step.
+        self.assertEqual(weekly_hours('7-А', MATH, self.cs_a), _D('0.5'))
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(reverse('lesson_allocation'))
+        self.assertContains(r, 'value="0.5"')
+
+    def test_whole_decimal_displayed_as_int(self):
+        from decimal import Decimal as _D
+        self.cs_a.hours_per_week = _D('2.0')
+        self.cs_a.save()
+        # Whole stored values normalize to int everywhere — «2», not «2.0».
+        self.assertEqual(weekly_hours('7-А', MATH, self.cs_a), 2)
+        self.client.force_login(self.zavuch_a)
+        r = self.client.get(reverse('lesson_allocation'))
+        self.assertContains(r, 'value="2"')
 
     def test_rejects_above_domain_cap(self):
         self._assert_rejected(str(MAX_WEEKLY_HOURS + 1))

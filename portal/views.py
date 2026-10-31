@@ -17,7 +17,7 @@ import time
 import urllib.parse
 import datetime
 from collections import defaultdict
-from decimal import InvalidOperation
+from decimal import Decimal, InvalidOperation
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Side
@@ -43,7 +43,7 @@ from .utils import (
 )
 from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
-    weekly_hours, quarter_min_norm,
+    weekly_hours, quarter_min_norm, disp_hours,
 )
 from .tabel import (
     BAND_KEYS, MONTH_NAMES_TJ,
@@ -6693,8 +6693,9 @@ def lesson_allocation(request):
     for cs in class_subjects:
         cs.selected_profile_id = cs.allocated_teacher_id or user_to_profile.get(cs.teacher_id)
         # Explicitly saved weekly hours win; otherwise show the national
-        # curriculum recommendation as a suggested (muted) value.
-        cs.hours_display = weekly_hours(cs.class_name, cs.subject, cs)
+        # curriculum recommendation as a suggested (muted) value. str()
+        # keeps the HTML number input locale-free («0.5», not «0,5»).
+        cs.hours_display = str(weekly_hours(cs.class_name, cs.subject, cs))
         cs.group_count = sum(1 for g in cs.groups.all() if g.is_active)
 
     my_requests = list(SubjectDeactivationRequest.objects.filter(
@@ -6799,11 +6800,14 @@ def save_lesson_allocation(request):
             new_hours = None
         else:
             try:
-                new_hours = int(raw)
-            except ValueError:
+                new_hours = Decimal(raw.replace(',', '.'))
+            except InvalidOperation:
                 invalid_hours.append(cs)
                 continue
-            if not 1 <= new_hours <= MAX_WEEKLY_HOURS:
+            # 0.5 steps only: combined cross-class groups split one
+            # weekly hour into 0.5 + 0.5 per class.
+            if not (Decimal('0.5') <= new_hours <= MAX_WEEKLY_HOURS
+                    and new_hours % Decimal('0.5') == 0):
                 invalid_hours.append(cs)
                 continue
         if cs.hours_per_week != new_hours:
@@ -6816,7 +6820,7 @@ def save_lesson_allocation(request):
     if invalid_hours:
         messages.warning(
             request,
-            'Соати нодуруст рад шуд (аз 1 то %d): %s' % (
+            'Соати нодуруст рад шуд (аз 0,5 то %d, қадами 0,5): %s' % (
                 MAX_WEEKLY_HOURS,
                 ', '.join(f'{cs.class_name} {cs.subject}' for cs in invalid_hours),
             )
@@ -7692,7 +7696,7 @@ def _compute_school_readiness_payload(schools, gpa_map):
                     f"{subj}: {', '.join(sorted(set(cls), key=class_sort))}"
                     for subj, cls in sorted(subj_classes.items())
                 ],
-                'hours': hours,
+                'hours': disp_hours(hours),
                 'min_grades': min_grades,
                 'grades_done': grades_done,
                 'fulfillment': fulfillment,
@@ -7818,8 +7822,8 @@ def school_documents(request):
             workload.append({
                 'teacher': profile,
                 'items': items,
-                'total_hours': academic_hours,
-                'homeroom_hours': homeroom_hours,
+                'total_hours': disp_hours(academic_hours),
+                'homeroom_hours': disp_hours(homeroom_hours),
             })
         workload.sort(key=lambda w: w['teacher'].full_name)
 

@@ -20,7 +20,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.worksheet.page import PageMargins
 
-from .curriculum_hours import weekly_hours
+from .curriculum_hours import disp_hours, weekly_hours
 from .models import ClassSubject, TeacherProfile
 from .utils import class_numeric_part
 
@@ -195,8 +195,8 @@ def teacher_workload(school):
         rows.append({
             'teacher': profile,
             'items': items,
-            'hours': hours,
-            'total_hours': sum(hours.values()),
+            'hours': {b: disp_hours(v) for b, v in hours.items()},
+            'total_hours': disp_hours(sum(hours.values())),
             'subjects': ', '.join(subjects),
         })
     rows.sort(key=lambda r: r['teacher'].full_name)
@@ -204,14 +204,18 @@ def teacher_workload(school):
 
 
 def workload_snapshot(workload_row):
-    """JSON-serializable copy of one teacher_workload() row."""
+    """JSON-serializable copy of one teacher_workload() row.
+
+    Decimals (0.5-step weekly hours) become floats — a JSONField cannot
+    store Decimal directly."""
     return {
         'items': [
             {'subject': item['subject'], 'classes': item['classes']}
             for item in workload_row['items']
         ],
-        'hours': dict(workload_row['hours']),
-        'total_hours': workload_row['total_hours'],
+        'hours': {b: _num_or_blank(v)
+                  for b, v in workload_row['hours'].items()},
+        'total_hours': _num_or_blank(workload_row['total_hours']),
         'subjects': workload_row['subjects'],
     }
 

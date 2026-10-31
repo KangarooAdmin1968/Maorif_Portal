@@ -153,12 +153,22 @@ def grade_level(class_name):
     return m.group(1) if m else ''
 
 
+def disp_hours(value):
+    """Display-safe weekly-hours value: whole Decimals collapse to int
+    (shows «1», never «1.0»), true halves stay Decimal (shows «0.5»)."""
+    if value is None:
+        return None
+    return int(value) if value == int(value) else value
+
+
 def weekly_hours(class_name, subject, class_subject=None):
     """Weekly hours for ``subject`` in the grade level of ``class_name``.
 
     If ``class_subject`` carries an explicit ``hours_per_week`` or
     ``weekly_hours`` value (e.g. specialized/streamed classes), that
-    database value wins over the static annex table.
+    database value wins over the static annex table. Stored values are
+    Decimal in 0.5 steps (combined cross-class groups); whole values
+    are normalized to int so every consumer keeps integer math.
     """
     if class_subject is not None:
         override = (
@@ -166,7 +176,7 @@ def weekly_hours(class_name, subject, class_subject=None):
             or getattr(class_subject, 'weekly_hours', None)
         )
         if override:
-            return override
+            return disp_hours(override)
     level = grade_level(class_name)
     table = CURRICULUM_HOURS.get(level, {})
     return table.get(normalize_subject(subject), DEFAULT_WEEKLY_HOURS)

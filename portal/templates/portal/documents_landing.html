@@ -60,6 +60,7 @@
     <a href="{% url 'zavuch_report_export' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📈 Ҳисоботи завуч</a>
     <a href="{% url 'zavuch_grades_export' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📑 АЧЧ — ҷамъбастии чоряк</a>
     <a href="{% url 'excellent_students' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">⭐ Аълохон</a>
+    <a href="{% url 'academic_years' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">🔒 Якуни чоряк</a>
     {% endif %}
     {% if can_maorif %}
     <a href="{% url 'maorif_reports' %}" class="btn">🏛 Ҳисоботи маориф</a>

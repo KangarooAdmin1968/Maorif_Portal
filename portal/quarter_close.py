@@ -18,8 +18,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 
 from .curriculum_hours import UNGRADED_SUBJECTS
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
-from .models import (ClassSubject, Grade, QuarterGrade, QuarterLock,
-                     Student, normalize_subject)
+from .models import (ClassSubject, Grade, QuarterLock, Student,
+                     normalize_subject)
 from .utils import class_numeric_part, get_school_number
 
 def _archive_dir():
@@ -64,32 +64,36 @@ def collect_quarter_close(school, quarter, year, today=None):
                      if quarter < 4 else datetime.date(year + 1, 8, 31))
     locked = _locked_keys(school, quarter, year)
 
-    roster = {r['class_name']: r['n'] for r in
-              Student.objects.filter(school=school)
-              .exclude(class_name='')
-              .values('class_name').annotate(n=Count('id'))}
-    graded_per_cs = defaultdict(int)
-    for row in QuarterGrade.objects.filter(
-            student__school=school, quarter=quarter, academic_year=year,
-            grade__isnull=False).values(
-            'class_name', 'subject').annotate(n=Count('student', distinct=True)):
-        graded_per_cs[(row['class_name'], normalize_subject(row['subject']))] = \
-            row['n']
+    graded_css = _graded_class_subjects(school)
+    students = list(Student.objects.filter(school=school)
+                    .exclude(class_name=''))
+    roster = defaultdict(list)
+    for st in students:
+        roster[st.class_name].append(st)
+    # "Missing" = no mark at all — the shared merged source (stored
+    # QuarterGrade + live Ҷ value) is what every report shows, so a
+    # student whose teacher entered daily marks is not flagged.
+    subjects = {normalize_subject(cs.subject) for cs in graded_css}
+    from .class_report import merged_quarter_marks
+    marks = merged_quarter_marks(
+        students, subjects, quarter, year, class_scoped=True) \
+        if subjects else {}
 
     rows = []
     locked_count = missing_total = 0
-    for cs in _graded_class_subjects(school):
+    for cs in graded_css:
         norm = normalize_subject(cs.subject)
         is_locked = (cs.class_name, norm) in locked
-        missing = roster.get(cs.class_name, 0) - graded_per_cs.get(
-            (cs.class_name, norm), 0)
-        missing = max(missing, 0)
+        class_students = roster.get(cs.class_name, [])
+        missing = sum(
+            1 for st in class_students
+            if marks.get(st.id, {}).get(norm) is None)
         locked_count += is_locked
         missing_total += missing
         rows.append({
             'class_name': cs.class_name, 'subject': cs.subject,
             'locked': is_locked,
-            'missing': missing, 'total': roster.get(cs.class_name, 0),
+            'missing': missing, 'total': len(class_students),
         })
     rows.sort(key=lambda r: (class_numeric_part(r['class_name']) or 0,
                              r['class_name'], r['subject']))
@@ -173,18 +177,21 @@ def build_quarter_archive(school, quarter, year):
     for st in students:
         classes[st.class_name].append(st)
 
-    qg = {}
-    for row in QuarterGrade.objects.filter(
-            student__school=school, quarter=quarter,
-            academic_year=year).values(
-            'student_id', 'subject', 'grade', 'att_grade'):
-        qg[(row['student_id'], normalize_subject(row['subject']))] = row
-
     subjects_by_class = {}
     for cs in ClassSubject.objects.filter(
             school=school, is_active=True).values('class_name', 'subject'):
         subjects_by_class.setdefault(
             cs['class_name'], set()).add(normalize_subject(cs['subject']))
+
+    # Freeze the same marks the Ҳисобот shows: stored QuarterGrade wins,
+    # a subject with no stored row keeps the journal's live Ҷ value —
+    # so the archive never loses a mark the reports displayed.
+    all_subjects = {s for subs in subjects_by_class.values()
+                    for s in subs}
+    from .class_report import merged_quarter_marks
+    marks = merged_quarter_marks(
+        students, all_subjects, quarter, year, class_scoped=True) \
+        if all_subjects else {}
 
     for cls in sorted(classes, key=lambda c: (class_numeric_part(c) or 0, c)):
         if class_numeric_part(cls) not in LEVELS:
@@ -204,7 +211,7 @@ def build_quarter_archive(school, quarter, year):
         for i, st in enumerate(classes[cls], 1):
             row = [i, st.full_name]
             for s in subjects:
-                row.append(qg.get((st.id, s), {}).get('grade'))
+                row.append(marks.get(st.id, {}).get(s))
             ws.append(row)
         ws.column_dimensions['B'].width = 30
         for col in ws.iter_cols(min_col=3):

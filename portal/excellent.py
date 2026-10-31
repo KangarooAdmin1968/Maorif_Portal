@@ -16,7 +16,6 @@ from collections import defaultdict
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.worksheet.properties import PageSetupProperties
 
 from .curriculum_hours import UNGRADED_SUBJECTS
 from .models import ClassSubject, Student
@@ -107,7 +106,9 @@ def build_excellent_workbook(school, quarter, today=None):
     wb = Workbook()
     ws = wb.active
     ws.title = 'Аълохон'
-    for col, width in zip('ABC', (6, 42, 10)):
+    # Column widths sized so the table spans a portrait A4 sheet
+    # (~90 char units of usable width): № / Ному насаб / Синф.
+    for col, width in zip('ABC', (8, 68, 14)):
         ws.column_dimensions[col].width = width
 
     ws.merge_cells('A1:C1')
@@ -157,12 +158,11 @@ def build_excellent_workbook(school, quarter, today=None):
             value='Муовини директор оид ба таълим: ______________'
             ).font = Font(size=11)
 
-    # Print setup: portrait A4 scaled to the sheet width — printing the
-    # workbook from Excel fills the page instead of a narrow column.
+    # Print setup: portrait A4, horizontally centered — the widened
+    # columns already fill the sheet, so no scaling is needed (fitTo*
+    # only shrinks and can never widen a narrow table anyway).
     ws.page_setup.orientation = 'portrait'
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.print_options.horizontalCentered = True
     ws.page_margins.left = ws.page_margins.right = 0.4
     ws.page_margins.top = ws.page_margins.bottom = 0.5
 

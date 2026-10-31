@@ -94,6 +94,29 @@
         вуҷуднадошта низ монеъ мешавад.
     </p>
 
+    {% if data.blocked %}
+    <details class="no-print" style="margin-top:.9rem; font-size:.85rem;">
+        <summary style="cursor:pointer; color:#92400e;">
+            ⚠ Хонандагоне, ки ҳамаи холҳои мавҷудаашон 9–10, вале дар як
+            фан хол умуман вуҷуд надорад ({{ data.blocked|length }})
+        </summary>
+        <table class="ex-table" style="margin-top:.5rem;">
+            <thead>
+                <tr><th>Ному насаб</th><th style="width:80px;" class="center">Синф</th><th>Хол вуҷуд надорад дар</th></tr>
+            </thead>
+            <tbody>
+                {% for st, missing in data.blocked %}
+                <tr>
+                    <td>{{ st.full_name }}</td>
+                    <td class="center">{{ st.class_name }}</td>
+                    <td>{{ missing|join:'، ' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% endif %}
+
     <div class="sign-area">
         <div class="sign-line"><span class="lbl">Директори муассиса:</span><span class="blank"></span></div>
         <div class="sign-line"><span class="lbl">Муовини директор оид ба таълим:</span><span class="blank"></span></div>

@@ -74,10 +74,39 @@ class ExcellentStudentsTests(GoldenBase):
         data = collect_excellent_students(self.school_a, 1)
         self.assertIn(self.s1, data['students'])
 
+    def test_mark_under_other_class_name_does_not_exclude(self):
+        # A leftover QuarterGrade under a different class label (a
+        # mid-year class move, a stray record) must not shadow the mark
+        # her Ҳисобот actually shows for 7-А — the report and the
+        # student card only read rows under her own class.
+        self._fill(self.s1, self.school_a)
+        make_quarter_grade(self.s1, '7-Б', 'МАТЕМАТИКА',
+                           quarter=1, grade=4)
+        data = collect_excellent_students(self.school_a, 1)
+        self.assertIn(self.s1, data['students'])
+
     def test_missing_subject_excludes(self):
         self._fill(self.s1, self.school_a, skip='МАТЕМАТИКА')
         data = collect_excellent_students(self.school_a, 1)
         self.assertNotIn(self.s1, data['students'])
+
+    def test_blocked_lists_missing_subject(self):
+        # s1 is excellent in every marked subject but МАТЕМАТИКА has no
+        # mark at all — excluded, and the diagnostic names the missing
+        # subject so the zavuch sees exactly why.
+        self._fill(self.s1, self.school_a, skip='МАТЕМАТИКА')
+        data = collect_excellent_students(self.school_a, 1)
+        self.assertNotIn(self.s1, data['students'])
+        entry = [b for b in data['blocked'] if b[0] == self.s1]
+        self.assertEqual(len(entry), 1)
+        self.assertIn('МАТЕМАТИКА', entry[0][1])
+        # A student blocked by a LOW mark (already visible in the
+        # Ҳисобот) does not need the diagnostic.
+        self._fill(self.s2, self.school_a)
+        make_quarter_grade(self.s2, '7-А', 'МАТЕМАТИКА', quarter=1,
+                           grade=5)
+        data = collect_excellent_students(self.school_a, 1)
+        self.assertFalse(any(b[0] == self.s2 for b in data['blocked']))
 
     def test_other_quarter_is_empty(self):
         self._fill(self.s1, self.school_a, quarter=1)

@@ -133,18 +133,31 @@ def _live_quarter_grade_map(students, subjects, quarter, year):
     return out
 
 
-def merged_quarter_marks(students, subjects, quarter, year):
+def merged_quarter_marks(students, subjects, quarter, year,
+                         class_scoped=False):
     """{student_id: {subject: mark}} — the merged picture the Ҳисобот
     prints: stored QuarterGrade rows win, and a subject with no stored
     row is filled with the journal's live provisional value (the Ҷ
     marker). Shared by every summary document (А.Ҷ.Ч., АЧЧ, маориф,
     назорат, аълохон) so they all count the same marks the class
-    report displays."""
+    report displays.
+
+    With class_scoped=True stored rows are read only under the
+    student's own class label — exactly like the Ҳисобот and the
+    student card — so a leftover row written under a different
+    class_name (a mid-year move, a stray record) can never shadow the
+    mark the report actually shows."""
     marks = defaultdict(dict)
-    for sid, subj, grade in QuarterGrade.objects.filter(
+    student_class = (
+        {s.id: normalize_class_name(s.class_name) for s in students}
+        if class_scoped else None)
+    for sid, cn, subj, grade in QuarterGrade.objects.filter(
             student__in=students, quarter=quarter,
             academic_year=year, grade__isnull=False).values_list(
-            'student_id', 'subject', 'grade'):
+            'student_id', 'class_name', 'subject', 'grade'):
+        if student_class is not None \
+                and normalize_class_name(cn) != student_class.get(sid):
+            continue
         marks[sid][normalize_subject(subj)] = grade
     for (sid, subj), value in _live_quarter_grade_map(
             students, subjects, quarter, year).items():

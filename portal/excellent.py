@@ -52,16 +52,20 @@ def collect_excellent_students(school, quarter, today=None):
             normalize_subject(cs.subject))
 
     # Match the Ҳисобот's merged picture: stored QuarterGrade rows win
+    # (read only under the student's own class label — a row left under
+    # a different class_name can never shadow what the report shows)
     # and cells without one are filled with the journal's live
     # provisional mark (Ҷ) — the shared report source.
     students = list(
         Student.objects.filter(school=school).exclude(class_name=''))
     all_subjects = {s for subs in expected.values() for s in subs}
     from .class_report import merged_quarter_marks
-    marks = merged_quarter_marks(students, all_subjects, quarter, ay) \
+    marks = merged_quarter_marks(
+        students, all_subjects, quarter, ay, class_scoped=True) \
         if all_subjects else defaultdict(dict)
 
     result = []
+    blocked = []   # (student, missing_subjects, low_subjects)
     for st in students:
         cn = normalize_class_name(st.class_name)
         if is_non_graded(cn):
@@ -73,14 +77,24 @@ def collect_excellent_students(school, quarter, today=None):
         # Only her own class's subjects decide — a mark in a subject
         # the class does not study never shows in her Ҳисобот row,
         # so it cannot keep her off this list either.
-        if any(grades.get(subj) not in EXCELLENT_MARKS
-               for subj in subjects):
-            continue
-        result.append(st)
+        missing = sorted(s for s in subjects if s not in grades)
+        low = sorted(s for s in subjects
+                     if s in grades and grades[s] not in EXCELLENT_MARKS)
+        if not missing and not low:
+            result.append(st)
+        elif not low:
+            # Every expected mark she HAS is 9-10 — the only blocker is
+            # a subject with no mark at all. Invisible in the Ҳисобот
+            # (the row looks perfect), so list it for the zavuch.
+            blocked.append((st, missing))
     result.sort(key=lambda s: (class_numeric_part(s.class_name) or 0,
                                normalize_class_name(s.class_name),
                                s.full_name))
+    blocked.sort(key=lambda b: (
+        len(b[1]), class_numeric_part(b[0].class_name) or 0,
+        normalize_class_name(b[0].class_name), b[0].full_name))
     return {'quarter': quarter, 'academic_year': ay, 'students': result,
+            'blocked': blocked,
             'title': excellent_list_title(school, ay)}
 
 

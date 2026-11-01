@@ -8,6 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from openpyxl import Workbook
 
+from portal.academic_calendar import is_school_day
 from portal.models import ClassSubject, Grade, QuarterGrade, Student
 from portal.tests.helpers import (
     D_Q1, MATH, PERIOD, CUSTOM_SUBJECT, TAJIK,
@@ -72,13 +73,17 @@ class StickerFlowGoldenTests(GoldenBase):
 
     def test_sticker_all_four_symbols_accepted(self):
         self.client.force_login(self.teacher_a)
-        for i, sym in enumerate(('⭐', '☀️', '🌸', '📖')):
-            d = D_Q1 + datetime.timedelta(days=i)
+        d = D_Q1
+        for sym in ('⭐', '☀️', '🌸', '📖'):
+            # Dates are incidental — only school days are writable.
+            while not is_school_day(d):
+                d += datetime.timedelta(days=1)
             r = self.client.post(reverse('save_grade_ajax'), {
                 'student_id': self.kid.id, 'subject': STICKER_SUBJECT,
                 'date': d.isoformat(), 'type': 'daily', 'sticker': sym,
             })
             self.assertTrue(r.json()['success'], sym)
+            d += datetime.timedelta(days=1)
 
     def test_sticker_invalid_symbol_not_saved(self):
         self.client.force_login(self.teacher_a)

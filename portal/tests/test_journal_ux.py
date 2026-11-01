@@ -144,11 +144,11 @@ class DailyJournalUxTests(GoldenBase):
         super().setUpTestData()
         make_teacher_profile(cls.teacher_a, cls.school_a)
 
-    def _get(self):
+    def _get(self, **params):
         self.client.force_login(self.teacher_a)
         resp = self.client.get(reverse('grade_entry', kwargs={
             'school_id': self.school_a.id, 'class_name': '7-А',
-            'subject': MATH}))
+            'subject': MATH}), params)
         self.assertEqual(resp.status_code, 200)
         return resp.content.decode()
 
@@ -184,7 +184,9 @@ class DailyJournalUxTests(GoldenBase):
         self.assertIn('navToDate', html)
 
     def test_lesson_chips_and_add_button_preserved(self):
-        html = self._get()
+        # Request a school day — on a vacation/Sunday date the add button
+        # is intentionally hidden (no lessons may be created then).
+        html = self._get(date=D_Q1.isoformat())
         self.assertIn('lesson-chip', html)
         self.assertIn('+ Дарси нав', html)
         self.assertIn('selectLesson', html)

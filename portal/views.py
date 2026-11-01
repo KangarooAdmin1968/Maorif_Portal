@@ -55,6 +55,7 @@ from .tabel import (
     workload_snapshot,
 )
 from .class_report import ClassReportError, build_class_report_workbook
+from .academic_calendar import is_school_day
 from .exemptions import active_exemption_map
 from .maorif_report import (
     build_maorif_grades_district_workbook, build_maorif_grades_workbook,
@@ -970,6 +971,12 @@ def _resolve_daily_scope(student, subject, date, lesson_id, user=None,
     """
     if date > _journal_write_today():
         raise ValueError('Санаи ояндада хол ё давомат гузошта намешавад.')
+    # Official vacation gaps (and Sundays) hold no lessons: journal writes
+    # onto them are refused at the scope level, so every caller of this
+    # helper (AJAX, monthly/daily batch) shares the same rule. Late writes
+    # on past SCHOOL days of the same quarter stay allowed.
+    if not is_school_day(date):
+        raise ValueError('Дар рӯзи таътил хол ё давомат гузошта намешавад.')
     class_name = normalize_class_name(student.class_name)
     if lesson_id:
         try:
@@ -3176,6 +3183,7 @@ def sticker_entry(request, school_id, class_name):
         'behavior_default': behavior_default,
         'sticker_choices': sticker_choices,
         'daily_quarter_locked': daily_quarter_locked,
+        'holiday_date': not is_school_day(selected_date),
     })
 
 
@@ -3528,6 +3536,8 @@ def grade_entry(request, school_id, class_name, subject):
             date = datetime.date.today()
         if date > _journal_write_today():
             return HttpResponse('Санаи ояндада хол ё давомат гузошта намешавад.', status=400)
+        if not is_school_day(date):
+            return HttpResponse('Дар рӯзи таътил хол ё давомат гузошта намешавад.', status=400)
 
         # Batch POST may carry a lesson context — same scope validation as
         # the AJAX path: the Lesson must belong to this school/class/subject
@@ -4021,6 +4031,7 @@ def grade_entry(request, school_id, class_name, subject):
         'assessment_marks': assessment_marks,
         'date_is_control': date_is_control,
         'future_date': selected_date > timezone.localdate(),
+        'holiday_date': not is_school_day(selected_date),
         'work_type_choices': work_type_choices(),
         'exemption_map': exemption_map,
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
@@ -4221,9 +4232,11 @@ def monthly_journal(request, school_id, class_name, subject):
                 and (not col['control'] or col['assessment_id'] is not None)
                 and day_quarter not in locked_quarters
                 and d <= today
+                and is_school_day(d)
             )
             col['can_toggle'] = (
                 can_edit and day_quarter not in locked_quarters
+                and is_school_day(d)
             )
         columns.extend(day_columns)
 
@@ -5387,6 +5400,8 @@ def save_grade_ajax(request):
                 lock_quarter = assessment.quarter
                 if date > _journal_write_today():
                     return JsonResponse({'success': False, 'message': 'Санаи ояндада хол ё давомат гузошта намешавад.'}, status=200)
+                if not is_school_day(date):
+                    return JsonResponse({'success': False, 'message': 'Дар рӯзи таътил хол ё давомат гузошта намешавад.'}, status=200)
             else:
                 try:
                     date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
@@ -5672,6 +5687,8 @@ def assessment_save(request):
             )
         except ValueError:
             return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
+        if not is_school_day(date):
+            return JsonResponse({'success': False, 'message': 'Дар рӯзи таътил кори санҷишӣ яратилмайди.'}, status=200)
         quarter = get_date_quarter(date)
 
         # Lock check covers both the (quarter, year) cell the assessment
@@ -5975,6 +5992,8 @@ def assessment_toggle(request):
 
         if date > _journal_write_today():
             return JsonResponse({'success': False, 'message': 'Санаи ояндада санҷиш яратилмайди.'}, status=200)
+        if not is_school_day(date):
+            return JsonResponse({'success': False, 'message': 'Дар рӯзи таътил кори санҷишӣ яратилмайди.'}, status=200)
         max_number = Assessment.objects.filter(
             class_subject=cs, quarter=quarter, category='control',
         ).aggregate(m=Max('number'))['m'] or 0
@@ -6089,6 +6108,8 @@ def lesson_save(request):
             date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
         except ValueError:
             return JsonResponse({'success': False, 'message': 'Санаи нодуруст.'}, status=200)
+        if not is_school_day(date):
+            return JsonResponse({'success': False, 'message': 'Дар рӯзи таътил дарс яратилмайди.'}, status=200)
 
         if is_quarter_locked(
                 cs.school, cs.class_name, cs.subject, get_date_quarter(date),

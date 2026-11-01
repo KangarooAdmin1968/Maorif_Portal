@@ -13,7 +13,7 @@ from django.urls import reverse
 
 from portal.models import ClassSubject, Grade
 from portal.tests.helpers import (
-    MATH, GoldenBase, make_class_subject, make_grade, make_student,
+    D_Q1, MATH, GoldenBase, make_class_subject, make_grade, make_student,
     make_teacher_profile,
 )
 from portal.curriculum_hours import quarter_min_norm
@@ -230,11 +230,13 @@ class ReadinessTimeAwareTests(GoldenBase):
         self.client.force_login(self.admin)
         resp = self.client.post(reverse('save_grade_ajax'), {
             'student_id': self.s2.id, 'subject': MATH,
-            'date': TODAY.isoformat(), 'type': 'daily', 'score': '10',
+            # A school day — TODAY itself may be a vacation day/Sunday,
+            # which the write guard legitimately refuses.
+            'date': D_Q1.isoformat(), 'type': 'daily', 'score': '10',
         })
         self.assertTrue(resp.json()['success'])
         self.assertTrue(Grade.objects.filter(
-            student=self.s2, subject=MATH, date=TODAY).exists())
+            student=self.s2, subject=MATH, date=D_Q1).exists())
 
     def test_per_allocation_norms_not_combined(self):
         # 7-А MATH 3h (norm 7 x 2 students) + 8-А MATH 2h (norm 5 x 1)

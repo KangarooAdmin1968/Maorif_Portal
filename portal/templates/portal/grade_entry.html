@@ -123,7 +123,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
     <button type="button" class="lesson-chip {% if selected_lesson and selected_lesson.id == l.id %}active{% endif %}" onclick="selectLesson('{{ l.id }}')"{% if l.topic %} title="{{ l.topic }}"{% endif %}>Дарси {{ l.lesson_number }}{% if l.group_label %} · {{ l.group_label }}{% endif %}{% if l.mode == 'control' %} · Назорат{% endif %}{% if l.grade_count %}<span class="chip-count" title="Сабтшуда: {{ l.grade_count }}">{{ l.grade_count }}</span>{% endif %}</button>
     {% endfor %}
     {% endif %}
-    {% if not daily_quarter_locked %}
+    {% if not daily_quarter_locked and not holiday_date %}
     <button type="button" class="lesson-chip lesson-add" onclick="createLesson()">+ Дарси нав</button>
     {% endif %}
     {% if selected_lesson %}
@@ -173,6 +173,9 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
   {% if future_date %}
   <div class="alert alert-error">Санаи оянда — хол ё давомат гузошта намешавад.</div>
   {% endif %}
+  {% if holiday_date %}
+  <div class="alert alert-error">Ин сана таътил аст — хол ё давомат гузошта намешавад.</div>
+  {% endif %}
   <div class="daily-wrap">
   <table class="data-table editable">
     <thead>
@@ -185,7 +188,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
         <td>{% if s.pace.dot %}<span class="pace-dot pace-{{ s.pace.status }}" title="{{ s.pace.tip }}" data-tip="{{ s.pace.tip }}"></span>{% endif %}<a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
         <td>
           {% if non_graded %}
-          <select name="score_{{ s.id }}" class="daily-input grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score" {% if daily_quarter_locked or future_date %}disabled{% endif %}>
+          <select name="score_{{ s.id }}" class="daily-input grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score" {% if daily_quarter_locked or future_date or holiday_date %}disabled{% endif %}>
             {% for val, label in qualitative_choices %}
             <option value="{{ val }}" {% if daily_grades|dict_key:s.id|stringformat:"s" == val %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -194,18 +197,18 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
           <input type="number" name="score_{{ s.id }}" min="1" max="10" step="1"
                  value="{{ daily_grades|dict_key:s.id }}" class="daily-input grade-input"
                  data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score"
-                 {% if daily_quarter_locked or future_date %}disabled{% endif %}>
+                 {% if daily_quarter_locked or future_date or holiday_date %}disabled{% endif %}>
           {% endif %}
         </td>
         <td>
-          <select name="attendance_{{ s.id }}" class="daily-att grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="attendance" {% if daily_quarter_locked or future_date %}disabled{% endif %}>
+          <select name="attendance_{{ s.id }}" class="daily-att grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="attendance" {% if daily_quarter_locked or future_date or holiday_date %}disabled{% endif %}>
             <option value="" {% if not daily_attendance|dict_key:s.id %}selected{% endif %}></option>
             <option value="+" {% if daily_attendance|dict_key:s.id == '+' %}selected{% endif %}>+ (босабаб)</option>
             <option value="-" {% if daily_attendance|dict_key:s.id == '-' %}selected{% endif %}>- (бесабаб)</option>
           </select>
         </td>
         <td>
-          <select name="behavior_{{ s.id }}" class="daily-behavior grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="behavior_score" {% if daily_quarter_locked or future_date %}disabled{% endif %}>
+          <select name="behavior_{{ s.id }}" class="daily-behavior grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="behavior_score" {% if daily_quarter_locked or future_date or holiday_date %}disabled{% endif %}>
             <option value="" {% if not behavior_default|dict_key:s.id %}selected{% endif %}></option>
             {% for val in "12345" %}
             <option value="{{ val }}" {% if behavior_default|dict_key:s.id|stringformat:"s" == val %}selected{% endif %}>{{ val }}</option>

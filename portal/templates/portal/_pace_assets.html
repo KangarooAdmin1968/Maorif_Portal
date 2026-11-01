@@ -48,6 +48,19 @@ details.pace-ctl.ctl-blue > summary { background: #dbeafe; border-color: #3b82f6
     });
   }, true);
 
+  // Moving into a grade cell closes every open control panel — the
+  // teacher's attention has shifted to grading. Covers the daily
+  // journal inputs (.daily-input/.grade-select/.q-input/.att-input)
+  // and the monthly grid's focusable cells (.mcell-editable).
+  document.addEventListener('focusin', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (!t.closest('.daily-input, .grade-select, .q-input, .att-input, .mcell-editable')) return;
+    document.querySelectorAll('details.pace-ctl[open]').forEach(function (o) {
+      o.open = false;
+    });
+  });
+
   var tipEl = null;
   function hideTip() { if (tipEl) tipEl.style.display = 'none'; }
   document.addEventListener('click', function (e) {

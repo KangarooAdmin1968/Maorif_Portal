@@ -13,7 +13,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal.models import Assessment, Grade
-from portal.tests.helpers import D_Q1, MATH, GoldenBase
+from portal.tests.helpers import D_Q1, MATH, GoldenBase, make_grade
 from portal.tests.test_phase4_lessons import (
     make_control, make_lesson, post_grade,
 )
@@ -95,7 +95,10 @@ class MonthlyJournalTests(GoldenBase):
 
     def test_sunday_with_grade_is_shown(self):
         sunday = _sundays(D_Q1.year, 10)[0]
-        post_grade(self.client, self.s1, score='7', date=sunday)
+        # Seeded directly — a Sunday row is legacy data: the write guard
+        # (is_school_day) refuses NEW grades on Sundays, but existing
+        # rows must keep displaying.
+        make_grade(self.s1, score=7, date=sunday)
         resp = self._get()
         self.assertIn(
             sunday, [c['date'] for c in resp.context['columns']])
@@ -370,9 +373,9 @@ class JournalExcelExportTests(GoldenBase):
 
     def test_sunday_with_data_exports(self):
         sunday = _sundays(D_Q1.year, 10)[0]
-        post_grade(
-            self.client, self.s1, score='7',
-            date=sunday)   # Sunday with real data
+        # ORM-seeded Sunday row = legacy data (new Sunday writes are
+        # refused by the vacation guard); the export must still emit it.
+        make_grade(self.s1, score=7, date=sunday)
         post_grade(self.client, self.s1, score='8', date=D_OCT_A)
         resp = self.client.get(self.url, {'month': OCT})
         rows = self._rows(resp)

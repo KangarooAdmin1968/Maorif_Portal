@@ -19,6 +19,7 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.urls import reverse
 
+from portal.academic_calendar import is_school_day
 from portal.models import Assessment, Grade, QuarterGrade
 from portal.tests.helpers import (
     D_Q1, MATH, PERIOD, GoldenBase, make_grade,
@@ -158,17 +159,18 @@ class FutureWriteGuardTests(GoldenBase):
             student=self.s1, date=FUTURE()).exists())
 
     def test_today_and_past_still_writable(self):
-        """The guard is strictly `date > today` — today passes."""
+        """Past school days stay writable — the guard only rejects future
+        dates and non-school days (holidays/Sundays)."""
         self.client.force_login(self.teacher_a)
         with real_today():
             resp = self.client.post(AJAX_URL, {
                 'student_id': self.s1.id, 'subject': MATH,
-                'type': 'daily', 'date': TODAY().isoformat(),
+                'type': 'daily', 'date': D_Q1.isoformat(),
                 'score': '8',
             })
         self.assertTrue(resp.json()['success'])
         self.assertTrue(Grade.objects.filter(
-            student=self.s1, date=TODAY()).exists())
+            student=self.s1, date=D_Q1).exists())
 
     def test_monthly_journal_future_column_not_editable(self):
         """Future columns render read-only in the month grid."""
@@ -183,8 +185,11 @@ class FutureWriteGuardTests(GoldenBase):
             c for c in resp.context['columns'] if c['date'] > TODAY()]
         self.assertTrue(future_cols)
         self.assertTrue(all(not c['editable'] for c in future_cols))
+        # Past school-day columns stay editable; holidays/Sundays are
+        # covered by the vacation-guard tests.
         today_cols = [
-            c for c in resp.context['columns'] if c['date'] <= TODAY()]
+            c for c in resp.context['columns']
+            if c['date'] <= TODAY() and is_school_day(c['date'])]
         self.assertTrue(all(c['editable'] for c in today_cols))
 
 

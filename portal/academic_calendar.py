@@ -59,6 +59,19 @@ def quarter_for_date(date):
     return None
 
 
+def is_school_day(date):
+    """True when `date` may legally hold lessons and journal grades.
+
+    Non-school days: official vacation-gap days (quarter_for_date
+    returns None for them) and Sundays — the school week is Mon..Sat
+    and the monthly journal already treats Sunday as a no-lesson day.
+    This guards only NEW writes onto those dates; existing rows on
+    gap days (legacy late write-ups) keep their get_date_quarter
+    attribution untouched.
+    """
+    return date.weekday() != 6 and quarter_for_date(date) is not None
+
+
 def get_date_quarter(date):
     """Quarter attribution for grade/work records, 1-4 (or None).
 

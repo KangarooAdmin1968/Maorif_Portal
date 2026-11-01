@@ -31,6 +31,9 @@
 {% if daily_quarter_locked %}
 <div class="alert alert-error">Ин чоряк баста шудааст. Тағйирот имконнопазир аст.</div>
 {% endif %}
+{% if holiday_date %}
+<div class="alert alert-error">Ин сана таътил аст — хол ё давомат гузошта намешавад.</div>
+{% endif %}
 
 <div class="sticker-legend">
     <span><span class="sticker-option">⭐</span> Ситора — Аъло</span>
@@ -56,14 +59,14 @@
             <td>{{ forloop.counter }}</td>
             <td>{{ s.full_name }}</td>
             <td>
-                <select name="attendance_{{ s.id }}" class="attendance-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="attendance" {% if daily_quarter_locked %}disabled{% endif %}>
+                <select name="attendance_{{ s.id }}" class="attendance-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="attendance" {% if daily_quarter_locked or holiday_date %}disabled{% endif %}>
                     <option value="" {% if not daily_attendance|dict_key:s.id %}selected{% endif %}></option>
                     <option value="+" {% if daily_attendance|dict_key:s.id == '+' %}selected{% endif %}>+ (босабаб)</option>
                     <option value="-" {% if daily_attendance|dict_key:s.id == '-' %}selected{% endif %}>- (бесабаб)</option>
                 </select>
             </td>
             <td>
-                <select name="behavior_{{ s.id }}" class="behavior-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="behavior_score" {% if daily_quarter_locked %}disabled{% endif %}>
+                <select name="behavior_{{ s.id }}" class="behavior-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="behavior_score" {% if daily_quarter_locked or holiday_date %}disabled{% endif %}>
                     <option value="" {% if not behavior_default|dict_key:s.id %}selected{% endif %}></option>
                     {% for val in "12345" %}
                     <option value="{{ val }}" {% if behavior_default|dict_key:s.id|stringformat:"s" == val %}selected{% endif %}>{{ val }}</option>
@@ -71,7 +74,7 @@
                 </select>
             </td>
             <td>
-                <select name="sticker_{{ s.id }}" class="sticker-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="sticker" {% if daily_quarter_locked %}disabled{% endif %}>
+                <select name="sticker_{{ s.id }}" class="sticker-select daily-input" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="sticker" {% if daily_quarter_locked or holiday_date %}disabled{% endif %}>
                     <option value="" {% if not daily_stickers|dict_key:s.id %}selected{% endif %}></option>
                     {% for symbol, label in sticker_choices.items %}
                     <option value="{{ symbol }}" class="sticker-option" {% if daily_stickers|dict_key:s.id == symbol %}selected{% endif %}>{{ symbol }} {{ label }}</option>

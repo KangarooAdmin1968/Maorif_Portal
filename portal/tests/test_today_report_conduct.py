@@ -28,7 +28,7 @@ from django.urls import reverse
 
 from portal.models import Assessment, ClassSubject, Grade, Lesson
 from portal.tests.helpers import (
-    MATH, PERIOD, TAJIK, GoldenBase, make_class_subject, make_grade,
+    D_Q1, MATH, PERIOD, TAJIK, GoldenBase, make_class_subject, make_grade,
     make_student,
 )
 from portal.views import get_date_quarter, get_or_create_grade
@@ -36,6 +36,9 @@ from portal.views import get_date_quarter, get_or_create_grade
 AJAX_URL = reverse('save_grade_ajax')
 TODAY = datetime.date.today()
 YESTERDAY = TODAY - datetime.timedelta(days=1)
+# Endpoint writes need a real school day — TODAY itself may be an
+# official vacation day or a Sunday, which the write guard refuses.
+SDAY = D_Q1
 PHYSICS = 'ФИЗИКА'
 HISTORY = 'ТАЪРИХ'
 BIOLOGY = 'БИОЛОГИЯ'
@@ -209,29 +212,32 @@ class DuplicateSavePreventionTests(GoldenBase):
         self.client.force_login(self.teacher_a)
 
     def test_single_save_creates_one_row(self):
-        resp = post_daily(self.client, self.s1, extra={'score': '10'})
+        resp = post_daily(self.client, self.s1, date=SDAY,
+                          extra={'score': '10'})
         self.assertTrue(resp.json()['success'])
         self.assertEqual(
             Grade.objects.filter(
-                student=self.s1, subject=MATH, date=TODAY).count(), 1)
+                student=self.s1, subject=MATH, date=SDAY).count(), 1)
 
     def test_repeated_identical_save_reuses_row(self):
         for _ in range(2):
-            resp = post_daily(self.client, self.s1, extra={'score': '10'})
+            resp = post_daily(self.client, self.s1, date=SDAY,
+                              extra={'score': '10'})
             self.assertTrue(resp.json()['success'])
         self.assertEqual(
             Grade.objects.filter(
-                student=self.s1, subject=MATH, date=TODAY).count(), 1)
+                student=self.s1, subject=MATH, date=SDAY).count(), 1)
 
     def test_next_save_merges_existing_duplicates(self):
         # Legacy duplicates left by a past race are merged on the next
         # write with the same logical key — merge semantics preserved.
-        make_grade(self.s1, score=10, date=TODAY)
-        make_grade(self.s1, score=10, date=TODAY)
-        resp = post_daily(self.client, self.s1, extra={'score': '9'})
+        make_grade(self.s1, score=10, date=SDAY)
+        make_grade(self.s1, score=10, date=SDAY)
+        resp = post_daily(self.client, self.s1, date=SDAY,
+                          extra={'score': '9'})
         self.assertTrue(resp.json()['success'])
         rows = Grade.objects.filter(
-            student=self.s1, subject=MATH, date=TODAY)
+            student=self.s1, subject=MATH, date=SDAY)
         self.assertEqual(rows.count(), 1)
         self.assertEqual(rows.get().score, 9)
 
@@ -248,12 +254,12 @@ class DuplicateSavePreventionTests(GoldenBase):
     def test_lesson_and_lessonless_saves_stay_two_rows(self):
         # Intended multi-slot support must not collapse: the same logical
         # key dedupes, different keys never merge.
-        l1 = make_lesson(self.cs_a, TODAY, 1)
-        post_daily(self.client, self.s1, extra={'score': '10'})
+        l1 = make_lesson(self.cs_a, SDAY, 1)
+        post_daily(self.client, self.s1, date=SDAY, extra={'score': '10'})
         post_daily(
-            self.client, self.s1,
+            self.client, self.s1, date=SDAY,
             extra={'score': '9', 'lesson_id': l1.id})
-        rows = Grade.objects.filter(student=self.s1, date=TODAY)
+        rows = Grade.objects.filter(student=self.s1, date=SDAY)
         self.assertEqual(rows.count(), 2)
         self.assertEqual(rows.get(lesson__isnull=True).score, 10)
         self.assertEqual(rows.get(lesson=l1).score, 9)
@@ -353,46 +359,46 @@ class ConductBatchSaveTests(GoldenBase):
     def test_score_only_post_no_phantom_behavior(self):
         # A batch save must not invent a conduct value for edited students.
         resp = self.client.post(self.url, {
-            'date': TODAY.isoformat(),
+            'date': SDAY.isoformat(),
             f'score_{self.s1.id}': '8',
         })
         self.assertEqual(resp.status_code, 302)
-        g = Grade.objects.get(student=self.s1, subject=MATH, date=TODAY)
+        g = Grade.objects.get(student=self.s1, subject=MATH, date=SDAY)
         self.assertEqual(g.score, 8)
         self.assertIsNone(g.behavior_score)
 
     def test_plain_submit_creates_no_rows(self):
         # Untouched students get no phantom behavior=5 rows.
-        self.client.post(self.url, {'date': TODAY.isoformat()})
-        self.assertFalse(Grade.objects.filter(date=TODAY).exists())
+        self.client.post(self.url, {'date': SDAY.isoformat()})
+        self.assertFalse(Grade.objects.filter(date=SDAY).exists())
 
     def test_absent_behavior_key_preserves_stored_value(self):
-        make_grade(self.s1, subject=MATH, behavior=4, date=TODAY)
+        make_grade(self.s1, subject=MATH, behavior=4, date=SDAY)
         self.client.post(self.url, {
-            'date': TODAY.isoformat(),
+            'date': SDAY.isoformat(),
             f'score_{self.s1.id}': '8',
         })
-        g = Grade.objects.get(student=self.s1, date=TODAY)
+        g = Grade.objects.get(student=self.s1, date=SDAY)
         self.assertEqual(g.score, 8)
         self.assertEqual(g.behavior_score, 4)
 
     def test_explicit_behavior_written(self):
         self.client.post(self.url, {
-            'date': TODAY.isoformat(),
+            'date': SDAY.isoformat(),
             f'score_{self.s1.id}': '8',
             f'behavior_{self.s1.id}': '3',
         })
-        g = Grade.objects.get(student=self.s1, date=TODAY)
+        g = Grade.objects.get(student=self.s1, date=SDAY)
         self.assertEqual(g.behavior_score, 3)
 
     def test_explicit_empty_behavior_clears(self):
-        make_grade(self.s1, subject=MATH, score=7, behavior=4, date=TODAY)
+        make_grade(self.s1, subject=MATH, score=7, behavior=4, date=SDAY)
         self.client.post(self.url, {
-            'date': TODAY.isoformat(),
+            'date': SDAY.isoformat(),
             f'score_{self.s1.id}': '7',
             f'behavior_{self.s1.id}': '',
         })
-        g = Grade.objects.get(student=self.s1, date=TODAY)
+        g = Grade.objects.get(student=self.s1, date=SDAY)
         self.assertIsNone(g.behavior_score)
 
 
@@ -403,10 +409,10 @@ class ConductSubjectIndependenceTests(GoldenBase):
         self.client.force_login(self.admin)
 
     def test_changing_physics_never_touches_algebra(self):
-        alg = make_grade(self.s1, subject=MATH, behavior=5, date=TODAY)
-        make_grade(self.s1, subject=PHYSICS, behavior=3, date=TODAY)
+        alg = make_grade(self.s1, subject=MATH, behavior=5, date=SDAY)
+        make_grade(self.s1, subject=PHYSICS, behavior=3, date=SDAY)
         resp = post_daily(
-            self.client, self.s1, subject=PHYSICS,
+            self.client, self.s1, subject=PHYSICS, date=SDAY,
             extra={'behavior_score': '4'})
         self.assertTrue(resp.json()['success'])
         alg.refresh_from_db()
@@ -417,10 +423,10 @@ class ConductSubjectIndependenceTests(GoldenBase):
 
     def test_algebra_change_to_five_physics_unaffected(self):
         # Algebra teacher's edit writes only the Algebra row.
-        make_grade(self.s1, subject=MATH, behavior=3, date=TODAY)
-        phys = make_grade(self.s1, subject=PHYSICS, behavior=2, date=TODAY)
+        make_grade(self.s1, subject=MATH, behavior=3, date=SDAY)
+        phys = make_grade(self.s1, subject=PHYSICS, behavior=2, date=SDAY)
         resp = post_daily(
-            self.client, self.s1, subject=MATH,
+            self.client, self.s1, subject=MATH, date=SDAY,
             extra={'behavior_score': '5'})
         self.assertTrue(resp.json()['success'])
         phys.refresh_from_db()
@@ -488,10 +494,10 @@ class CurrentConductTests(GoldenBase):
 
     def test_subjects_stay_independent(self):
         self._universe(MATH, PHYSICS)
-        make_grade(self.s1, subject=MATH, behavior=3, date=TODAY)
-        make_grade(self.s1, subject=PHYSICS, behavior=5, date=TODAY)
+        make_grade(self.s1, subject=MATH, behavior=3, date=SDAY)
+        make_grade(self.s1, subject=PHYSICS, behavior=5, date=SDAY)
         self.client.force_login(self.admin)
-        resp = post_daily(self.client, self.s1, subject=PHYSICS,
+        resp = post_daily(self.client, self.s1, subject=PHYSICS, date=SDAY,
                           extra={'behavior_score': '2'})
         self.assertTrue(resp.json()['success'])
         self.assertEqual(Grade.objects.get(

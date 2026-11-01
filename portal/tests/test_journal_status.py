@@ -19,7 +19,7 @@ from django.urls import reverse
 
 from portal.models import Assessment, Grade
 from portal.tests.helpers import (
-    MATH, GoldenBase, make_class_subject, make_grade, make_student,
+    D_Q1, MATH, GoldenBase, make_class_subject, make_grade, make_student,
     make_teacher_profile,
 )
 from portal.views import (
@@ -318,11 +318,13 @@ class MonthlyJournalStatusTests(GoldenBase):
                 make_grade(s, subject=MATH, score=9, date=TODAY)
         resp = self.client.post(reverse('save_grade_ajax'), {
             'student_id': self.s1.id, 'subject': MATH,
-            'date': TODAY.isoformat(), 'type': 'daily', 'score': '10',
+            # A school day — TODAY may be a vacation day/Sunday, which the
+            # write guard legitimately refuses.
+            'date': D_Q1.isoformat(), 'type': 'daily', 'score': '10',
         })
         self.assertTrue(resp.json()['success'])
         self.assertTrue(Grade.objects.filter(
-            student=self.s1, subject=MATH, date=TODAY).exists())
+            student=self.s1, subject=MATH, date=D_Q1).exists())
 
 
 class GradeEntryStatusTests(GoldenBase):

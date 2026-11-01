@@ -17,6 +17,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from .curriculum_hours import UNGRADED_SUBJECTS
+from .exemptions import active_exemption_map
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
 from .models import (ClassSubject, Grade, QuarterLock, Student,
                      normalize_subject)
@@ -78,6 +79,9 @@ def collect_quarter_close(school, quarter, year, today=None):
     marks = merged_quarter_marks(
         students, subjects, quarter, year, class_scoped=True) \
         if subjects else {}
+    # Exempt students (дар давлати дигар таҳсил мекунад) stay on the
+    # roster and in the archive but never count as missing.
+    exempt_ids = set(active_exemption_map(s.id for s in students))
 
     rows = []
     locked_count = missing_total = 0
@@ -87,7 +91,8 @@ def collect_quarter_close(school, quarter, year, today=None):
         class_students = roster.get(cs.class_name, [])
         missing = sum(
             1 for st in class_students
-            if marks.get(st.id, {}).get(norm) is None)
+            if st.id not in exempt_ids
+            and marks.get(st.id, {}).get(norm) is None)
         locked_count += is_locked
         missing_total += missing
         rows.append({

@@ -178,7 +178,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
       {% for s in students %}
       <tr>
         <td>{{ forloop.counter }}</td>
-        <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a></td>
+        <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
         <td>
           {% if non_graded %}
           <select name="score_{{ s.id }}" class="daily-input grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score" {% if daily_quarter_locked or future_date %}disabled{% endif %}>
@@ -250,7 +250,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
         {% for s in students %}
         <tr>
           <td>{{ forloop.counter }}</td>
-          <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a></td>
+          <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
           {% for q in quarter_numbers %}
           <td>
             {% comment %}Quarter grades are derived automatically — display-only

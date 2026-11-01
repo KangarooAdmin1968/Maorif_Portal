@@ -29,7 +29,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, StudentMovement, CLASS_LETTERS
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, StudentMovement, StudentExemption, CLASS_LETTERS
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -55,6 +55,7 @@ from .tabel import (
     workload_snapshot,
 )
 from .class_report import ClassReportError, build_class_report_workbook
+from .exemptions import active_exemption_map
 from .maorif_report import (
     build_maorif_grades_district_workbook, build_maorif_grades_workbook,
     build_maorif_report_workbook, build_maorif_total_workbook)
@@ -252,7 +253,8 @@ def _journal_status(done, met, total):
     return 'partial'
 
 
-def _journal_norm_status(class_name, subject, class_subject, students, today):
+def _journal_norm_status(class_name, subject, class_subject, students, today,
+                         exempt_ids=None):
     """Journal status payload for one School + Class + Subject context.
 
     Counts only ACADEMIC rows (score__isnull=False — the same pool every
@@ -263,10 +265,15 @@ def _journal_norm_status(class_name, subject, class_subject, students, today):
     teacher's own group on grouped subjects, else the class): Пурра only
     when EVERY student has >= norm scored rows this quarter. One grouped
     aggregate query — no per-student work.
+
+    ``exempt_ids`` removes students from the norm denominator only: an
+    exempt student (дар давлати дигар таҳсил мекунад) keeps their marks
+    counted in ``done`` but is never required to reach the norm.
     """
     q_start, q_end = _current_quarter_bounds(today)
     norm = quarter_min_norm(class_name, subject, class_subject)
     student_ids = [s.id for s in students]
+    exempt = set(exempt_ids or ()) & set(student_ids)
     per_student = defaultdict(int)
     for g in canonical_grade_rows(Grade.objects.filter(
             student_id__in=student_ids,
@@ -275,15 +282,18 @@ def _journal_norm_status(class_name, subject, class_subject, students, today):
             score__isnull=False).iterator()):
         per_student[g.student_id] += 1
     done = sum(per_student.values())
-    met = sum(1 for sid in student_ids if per_student.get(sid, 0) >= norm)
-    required = norm * len(student_ids)
+    met = sum(1 for sid in student_ids
+              if sid not in exempt and per_student.get(sid, 0) >= norm)
+    graded = len(student_ids) - len(exempt)
+    required = norm * graded
     return {
         'done': done,
         'required': required,
         'norm': norm,
         'students': len(student_ids),
         'students_met': met,
-        'status': _journal_status(done, met, len(student_ids)),
+        'students_exempt': len(exempt),
+        'status': _journal_status(done, met, graded),
         'fulfillment': _norm_fulfillment(done, required, _quarter_progress(today)),
     }
 
@@ -1330,7 +1340,7 @@ def _move_student(school, student, new_class_name, new_full_name=None,
             student.save()
         return student
 
-    if Student.objects.filter(id=new_id).exclude(id=old_id).exists():
+    if Student.all_objects.filter(id=new_id).exclude(id=old_id).exists():
         raise ValueError('Хонанда бо ин ном дар синфи ҳадаф аллакай вуҷуд дорад.')
 
     with transaction.atomic():
@@ -1380,7 +1390,9 @@ def _move_student(school, student, new_class_name, new_full_name=None,
             if drop_pks:
                 QuarterGrade.objects.filter(pk__in=drop_pks).delete()
         QuarterGrade.objects.filter(student_id=old_id).update(**quarter_update)
-        Student.objects.filter(id=old_id).delete()
+        StudentExemption.objects.filter(student_id=old_id).update(
+            student=new_student)
+        Student.all_objects.filter(id=old_id).delete()
         # QuerySet.update() bypasses the Grade signals, so the moved rows'
         # quarters are re-derived here through the same bulk pass journal
         # batches use. Each source row re-derives the (quarter, year) cell
@@ -1942,7 +1954,7 @@ def _shared_ranking_grade_rows():
             and now - memo['at'] < RANKING_REFRESH_INTERVAL):
         return memo['rows']
     rows = canonical_grade_values(Grade.objects.filter(
-        score__isnull=False,
+        score__isnull=False, student__is_archived=False,
         date__range=bounds).order_by().values(
         'pk', 'student_id', 'subject', 'period', 'date',
         'assessment_id', 'lesson_id', 'score',
@@ -1982,7 +1994,8 @@ def _calculate_school_rankings_uncached():
     # disjoint, so each row feeds exactly one aggregate. Sum/Count skip
     # NULLs the same way the former __isnull=False filters did; a group
     # where both aggregates are NULL is dropped by _add_score.
-    for row in QuarterGrade.objects.filter(academic_year=ay).values(
+    for row in QuarterGrade.objects.filter(
+            academic_year=ay, student__is_archived=False).values(
             'student__school_id', 'class_name').annotate(
             total=Sum('grade', filter=Q(quarter__in=(1, 2, 3, 4))),
             count=Count('grade', filter=Q(quarter__in=(1, 2, 3, 4))),
@@ -2171,7 +2184,9 @@ def _calculate_top_students_uncached():
         ~Q(student__class_name__startswith='0-') &
         ~Q(student__class_name__startswith='1-')
     )
-    student_filter = Q(student__school_id__in=academic_school_ids) & non_graded_filter
+    student_filter = (Q(student__school_id__in=academic_school_ids)
+                      & Q(student__is_archived=False)
+                      & non_graded_filter)
 
     # Current academic year only: Grade rows by source date; stored quarter
     # and attestation rows by their academic_year key (legacy NULL-year
@@ -2844,18 +2859,21 @@ def class_list(request, school_id=None):
         count = 0
         for g in canonical_grade_rows(Grade.objects.filter(
                 student__school=school, student__class_name=cname,
+                student__is_archived=False,
                 score__isnull=False,
                 date__range=(ay_start, ay_end))):
             total += float(g.score)
             count += 1
         for q in QuarterGrade.objects.filter(
                 student__school=school, class_name=cname,
+                student__is_archived=False,
                 academic_year=ay,
                 quarter__in=(1, 2, 3, 4), grade__isnull=False):
             total += float(q.grade)
             count += 1
         for q in QuarterGrade.objects.filter(
                 student__school=school, class_name=cname,
+                student__is_archived=False,
                 academic_year=ay,
                 quarter=0, att_grade__isnull=False):
             total += float(q.att_grade)
@@ -2978,10 +2996,23 @@ def class_detail(request, school_id, class_name):
     if not is_academic_school(school):
         return redirect('school_list')
     ensure_class_subjects(school, class_name)
-    students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
-    total_count = students.count()
-    male_count = students.filter(gender='M').count()
-    female_count = students.filter(gender='F').count()
+    students = list(Student.objects.filter(
+        school=school, class_name=class_name).order_by('full_name'))
+    total_count = len(students)
+    male_count = sum(1 for s in students if s.gender == 'M')
+    female_count = sum(1 for s in students if s.gender == 'F')
+    # Exempt-from-grading map («Дар давлати дигар таҳсил мекунад») — one
+    # grouped query, attached per student for the edit dialog + badge.
+    exemption_map = active_exemption_map(s.id for s in students)
+    for s in students:
+        s.exemption = exemption_map.get(s.id)
+    # Archived (рафт) students of this class — collapsed section with a
+    # restore path; history is preserved, so re-enrollment never merges
+    # or loses anything.
+    archived_students = list(
+        Student.all_objects
+        .filter(school=school, class_name=class_name, is_archived=True)
+        .order_by('full_name'))
     subjects = ClassSubject.objects.filter(
         school=school, class_name=class_name, is_active=True,
         subject__in=official_subjects_for(school, class_name)
@@ -3024,6 +3055,7 @@ def class_detail(request, school_id, class_name):
         'non_graded': non_graded,
         'all_classes': all_classes,
         'empty_targets': empty_targets,
+        'archived_students': archived_students,
     })
 
 
@@ -3087,6 +3119,7 @@ def sticker_entry(request, school_id, class_name):
     for g in Grade.objects.filter(
         student__school=school,
         student__class_name=class_name,
+        student__is_archived=False,
         subject=subject,
         period='Холҳои ҷорӣ (Онлайн)',
         date=selected_date
@@ -3154,9 +3187,54 @@ def add_student(request, school_id, class_name):
         messages.error(request, 'Номи хонанда ворид карда шавад.')
         return redirect('class_detail', school_id=school.id, class_name=class_name)
     student_id = f"{school.name}__{class_name}__{full_name}"
-    if Student.objects.filter(id=student_id).exists():
+    today = datetime.date.today()
+    existing = Student.all_objects.filter(id=student_id).first()
+    if existing and not existing.is_archived:
         messages.warning(request, 'Хонанда бо ин ном аллакай вуҷуд дорад.')
+    elif existing:
+        # Same id re-enrollment — reactivate the archived row so every
+        # stored Grade/QuarterGrade comes back with it (no duplicate).
+        existing.is_archived = False
+        existing.archived_at = None
+        existing.save(update_fields=['is_archived', 'archived_at'])
+        StudentMovement.objects.create(
+            school=school, student=existing,
+            student_name=existing.full_name, class_name=class_name,
+            gender=existing.gender or '', movement_type='arrival',
+            date=today, created_by=request.user)
+        reactivate_class_subjects(school, class_name)
+        messages.success(request, 'Хонанда аз бойгонӣ барқарор шуд — таърихи ӯ ҳифз шудааст.')
     else:
+        # Cross-class rejoin: an archived student with the same name in a
+        # different class of this school is the same person — move the
+        # archived row (re-links all history) instead of a fresh identity.
+        archived_same = (Student.all_objects
+                         .filter(school=school, full_name=full_name,
+                                 is_archived=True)
+                         .exclude(class_name=class_name)
+                         .order_by('-archived_at').first())
+        if archived_same is not None:
+            try:
+                student = _move_student(
+                    school, archived_same, class_name, full_name)
+            except ValueError:
+                student = None
+            if student is not None:
+                student.is_archived = False
+                student.archived_at = None
+                student.save(update_fields=['is_archived', 'archived_at'])
+                StudentMovement.objects.create(
+                    school=school, student=student,
+                    student_name=student.full_name, class_name=class_name,
+                    gender=student.gender or '', movement_type='arrival',
+                    date=today, created_by=request.user)
+                reactivate_class_subjects(school, class_name)
+                messages.success(
+                    request,
+                    'Хонанда аз бойгонӣ барқарор шуд — таърихи ӯ ҳифз шудааст.')
+                return redirect(
+                    'class_detail', school_id=school.id,
+                    class_name=class_name)
         student = Student.objects.create(
             id=student_id,
             full_name=full_name,
@@ -3167,7 +3245,7 @@ def add_student(request, school_id, class_name):
             school=school, student=student,
             student_name=student.full_name, class_name=class_name,
             gender=student.gender or '', movement_type='arrival',
-            date=datetime.date.today(), created_by=request.user)
+            date=today, created_by=request.user)
         reactivate_class_subjects(school, class_name)
         messages.success(request, 'Хонанда илова шуд.')
     return redirect('class_detail', school_id=school.id, class_name=class_name)
@@ -3189,10 +3267,46 @@ def remove_student(request, school_id, class_name):
                 student_name=student.full_name, class_name=class_name,
                 gender=student.gender or '', movement_type='departure',
                 date=datetime.date.today(), created_by=request.user)
-            student.delete()
-            messages.success(request, 'Хонанда хориҷ карда шуд.')
+            # Soft-delete: the row and every grade stay in the database —
+            # roster queries hide archived students automatically.
+            student.is_archived = True
+            student.archived_at = timezone.now()
+            student.save(update_fields=['is_archived', 'archived_at'])
+            messages.success(request, 'Хонанда хориҷ ва ба бойгонӣ гузаронида шуд.')
         except Student.DoesNotExist:
             messages.error(request, 'Хонанда ёфт нашуд.')
+    return redirect('class_detail', school_id=school.id, class_name=class_name)
+
+
+@login_required
+@require_POST
+def restore_student(request, school_id, class_name):
+    """Reactivate an archived student back into the same class roster."""
+    school = get_object_or_404(School, id=school_id)
+    if not is_academic_school(school) or not _can_manage_school(request.user, school):
+        return redirect('dashboard')
+    class_name = normalize_class_name(class_name)
+    student_id = request.POST.get('student_id', '').strip()
+    if student_id:
+        student = (Student.all_objects
+                   .filter(id=student_id, school=school,
+                           class_name=class_name, is_archived=True)
+                   .first())
+        if student is None:
+            messages.error(request, 'Хонандаи бойгонӣ ёфт нашуд.')
+        else:
+            student.is_archived = False
+            student.archived_at = None
+            student.save(update_fields=['is_archived', 'archived_at'])
+            StudentMovement.objects.create(
+                school=school, student=student,
+                student_name=student.full_name, class_name=class_name,
+                gender=student.gender or '', movement_type='arrival',
+                date=datetime.date.today(), created_by=request.user)
+            reactivate_class_subjects(school, class_name)
+            messages.success(
+                request,
+                'Хонанда аз бойгонӣ барқарор шуд — таърихи ӯ ҳифз шудааст.')
     return redirect('class_detail', school_id=school.id, class_name=class_name)
 
 
@@ -3239,6 +3353,40 @@ def edit_student(request, school_id, class_name):
     ensure_class_subjects(school, target_class)
     reactivate_class_subjects(school, target_class)
     _deactivate_empty_class(school, class_name)
+
+    # «Дар давлати дигар таҳсил мекунад» exemption — set directly by
+    # завуч/директор in this same edit dialog (no approval workflow).
+    exempt_on = request.POST.get('exempt_abroad') == 'on'
+    exemption = active_exemption_map([student.id]).get(student.id)
+    if exempt_on:
+        document = request.POST.get('exempt_document', '').strip()[:255]
+        end_raw = request.POST.get('exempt_end_date', '').strip()
+        end_date = None
+        if end_raw:
+            try:
+                end_date = datetime.date.fromisoformat(end_raw)
+            except ValueError:
+                end_date = None
+        if exemption is None:
+            StudentExemption.objects.create(
+                student=student, reason='abroad', document=document,
+                start_date=datetime.date.today(), end_date=end_date,
+                created_by=request.user)
+        else:
+            changed = False
+            if document != exemption.document:
+                exemption.document = document
+                changed = True
+            if end_raw and end_date != exemption.end_date:
+                exemption.end_date = end_date
+                changed = True
+            if changed:
+                exemption.save()
+    elif exemption is not None:
+        exemption.cancelled_at = timezone.now()
+        exemption.cancelled_by = request.user
+        exemption.save(update_fields=['cancelled_at', 'cancelled_by'])
+
     messages.success(request, f'Хонанда {full_name} таҳрир шуд.')
     # Stay on the source class so the zavuch can transfer the next student
     # without navigating back; the #student-ID fragment focuses the row.
@@ -3358,6 +3506,12 @@ def grade_entry(request, school_id, class_name, subject):
         students = Student.objects.filter(
             school=school, class_name=class_name
         ).order_by('full_name')
+    students = list(students)
+    # «Дар давлати дигар таҳсил мекунад» exemptions: blue indicators in the
+    # journal + removal from the norm denominator (one grouped query).
+    exemption_map = active_exemption_map(s.id for s in students)
+    for s in students:
+        s.exemption = exemption_map.get(s.id)
 
     if request.method == 'POST':
         if not can_edit_grade_journal(request.user, school, class_name, subject):
@@ -3569,6 +3723,7 @@ def grade_entry(request, school_id, class_name, subject):
     for g in Grade.objects.filter(
         student__school=school,
         student__class_name=class_name,
+        student__is_archived=False,
         subject=subject,
         period='Холҳои ҷорӣ (Онлайн)',
         date=selected_date,
@@ -3739,6 +3894,7 @@ def grade_entry(request, school_id, class_name, subject):
             for row in Grade.objects.filter(
                 student__school=school,
                 student__class_name=class_name,
+                student__is_archived=False,
                 subject=subject,
                 period='Холҳои ҷорӣ (Онлайн)',
                 date=selected_date,
@@ -3851,10 +4007,12 @@ def grade_entry(request, school_id, class_name, subject):
         'date_is_control': date_is_control,
         'future_date': selected_date > timezone.localdate(),
         'work_type_choices': work_type_choices(),
+        'exemption_map': exemption_map,
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — display-only, never gates grade entry.
         'journal': _journal_norm_status(
-            class_name, subject, class_subject, students, timezone.localdate()),
+            class_name, subject, class_subject, students,
+            timezone.localdate(), exempt_ids=set(exemption_map)),
     })
 
 
@@ -3920,6 +4078,11 @@ def monthly_journal(request, school_id, class_name, subject):
         students = list(Student.objects.filter(
             school=school, class_name=class_name
         ).order_by('full_name'))
+    # «Дар давлати дигар таҳсил мекунад» exemptions: blue indicators in
+    # the student column + removal from the norm denominator (one query).
+    exemption_map = active_exemption_map(s.id for s in students)
+    for s in students:
+        s.exemption = exemption_map.get(s.id)
 
     # A regular teacher who reached this point passed the can_view gate
     # above, which for ROLE_TEACHER delegates to can_edit_grade_journal —
@@ -4125,7 +4288,8 @@ def monthly_journal(request, school_id, class_name, subject):
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — distinct metrics, one aggregate query.
         'journal': _journal_norm_status(
-            class_name, subject, class_subject, students, timezone.localdate()),
+            class_name, subject, class_subject, students,
+            timezone.localdate(), exempt_ids=set(exemption_map)),
     })
 
 
@@ -4272,11 +4436,13 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
         skey = ('student', item.get('student_id'))
         student = ctx.get(skey)
         if student is None:
-            student = Student.objects.select_related('school').get(
+            student = Student.all_objects.select_related('school').get(
                 pk=item.get('student_id'))
             ctx[skey] = student
     except (Student.DoesNotExist, AttributeError, ValueError, TypeError):
         return False, 'Хонанда ёфт нашуд.'
+    if student.is_archived:
+        return False, 'Хонанда ба бойгонӣ гузаронида шудааст.'
     subject = normalize_subject(str(item.get('subject', '')))
     class_name = normalize_class_name(student.class_name)
     pkey = ('can_edit', student.school_id, class_name, subject)
@@ -5088,10 +5254,23 @@ def import_excel(request, class_name=None, school_id=None):
                     c_name = target_class
     
                 student_id = f"{school.name}__{c_name}__{full_name}"
-                student, _ = Student.objects.update_or_create(
+                was_archived = (Student.all_objects
+                                .filter(id=student_id, is_archived=True)
+                                .exists())
+                student, _ = Student.all_objects.update_or_create(
                     id=student_id,
-                    defaults={'full_name': full_name, 'class_name': c_name, 'school': school}
+                    defaults={'full_name': full_name, 'class_name': c_name,
+                              'school': school, 'is_archived': False,
+                              'archived_at': None}
                 )
+                if was_archived:
+                    StudentMovement.objects.create(
+                        school=school, student=student,
+                        student_name=full_name, class_name=c_name,
+                        gender=student.gender or '',
+                        movement_type='arrival',
+                        date=datetime.date.today(),
+                        created_by=request.user)
     
                 for col in df.columns:
                     if col in fixed_cols:
@@ -5148,9 +5327,11 @@ def save_grade_ajax(request):
             return JsonResponse({'success': False, 'message': 'Далелҳои нокифоя.'}, status=200)
 
         try:
-            student = Student.objects.get(id=student_id)
+            student = Student.all_objects.get(id=student_id)
         except Student.DoesNotExist:
             return JsonResponse({'success': False, 'message': 'Хонанда ёфт нашуд.'}, status=200)
+        if student.is_archived:
+            return JsonResponse({'success': False, 'message': 'Хонанда ба бойгонӣ гузаронида шудааст.'}, status=200)
 
         class_name = normalize_class_name(student.class_name)
 
@@ -5793,6 +5974,7 @@ def assessment_toggle(request):
             for g in Grade.objects.filter(
                     student__school=cs.school,
                     student__class_name=cs.class_name,
+                    student__is_archived=False,
                     subject=cs.subject,
                     period='Холҳои ҷорӣ (Онлайн)',
                     date=date, lesson=lesson,
@@ -6059,7 +6241,9 @@ def all_student_gpas():
 
 
 def student_detail(request, student_id):
-    student = get_object_or_404(Student, id=student_id)
+    # all_objects: an archived (рафт) student's history page stays
+    # readable for authorized staff — the roster only hides them.
+    student = get_object_or_404(Student.all_objects, id=student_id)
     if request.user.is_authenticated and not has_school_access(request.user, student.school):
         return redirect('dashboard')
 
@@ -7515,6 +7699,7 @@ def _compute_school_readiness_payload(schools, gpa_map):
     )
     grade_counts = dict(
         Grade.objects.filter(student__school_id__in=school_ids,
+                             student__is_archived=False,
                              date__range=(q_start, q_end))
         .values_list('student__school_id').annotate(n=Count('id'))
     )
@@ -7539,6 +7724,7 @@ def _compute_school_readiness_payload(schools, gpa_map):
             class_subject__school_id__in=school_ids,
             class_subject__is_active=True,
             group__is_active=True,
+            student__is_archived=False,
     ).values('class_subject_id', 'class_subject__subject', 'group_id',
              'student_id'):
         gkey = (m['class_subject_id'], m['group_id'])
@@ -7558,6 +7744,7 @@ def _compute_school_readiness_payload(schools, gpa_map):
     group_student_scored = defaultdict(lambda: defaultdict(int))
     for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
+            student__is_archived=False,
             date__range=(q_start, q_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score',
@@ -8658,7 +8845,7 @@ def movement_add(request):
     if gender not in ('M', 'F'):
         from .gender_detector import detect_student_gender
         gender = detect_student_gender(full_name) or ''
-    student = Student.objects.filter(
+    student = Student.all_objects.filter(
         school=school, class_name=class_name,
         full_name=full_name).first()
     StudentMovement.objects.create(
@@ -8723,7 +8910,7 @@ def movement_edit(request):
     if gender not in ('M', 'F'):
         from .gender_detector import detect_student_gender
         gender = detect_student_gender(full_name) or ''
-    movement.student = Student.objects.filter(
+    movement.student = Student.all_objects.filter(
         school=school, class_name=class_name,
         full_name=full_name).first()
     movement.student_name = full_name

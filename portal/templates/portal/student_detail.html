@@ -219,6 +219,11 @@
     <div class="profile-info">
         <h1>{{ student.full_name }}</h1>
         <div class="profile-meta">🏫 {{ student.school.name }} &nbsp;|&nbsp; 🎓 Синф {{ student.class_name }}</div>
+        {% if student.is_archived %}
+        <div class="profile-meta" style="margin-top:0.5rem;">
+            <span style="display:inline-block; background:rgba(255,255,255,0.18); border:1px solid rgba(255,255,255,0.5); border-radius:1rem; padding:0.3rem 0.9rem; font-weight:700;">🗄️ Бойгонӣ — аз мактаб рафтааст{% if student.archived_at %} ({{ student.archived_at|date:'d.m.Y' }}){% endif %}</span>
+        </div>
+        {% endif %}
     </div>
     {% if not non_graded %}
     <div class="profile-gpa">

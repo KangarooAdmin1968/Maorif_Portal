@@ -184,7 +184,7 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
   <tbody>
     {% for row in table_rows %}
     <tr>
-      <td class="stu-cell">{{ forloop.counter }}. {{ row.student.full_name }}</td>
+      <td class="stu-cell">{{ forloop.counter }}. {{ row.student.full_name }}{% if row.student.exemption %}<span title="{{ row.student.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
       {% for c in row.cells %}
       <td {% if c.editable %}class="mcell-editable" tabindex="-1" data-cellkey="{{ row.student.id }}|{{ c.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ row.student.id }}" data-date="{{ c.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}<span class="{% if it.control %}cell-control{% elif it.absent %}cell-absent{% endif %}"{% if it.control %} style="background:#fee2e2;border-radius:0.2rem;padding:0 0.2rem;"{% endif %}>{{ it.text }}</span>{% if not forloop.last %} {% endif %}{% endfor %}</td>
       {% endfor %}

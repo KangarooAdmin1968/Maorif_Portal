@@ -413,19 +413,22 @@ def reactivate_class_subjects(school, class_name, require_students=True):
 
 def school_gpa(school):
     return _avg_canonical_score(Grade.objects.filter(
-        student__school=school, score__isnull=False))
+        student__school=school, student__is_archived=False,
+        score__isnull=False))
 
 
 def class_gpa(school_name, class_name):
     return _avg_canonical_score(Grade.objects.filter(
         student__school__name=school_name,
         student__class_name=class_name,
+        student__is_archived=False,
         score__isnull=False))
 
 
 def subject_gpa(subject):
     return _avg_canonical_score(Grade.objects.filter(
-        subject=subject, score__isnull=False))
+        subject=subject, student__is_archived=False,
+        score__isnull=False))
 
 
 def schools_leaderboard():
@@ -536,12 +539,16 @@ def parse_import_excel(school, class_name, file_obj):
         c_name = normalize_class_name(c_name)
         imported_classes.add(c_name)
 
-        student, _ = Student.objects.update_or_create(
+        student, _ = Student.all_objects.update_or_create(
             id=f"{school.name}__{c_name}__{ism}",
             defaults={
                 'full_name': ism,
                 'class_name': c_name,
                 'school': school,
+                # Import re-enrolls: an archived row with the same id is
+                # reactivated instead of colliding on the primary key.
+                'is_archived': False,
+                'archived_at': None,
             }
         )
 

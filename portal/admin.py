@@ -9,7 +9,7 @@ from .forms import ClassSubjectAdminForm, BulkClassSubjectForm
 from .models import (
     School, Teacher, Student, Grade, QuarterGrade, QuarterLock,
     ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth,
-    SubjectDeactivationRequest, StudentMovement,
+    SubjectDeactivationRequest, StudentMovement, StudentExemption,
     Lesson, Assessment, SubjectAvailability,
     normalize_class_name, normalize_subject,
 )
@@ -39,9 +39,14 @@ class TeacherAdmin(admin.ModelAdmin):
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
-    list_display = ['id', 'full_name', 'class_name', 'school', 'gender']
-    list_filter = ['school', 'class_name', 'gender']
+    list_display = ['id', 'full_name', 'class_name', 'school', 'gender',
+                    'is_archived']
+    list_filter = ['school', 'class_name', 'gender', 'is_archived']
     search_fields = ['full_name', 'id']
+
+    def get_queryset(self, request):
+        # The default manager hides archived (рафт) rows — admin sees all.
+        return Student.all_objects.get_queryset()
 
 
 @admin.register(StudentMovement)
@@ -51,6 +56,15 @@ class StudentMovementAdmin(admin.ModelAdmin):
     list_filter = ['movement_type', 'school', 'academic_year', 'is_manual']
     search_fields = ['student_name', 'class_name']
     date_hierarchy = 'date'
+
+
+@admin.register(StudentExemption)
+class StudentExemptionAdmin(admin.ModelAdmin):
+    list_display = ['student', 'reason', 'start_date', 'end_date',
+                    'document', 'created_by', 'cancelled_at']
+    list_filter = ['reason', 'cancelled_at', 'student__school']
+    search_fields = ['student__full_name']
+    date_hierarchy = 'start_date'
 
 
 @admin.register(Grade)

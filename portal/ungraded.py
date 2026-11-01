@@ -19,6 +19,7 @@ from collections import defaultdict
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from .exemptions import active_exemption_map
 from .models import Student, TeacherProfile
 from .utils import (class_numeric_part, normalize_class_name,
                     normalize_subject)
@@ -78,10 +79,16 @@ def collect_ungraded_students(school, quarter, today=None):
         by_class[st.class_name].append(st)
     teacher_names = _cs_teacher_names(class_subjects)
 
+    # Exempt students (дар давлати дигар таҳсил мекунад) are on the roster
+    # but grading them is currently not required — they never land here.
+    exempt_ids = set(active_exemption_map(s.id for s in students))
+
     rows = []
     for cs in class_subjects:
         norm = normalize_subject(cs.subject)
         for st in by_class.get(cs.class_name, ()):
+            if st.id in exempt_ids:
+                continue
             if marks.get(st.id, {}).get(norm) is None:
                 rows.append({
                     'student': st.full_name,

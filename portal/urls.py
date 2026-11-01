@@ -15,6 +15,7 @@ urlpatterns = [
     path('school/<int:school_id>/class/<str:class_name>/stickers/', views.sticker_entry, name='sticker_entry'),
     path('school/<int:school_id>/class/<str:class_name>/student/add/', views.add_student, name='add_student'),
     path('school/<int:school_id>/class/<str:class_name>/student/remove/', views.remove_student, name='remove_student'),
+    path('school/<int:school_id>/class/<str:class_name>/student/restore/', views.restore_student, name='restore_student'),
     path('school/<int:school_id>/class/<str:class_name>/student/edit/', views.edit_student, name='edit_student'),
     path('school/<int:school_id>/class/<str:class_name>/transfer/', views.transfer_class, name='transfer_class'),
     path('school/<int:school_id>/class/<str:class_name>/grade/<str:subject>/', views.grade_entry, name='grade_entry'),

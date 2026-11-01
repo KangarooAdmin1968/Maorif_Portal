@@ -13,8 +13,9 @@ from django.db.models import Count, Min
 
 from .class_report import merged_quarter_marks
 from .curriculum_hours import UNGRADED_SUBJECTS
+from .exemptions import active_exemption_map
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
-from .models import ClassSubject, Grade, Student, normalize_subject
+from .models import ClassSubject, Grade, Student, StudentExemption, normalize_subject
 from .utils import class_numeric_part
 
 # Academic-year order: September..August; quarter bounds come from the
@@ -97,6 +98,7 @@ def collect_attendance_control(school, period, today=None):
 
     counts = (Grade.objects
               .filter(student__school=school,
+                      student__is_archived=False,
                       date__gte=start, date__lte=end,
                       attendance__in=('+', '-'))
               .values('student__class_name', 'attendance')
@@ -138,6 +140,7 @@ def collect_absence_students(school, period, min_hours=3, today=None):
     start, end, label, value = _period_bounds(period, ay, today)
     rows = (Grade.objects
             .filter(student__school=school,
+                    student__is_archived=False,
                     date__gte=start, date__lte=end,
                     attendance='-')
             .values('student__class_name', 'student__full_name')
@@ -162,6 +165,7 @@ def collect_behavior_issues(school):
     latest_by_student = defaultdict(dict)
     for sid, subj, val in (Grade.objects
             .filter(student__school=school,
+                    student__is_archived=False,
                     behavior_score__isnull=False)
             .order_by('-date', '-pk')
             .values_list('student_id', 'subject', 'behavior_score')):
@@ -212,9 +216,21 @@ def collect_teacher_control(school, quarter, today=None):
               Student.objects.filter(school=school)
               .exclude(class_name='')
               .values('class_name').annotate(n=Count('id'))}
+    # Exempt students (дар давлати дигар таҳсил мекунад) stay on the
+    # roster but never count as a grading gap — subtract them from each
+    # class's expected total.
+    exempt_per_class = {r['student__class_name']: r['n'] for r in
+                        StudentExemption.objects
+                        .filter(student__school=school,
+                                cancelled_at__isnull=True,
+                                start_date__lte=today)
+                        .exclude(end_date__lt=today)
+                        .values('student__class_name')
+                        .annotate(n=Count('student', distinct=True))}
     graded = {(r['student__class_name'], r['subject']): r['n'] for r in
               Grade.objects
               .filter(student__school=school,
+                      student__is_archived=False,
                       date__gte=start, date__lte=end,
                       score__isnull=False)
               .values('student__class_name', 'subject')
@@ -226,9 +242,10 @@ def collect_teacher_control(school, quarter, today=None):
             continue  # grade-1 classes follow the sticker journal, not marks
         if normalize_subject(cs.subject) in UNGRADED_SUBJECTS:
             continue  # e.g. СОАТИ ТАРБИЯВӢ — no grades are required
-        total = roster.get(cs.class_name, 0)
-        got = graded.get(
-            (cs.class_name, normalize_subject(cs.subject)), 0)
+        total = max(0, roster.get(cs.class_name, 0)
+                    - exempt_per_class.get(cs.class_name, 0))
+        got = min(graded.get(
+            (cs.class_name, normalize_subject(cs.subject)), 0), total)
         if got >= total:
             continue  # fully graded — only the gaps are listed
         if cs.allocated_teacher_id:
@@ -282,11 +299,16 @@ def collect_grading_control(school, quarter, today=None):
         Student.objects.filter(school=school), subjects, quarter, ay)
     sums = {sid: [sum(map(float, m.values())), len(m)]
             for sid, m in marks.items() if m}
+    # Exempt students stay counted in totals but never land in the
+    # ungraded/low lists — grading them is currently not required.
+    exempt_ids = set(active_exemption_map(students.keys()))
 
     totals = {'total': 0, 'graded': 0, 'ungraded': 0, 'low': 0}
     for sid, st in students.items():
         cls = st['class_name']
         totals['total'] += 1
+        if sid in exempt_ids:
+            continue
         if sid not in sums:
             per_class[cls]['ungraded'].append(st['full_name'])
             totals['ungraded'] += 1

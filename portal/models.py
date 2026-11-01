@@ -4,6 +4,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.conf import settings
+from django.utils import timezone
 from django.utils.functional import cached_property
 
 
@@ -108,11 +109,28 @@ class Teacher(models.Model):
         return f"{self.name} ({self.school})"
 
 
+class ActiveStudents(models.Manager):
+    """Default manager: only non-archived students.
+
+    Roster queries (journals, norms, counts, reports) stay unchanged —
+    archived (рафт) students simply do not appear. ``all_objects`` reaches
+    every row for write paths, admin and re-enrollment. The unfiltered
+    manager is also declared Meta.base_manager so related-object lookups
+    (``grade.student``, cascades, dumps) still resolve archived rows.
+    """
+
+    def get_queryset(self):
+        return super().get_queryset().filter(is_archived=False)
+
+
 class Student(models.Model):
     GENDER_CHOICES = [
         ('M', 'Писар'),
         ('F', 'Духтар'),
     ]
+
+    objects = ActiveStudents()
+    all_objects = models.Manager()
 
     id = models.CharField('Рамзи ID', max_length=255, primary_key=True)
     full_name = models.CharField('Ному насаб', max_length=255)
@@ -126,8 +144,14 @@ class Student(models.Model):
         null=True,
         db_index=True,
     )
+    # Soft-delete for «Рафт»: the row (and all its grades) stays in the
+    # database; roster queries hide it, archived students keep their
+    # history and can be reactivated on re-enrollment.
+    is_archived = models.BooleanField('Бойгонӣ', default=False)
+    archived_at = models.DateTimeField('Санаи бойгонӣ', blank=True, null=True)
 
     class Meta:
+        base_manager_name = 'all_objects'
         verbose_name = 'Хонанда'
         verbose_name_plural = 'Хонандагон'
         ordering = ['school', 'class_name', 'full_name']
@@ -302,6 +326,59 @@ class StudentMovement(models.Model):
                 self.date.year if self.date.month >= 9
                 else self.date.year - 1)
         super().save(*args, **kwargs)
+
+
+class StudentExemption(models.Model):
+    """Муваққатан аз баҳогузорӣ озодшуда — e.g. «Дар давлати дигар таҳсил
+    мекунад».
+
+    The student stays on the roster (counted, listed, shown in every
+    journal) but is exempt from grading norms and ungraded/deficiency
+    lists while the exemption is in force. This is a DISTINCT status from
+    is_archived (рафт): archived students leave the roster entirely.
+    Set directly by завуч/директор in the class edit dialog — no
+    proposal/approval workflow.
+    """
+    REASON_CHOICES = [
+        ('abroad', 'Дар давлати дигар таҳсил мекунад'),
+        ('temporary', 'Муваққатан баҳогузорӣ карда намешавад'),
+        ('other', 'Сабаби дигар'),
+    ]
+
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE,
+        related_name='exemptions', verbose_name='Хонанда')
+    reason = models.CharField(
+        'Сабаб', max_length=20, choices=REASON_CHOICES, default='abroad')
+    # Free-text reference (document name/number) — no file upload.
+    document = models.CharField('Ҳуҷҷати асос', max_length=255, blank=True)
+    start_date = models.DateField('Санаи оғоз')
+    # NULL = бемаҳдуд — the exemption stays in force until cancelled.
+    end_date = models.DateField('Санаи анҷом', blank=True, null=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='created_exemptions', verbose_name='Сабткунанда')
+    created_at = models.DateTimeField(auto_now_add=True)
+    cancelled_at = models.DateTimeField('Санаи бекоркунӣ', blank=True, null=True)
+    cancelled_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='cancelled_exemptions', verbose_name='Бекоркунанда')
+
+    class Meta:
+        verbose_name = 'Истиснои хонанда'
+        verbose_name_plural = 'Истисноҳои хонандагон'
+        ordering = ['-start_date', '-id']
+
+    def __str__(self):
+        return f"{self.student} — {self.get_reason_display()}"
+
+    def is_active(self, today=None):
+        today = today or timezone.localdate()
+        return (
+            self.cancelled_at is None
+            and self.start_date <= today
+            and (self.end_date is None or self.end_date >= today)
+        )
 
 
 class ClassSubject(models.Model):

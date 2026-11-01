@@ -39,10 +39,11 @@ class MovementRecordingTests(GoldenBase):
             {'student_id': self.s2.id})
         m = StudentMovement.objects.get(school=self.school_a)
         self.assertEqual(m.movement_type, 'departure')
-        # Snapshot survives the Student row's deletion.
+        # Snapshot survives; with soft-delete the Student row itself also
+        # stays (archived) and the movement keeps pointing at it.
         self.assertEqual(m.student_name, 'Мадина Каримова')
         self.assertEqual(m.gender, 'F')
-        self.assertIsNone(StudentMovement.objects.get().student)
+        self.assertEqual(StudentMovement.objects.get().student_id, self.s2.id)
 
     def test_class_transfer_writes_no_movement(self):
         # Same-school move (7-А -> 7-Б) is not a school-level move.

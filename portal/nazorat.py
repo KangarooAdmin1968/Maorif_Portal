@@ -16,7 +16,10 @@ from .curriculum_hours import UNGRADED_SUBJECTS
 from .exemptions import active_exemption_map
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
 from .models import ClassSubject, Grade, Student, StudentExemption, normalize_subject
-from .utils import class_numeric_part
+from .norm_pace import (PACE_BEHIND, PACE_CRITICAL, PACE_EXEMPT, PACE_MET,
+                        norm_pace_context)
+from .ungraded import _cs_teacher_names
+from .utils import canonical_grade_rows, class_numeric_part
 
 # Academic-year order: September..August; quarter bounds come from the
 # official calendar in portal.academic_calendar.
@@ -336,4 +339,122 @@ def collect_grading_control(school, quarter, today=None):
         'academic_year': ay,
         'totals': totals,
         'classes': classes,
+    }
+
+
+def collect_norm_tree(school, today=None):
+    """Омӯзгор → Синф/Фан → Хонанда norm-pace tree for the Назорат tab.
+
+    Reuses the journals' own math: norm_pace_context consumes the scored
+    quarter-row counts, which here come from ONE school-wide query
+    bucketed by (student, subject) — never a per-class-subject query loop.
+    Class order, teacher names and the graded-subject scope follow the
+    same rules as collect_teacher_control.
+    """
+    from .views import _current_quarter_bounds  # local import avoids cycles
+
+    today = today or datetime.date.today()
+    q_start, q_end = _current_quarter_bounds(today)
+
+    class_subjects = [
+        cs for cs in (ClassSubject.objects
+                      .filter(school=school, is_active=True)
+                      .select_related('teacher', 'allocated_teacher')
+                      .order_by('class_name', 'subject'))
+        if class_numeric_part(cs.class_name) in LEVELS
+        and normalize_subject(cs.subject) not in UNGRADED_SUBJECTS
+    ]
+    if not class_subjects:
+        return {'teachers': [], 'indicators': {
+            'ungraded': 0, 'behind': 0, 'met': 0, 'exempt': 0}}
+
+    class_names = {cs.class_name for cs in class_subjects}
+    subjects = {normalize_subject(cs.subject) for cs in class_subjects}
+    students = [
+        s for s in (Student.objects.filter(school=school)
+                    .exclude(class_name='').order_by('full_name'))
+        if s.class_name in class_names
+    ]
+    by_class = defaultdict(list)
+    for st in students:
+        by_class[st.class_name].append(st)
+
+    exempt_map = active_exemption_map(s.id for s in students)
+
+    # One quarter-wide scored-row query — the same pool
+    # _journal_norm_status reads per class-subject — bucketed by
+    # (student, subject) so each class-subject reuses the shared counts.
+    per_subject = defaultdict(lambda: defaultdict(int))
+    for g in canonical_grade_rows(Grade.objects.filter(
+            student__in=students,
+            subject__in=subjects,
+            date__range=(q_start, q_end),
+            score__isnull=False).iterator()):
+        per_subject[normalize_subject(g.subject)][g.student_id] += 1
+
+    teacher_names = _cs_teacher_names(class_subjects)
+    by_teacher = defaultdict(list)
+    # Student-level indicators: behind = ≥1 graded subject behind/critical;
+    # met = on pace in EVERY graded subject; ungraded = zero scored rows in
+    # ≥1 graded subject; exempt = active exemption row.
+    flagged = defaultdict(set)
+    for cs in class_subjects:
+        cs_students = by_class.get(cs.class_name, [])
+        if not cs_students:
+            continue
+        pace = norm_pace_context(
+            cs.class_name, cs.subject, cs, cs_students,
+            today, exempt_map, per_subject[normalize_subject(cs.subject)])
+        # Detail rows list only the students a завуч acts on — зард/сурх
+        # and кабуд. Students on pace surface through the «Иҷро: n» chip,
+        # which keeps the page light when a class is in order.
+        order = {PACE_CRITICAL: 0, PACE_BEHIND: 1, PACE_EXEMPT: 2}
+        rows = sorted(
+            (r for r in pace['by_id'].values()
+             if r['dot'] and r['status'] != PACE_MET),
+            key=lambda r: (order.get(r['status'], 9),
+                           r['student'].full_name))
+        by_teacher[teacher_names.get(cs.id) or 'таъйин нашудааст'].append({
+            'class_name': cs.class_name, 'subject': cs.subject,
+            'rows': rows,
+            'n_ungraded': len(pace['ungraded']),
+            'n_behind': len(pace['behind']),
+            'n_met': len(pace['met']),
+            'n_exempt': len(pace['exempt']),
+        })
+        for rec in pace['behind']:
+            flagged[rec['student'].id].add('behind')
+        for rec in pace['ungraded']:
+            flagged[rec['student'].id].add('ungraded')
+        for rec in pace['met']:
+            flagged[rec['student'].id].add('met')
+        for rec in pace['exempt']:
+            flagged[rec['student'].id].add('exempt')
+
+    teachers = [{'name': name,
+                 'items': sorted(
+                     items,
+                     key=lambda i: (class_numeric_part(i['class_name']) or 0,
+                                    i['class_name'], i['subject']))}
+                for name, items in sorted(by_teacher.items())]
+
+    # «Меъёрро иҷро кардаанд» counts a student only when EVERY graded
+    # subject is on pace — a single lagging subject removes them.
+    graded_students = {s.id for cs in class_subjects
+                       for s in by_class.get(cs.class_name, [])}
+    behind_ids = {sid for sid, flags in flagged.items()
+                  if 'behind' in flags}
+    met_ids = {sid for sid in graded_students
+               if sid not in behind_ids
+               and 'met' in flagged.get(sid, ())}
+    return {
+        'teachers': teachers,
+        'indicators': {
+            'ungraded': len({sid for sid, flags in flagged.items()
+                             if 'ungraded' in flags}),
+            'behind': len(behind_ids),
+            'met': len(met_ids),
+            'exempt': len({sid for sid, flags in flagged.items()
+                           if 'exempt' in flags}),
+        },
     }

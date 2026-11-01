@@ -99,12 +99,16 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
   <span class="js-detail">{{ journal.done }}/{{ journal.required }} хол · Меъори пур: {{ journal.students_met }}/{{ journal.students }} хонанда · Иҷрои меъёр то имрӯз: {{ journal.fulfillment }}%</span>
 </div>
 
+{% include 'portal/_pace_assets.html' %}
+{% include 'portal/_pace_panel.html' %}
+
 <div class="tabs">
   <button type="button" class="tab-btn active" data-tab="daily" onclick="openTab('daily', this)">Холҳои ҳаррӯза</button>
   <button type="button" class="tab-btn" data-tab="quarterly" onclick="openTab('quarterly', this)">Ҷадвали чорякҳо</button>
 </div>
 
 <div id="daily" class="tab-content active">
+  {% include 'portal/_pace_legend.html' %}
   <div class="toolbar" style="margin-bottom:1rem;">
     <label for="daily-date">Сана:</label>
     <button type="button" class="btn btn-secondary mini-btn" onclick="navDate(-1)" title="Рӯзи қаблӣ">◀</button>
@@ -178,7 +182,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
       {% for s in students %}
       <tr>
         <td>{{ forloop.counter }}</td>
-        <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
+        <td>{% if s.pace.dot %}<span class="pace-dot pace-{{ s.pace.status }}" title="{{ s.pace.tip }}" data-tip="{{ s.pace.tip }}"></span>{% endif %}<a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
         <td>
           {% if non_graded %}
           <select name="score_{{ s.id }}" class="daily-input grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score" {% if daily_quarter_locked or future_date %}disabled{% endif %}>
@@ -250,7 +254,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
         {% for s in students %}
         <tr>
           <td>{{ forloop.counter }}</td>
-          <td><a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
+          <td>{% if s.pace.dot %}<span class="pace-dot pace-{{ s.pace.status }}" title="{{ s.pace.tip }}" data-tip="{{ s.pace.tip }}"></span>{% endif %}<a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
           {% for q in quarter_numbers %}
           <td>
             {% comment %}Quarter grades are derived automatically — display-only

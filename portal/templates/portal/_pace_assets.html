@@ -1,0 +1,63 @@
+{% comment %}Norm-pace indicator assets — include once per journal page.
+The dot is 7px, inline before the student name; the tooltip is one shared
+element populated from data-tip (no extra server requests).{% endcomment %}
+<style>
+.pace-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 0.3rem; vertical-align: middle; cursor: help; }
+.pace-dot.pace-met { background: #16a34a; }
+.pace-dot.pace-behind { background: #eab308; }
+.pace-dot.pace-critical { background: #dc2626; }
+.pace-dot.pace-exempt { background: #2563eb; }
+.pace-legend { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; font-size: 0.8rem; color: #374151; margin-bottom: 0.6rem; }
+.pace-legend .pl-item { display: inline-flex; align-items: center; gap: 0.3rem; }
+.pace-legend .pace-dot { margin-right: 0; cursor: default; }
+.pace-panel { margin-bottom: 0.75rem; }
+details.pace-ctl { margin-bottom: 0.45rem; }
+details.pace-ctl > summary { display: inline-flex; align-items: center; padding: 0.4rem 0.9rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.88rem; font-weight: 600; border: 1px solid; list-style: none; }
+details.pace-ctl > summary::-webkit-details-marker { display: none; }
+details.pace-ctl[open] > summary { margin-bottom: 0.5rem; }
+details.pace-ctl.ctl-red > summary { background: #fee2e2; border-color: #ef4444; color: #991b1b; }
+details.pace-ctl.ctl-orange > summary { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
+details.pace-ctl.ctl-green > summary { background: #dcfce7; border-color: #22c55e; color: #166534; }
+details.pace-ctl.ctl-blue > summary { background: #dbeafe; border-color: #3b82f6; color: #1e40af; }
+.pace-ctl table.pace-table { border-collapse: collapse; width: 100%; font-size: 0.82rem; margin-bottom: 0.4rem; }
+.pace-table th, .pace-table td { border: 1px solid #e5e7eb; padding: 0.3rem 0.5rem; text-align: center; white-space: nowrap; }
+.pace-table th { background: #f3f4f6; font-weight: 600; }
+.pace-table td.nm { text-align: left; }
+.pace-table td.st { text-align: left; white-space: normal; }
+.pace-table td.rs { text-align: left; white-space: normal; font-size: 0.78rem; color: #4b5563; }
+.pace-empty { font-size: 0.85rem; color: #166534; margin: 0.3rem 0 0.6rem; }
+.pace-wrap { overflow-x: auto; }
+#pace-tip { position: fixed; z-index: 1200; max-width: 19rem; background: #111827; color: #f9fafb; font-size: 0.78rem; line-height: 1.45; padding: 0.5rem 0.7rem; border-radius: 0.5rem; display: none; white-space: pre-line; box-shadow: 0 6px 18px rgba(0,0,0,0.3); }
+@media (max-width: 768px) {
+  .pace-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 0.75rem; }
+  details.pace-ctl > summary { width: 100%; box-sizing: border-box; }
+}
+</style>
+<script>
+(function () {
+  var tipEl = null;
+  function hideTip() { if (tipEl) tipEl.style.display = 'none'; }
+  document.addEventListener('click', function (e) {
+    var dot = e.target.closest ? e.target.closest('.pace-dot') : null;
+    var text = dot && dot.getAttribute('data-tip');
+    if (!text) { hideTip(); return; }
+    if (!tipEl) {
+      tipEl = document.createElement('div');
+      tipEl.id = 'pace-tip';
+      document.body.appendChild(tipEl);
+    }
+    tipEl.textContent = text;
+    var r = dot.getBoundingClientRect();
+    tipEl.style.display = 'block';
+    var w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    var left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+    var top = r.bottom + 8;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    tipEl.style.left = left + 'px';
+    tipEl.style.top = top + 'px';
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideTip(); });
+})();
+</script>

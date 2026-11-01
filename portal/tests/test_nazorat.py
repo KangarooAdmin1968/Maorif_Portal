@@ -23,8 +23,14 @@ class NazoratTests(GoldenBase):
         resp = self.client.get(reverse('nazorat'))
         self.assertEqual(resp.status_code, 200)
         # s1 graded; s2 ungraded -> listed by name, s3 never leaks in.
+        # (The norm-pace tree may still render s1's name with her status —
+        # what must not happen is her landing in the ungraded list or any
+        # school-B data leaking in.)
         self.assertContains(resp, 'Мадина Каримова')
-        self.assertNotContains(resp, 'Фирӯз Раҳимов')
+        stats = resp.context['stats']
+        ungraded_names = [n for c in stats['classes'] for n in c['ungraded']]
+        self.assertNotIn('Фирӯз Раҳимов', ungraded_names)
+        self.assertIn('Мадина Каримова', ungraded_names)
         self.assertNotContains(resp, 'Ҷаҳонгир Назаров')
         # No school picker for a scoped zavuch.
         self.assertNotContains(resp, 'name="school_id"')
@@ -65,8 +71,9 @@ class NazoratTests(GoldenBase):
         stats = resp.context['stats']
         self.assertEqual(stats['totals']['graded'], 1)
         self.assertEqual(stats['totals']['ungraded'], 1)
-        self.assertNotContains(resp, 'Фирӯз Раҳимов')
-        self.assertContains(resp, 'Мадина Каримова')
+        ungraded_names = [n for c in stats['classes'] for n in c['ungraded']]
+        self.assertNotIn('Фирӯз Раҳимов', ungraded_names)
+        self.assertIn('Мадина Каримова', ungraded_names)
 
     def test_teacher_and_anonymous_denied(self):
         resp = self.client.get(reverse('nazorat'))

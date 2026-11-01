@@ -1,0 +1,20 @@
+{% if pace %}
+<div class="pace-panel">
+  <details class="pace-ctl ctl-red">
+    <summary>Хонандагоне, ки баҳо нагирифтаанд — {{ pace.ungraded|length }}</summary>
+    {% include 'portal/_pace_table.html' with rows=pace.ungraded %}
+  </details>
+  <details class="pace-ctl ctl-orange">
+    <summary>Хонандагоне, ки аз меъёр қафо мондаанд — {{ pace.behind|length }}</summary>
+    {% include 'portal/_pace_table.html' with rows=pace.behind %}
+  </details>
+  <details class="pace-ctl ctl-green">
+    <summary>Хонандагоне, ки меъёрро иҷро кардаанд — {{ pace.met|length }}</summary>
+    {% include 'portal/_pace_table.html' with rows=pace.met %}
+  </details>
+  <details class="pace-ctl ctl-blue">
+    <summary>Хонандагоне, ки баҳогузорӣ талаб карда намешавад — {{ pace.exempt|length }}</summary>
+    {% include 'portal/_pace_table.html' with rows=pace.exempt %}
+  </details>
+</div>
+{% endif %}

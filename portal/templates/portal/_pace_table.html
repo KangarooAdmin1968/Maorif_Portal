@@ -1,0 +1,44 @@
+{% load portal_extras %}
+{% if rows %}
+<div class="pace-wrap">
+<table class="pace-table">
+  <thead>
+    <tr>
+      <th>Ному насаб</th>
+      <th>Соатҳои ҳафтаина</th>
+      <th>Меъёри семоҳа</th>
+      <th>Меъёри то имрӯз</th>
+      <th>Холҳои ҷамъшуда</th>
+      <th>Холҳои боқимонда</th>
+      <th>Ҳолати баҳогузорӣ</th>
+      <th>Сабаби камбудӣ</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td class="nm"><a href="{% url 'student_detail' r.student.id %}">{{ r.student.full_name }}</a></td>
+      <td>{{ r.weekly_hours }}</td>
+      {% if r.status == 'exempt' %}
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td>—</td>
+      <td class="st"><span class="pace-dot pace-exempt"></span>{{ r.status_title }}</td>
+      <td class="rs">{{ r.reason }}</td>
+      {% else %}
+      <td>{{ r.norm }}</td>
+      <td>{{ r.planned }}</td>
+      <td>{{ r.actual }}</td>
+      <td>{{ r.needed }}</td>
+      <td class="st"><span class="pace-dot pace-{{ r.status }}" title="{{ r.tip }}" data-tip="{{ r.tip }}"></span>{{ r.status_title }}</td>
+      <td class="rs">{{ r.note }}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="pace-empty">✔ Ин рӯйхат холӣ аст.</p>
+{% endif %}

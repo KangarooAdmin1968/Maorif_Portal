@@ -295,6 +295,10 @@ def _journal_norm_status(class_name, subject, class_subject, students, today,
         'students_exempt': len(exempt),
         'status': _journal_status(done, met, graded),
         'fulfillment': _norm_fulfillment(done, required, _quarter_progress(today)),
+        # The same aggregated counts the pace monitor (norm_pace.py)
+        # reuses — exposing them here keeps the indicator math free of
+        # any extra SQL.
+        'per_student': dict(per_student),
     }
 
 
@@ -3972,6 +3976,17 @@ def grade_entry(request, school_id, class_name, subject):
                         5,
                     )
 
+    today = timezone.localdate()
+    journal = _journal_norm_status(
+        class_name, subject, class_subject, students,
+        today, exempt_ids=set(exemption_map))
+    from .norm_pace import norm_pace_context
+    pace = norm_pace_context(
+        class_name, subject, class_subject, students,
+        today, exemption_map, journal['per_student'])
+    for s in students:
+        s.pace = pace['by_id'].get(s.id)
+
     return render(request, 'portal/grade_entry.html', {
         'school': school,
         'class_name': class_name,
@@ -4010,9 +4025,8 @@ def grade_entry(request, school_id, class_name, subject):
         'exemption_map': exemption_map,
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — display-only, never gates grade entry.
-        'journal': _journal_norm_status(
-            class_name, subject, class_subject, students,
-            timezone.localdate(), exempt_ids=set(exemption_map)),
+        'journal': journal,
+        'pace': pace,
     })
 
 
@@ -4270,6 +4284,16 @@ def monthly_journal(request, school_id, class_name, subject):
         ]
         table_rows.append({'student': s, 'cells': row_cells})
 
+    journal = _journal_norm_status(
+        class_name, subject, class_subject, students,
+        today, exempt_ids=set(exemption_map))
+    from .norm_pace import norm_pace_context
+    pace = norm_pace_context(
+        class_name, subject, class_subject, students,
+        today, exemption_map, journal['per_student'])
+    for s in students:
+        s.pace = pace['by_id'].get(s.id)
+
     return render(request, 'portal/monthly_journal.html', {
         'school': school,
         'class_name': class_name,
@@ -4287,9 +4311,8 @@ def monthly_journal(request, school_id, class_name, subject):
         'class_subject_id': class_subject.id if class_subject else '',
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — distinct metrics, one aggregate query.
-        'journal': _journal_norm_status(
-            class_name, subject, class_subject, students,
-            timezone.localdate(), exempt_ids=set(exemption_map)),
+        'journal': journal,
+        'pace': pace,
     })
 
 
@@ -8620,8 +8643,8 @@ def nazorat(request):
         ABSENCE_MIN_OPTIONS, attendance_period_options,
         collect_absence_students, collect_attendance_control,
         collect_behavior_issues, collect_grading_control,
-        collect_teacher_control)
-    stats = attendance = teachers = absence = behavior = None
+        collect_norm_tree, collect_teacher_control)
+    stats = attendance = teachers = absence = behavior = norm_tree = None
     att_options = []
     try:
         abm = int(request.GET.get('abm', 3))
@@ -8638,6 +8661,7 @@ def nazorat(request):
         absence = collect_absence_students(
             school, request.GET.get('att'), min_hours=abm)
         behavior = collect_behavior_issues(school)
+        norm_tree = collect_norm_tree(school)
     return render(request, 'portal/nazorat.html', {
         'school': school,
         'schools': schools,
@@ -8652,6 +8676,7 @@ def nazorat(request):
         'absence_min_options': ABSENCE_MIN_OPTIONS,
         'abm': abm,
         'behavior': behavior,
+        'norm_tree': norm_tree,
     })
 
 

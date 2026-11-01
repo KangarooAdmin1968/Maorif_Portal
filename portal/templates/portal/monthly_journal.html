@@ -116,6 +116,9 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
 }
 </style>
 
+{% include 'portal/_pace_assets.html' %}
+{% include 'portal/_pace_legend.html' %}
+
 <div class="month-toolbar">
   <label for="month-input">Моҳ:</label>
   <a class="btn btn-secondary month-nav" href="?month={{ prev_month|date:'Y-m' }}" title="Моҳи қаблӣ">◀</a>
@@ -166,6 +169,8 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
   <span class="js-detail">{{ journal.done }}/{{ journal.required }} хол · Меъори пур: {{ journal.students_met }}/{{ journal.students }} хонанда · Иҷрои меъёр то имрӯз: {{ journal.fulfillment }}%</span>
 </div>
 
+{% include 'portal/_pace_panel.html' %}
+
 <div class="month-wrap">
 <table class="month-table">
   <thead>
@@ -184,7 +189,7 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
   <tbody>
     {% for row in table_rows %}
     <tr>
-      <td class="stu-cell">{{ forloop.counter }}. {{ row.student.full_name }}{% if row.student.exemption %}<span title="{{ row.student.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
+      <td class="stu-cell">{% if row.student.pace.dot %}<span class="pace-dot pace-{{ row.student.pace.status }}" title="{{ row.student.pace.tip }}" data-tip="{{ row.student.pace.tip }}"></span>{% endif %}{{ forloop.counter }}. {{ row.student.full_name }}{% if row.student.exemption %}<span title="{{ row.student.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
       {% for c in row.cells %}
       <td {% if c.editable %}class="mcell-editable" tabindex="-1" data-cellkey="{{ row.student.id }}|{{ c.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ row.student.id }}" data-date="{{ c.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}<span class="{% if it.control %}cell-control{% elif it.absent %}cell-absent{% endif %}"{% if it.control %} style="background:#fee2e2;border-radius:0.2rem;padding:0 0.2rem;"{% endif %}>{{ it.text }}</span>{% if not forloop.last %} {% endif %}{% endfor %}</td>
       {% endfor %}
@@ -226,7 +231,7 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
         </tr>
         {% for r in d.mini %}
         <tr>
-          <td class="mini-name">{{ r.name }}</td>
+          <td class="mini-name">{% with p=pace.by_id|dict_key:r.sid %}{% if p.dot %}<span class="pace-dot pace-{{ p.status }}" title="{{ p.tip }}" data-tip="{{ p.tip }}"></span>{% endif %}{% endwith %}{{ r.name }}</td>
           {% for c in r.cells %}
           <td class="mini-cell{% if c.editable %} mcell-editable{% endif %}"{% if c.editable %} tabindex="-1" data-cellkey="{{ r.sid }}|{{ d.date|date:'Y-m-d' }}|{{ c.lesson_id|default:'' }}" data-sid="{{ r.sid }}" data-date="{{ d.date|date:'Y-m-d' }}" data-lesson="{{ c.lesson_id|default:'' }}" data-att="{{ c.items.0.att|default:'' }}" data-beh="{{ c.items.0.beh|default:'' }}"{% endif %}>{% for it in c.items %}{{ it.text }}{% if not forloop.last %} {% endif %}{% endfor %}</td>
           {% endfor %}

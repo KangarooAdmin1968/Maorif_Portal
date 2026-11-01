@@ -35,6 +35,19 @@ details.pace-ctl.ctl-blue > summary { background: #dbeafe; border-color: #3b82f6
 </style>
 <script>
 (function () {
+  // Accordion: opening one control button closes the others in the
+  // same panel — one list visible at a time. Capture-phase delegation
+  // works even for elements parsed after this script runs.
+  document.addEventListener('toggle', function (e) {
+    var d = e.target;
+    if (!d.open || !d.classList || !d.classList.contains('pace-ctl')) return;
+    var panel = d.closest('.pace-panel');
+    if (!panel) return;
+    panel.querySelectorAll('details.pace-ctl[open]').forEach(function (o) {
+      if (o !== d) o.open = false;
+    });
+  }, true);
+
   var tipEl = null;
   function hideTip() { if (tipEl) tipEl.style.display = 'none'; }
   document.addEventListener('click', function (e) {

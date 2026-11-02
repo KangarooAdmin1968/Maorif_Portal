@@ -64,7 +64,7 @@
     <div class="nz-card"><div class="n">{{ stats.totals.total }}</div><div class="t">Хонандагон (синфҳои 2-11)</div></div>
     <div class="nz-card"><div class="n">{{ stats.totals.graded }}</div><div class="t">Баҳо гирифтаанд</div></div>
     <div class="nz-card warn"><div class="n">{{ stats.totals.ungraded }}</div><div class="t">Баҳо нагирифтаанд</div></div>
-    <div class="nz-card warn"><div class="n">{{ stats.totals.low }}</div><div class="t">Холҳои 1-3</div></div>
+    <a href="#low-grades" class="nz-card warn" style="text-decoration:none; color:inherit;"><div class="n">{{ stats.totals.low }}</div><div class="t">Холҳои 1-3</div></a>
     {% if norm_tree %}
     <div class="nz-card warn"><div class="n">{{ norm_tree.indicators.behind }}</div><div class="t">Аз меъёр қафо мондаанд</div></div>
     <div class="nz-card ok"><div class="n">{{ norm_tree.indicators.met }}</div><div class="t">Меъёрро иҷро кардаанд</div></div>
@@ -122,6 +122,32 @@
                     <td class="center">{{ cls.ungraded|length }}</td>
                 </tr>
                 {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<div class="doc-card" id="low-grades">
+    <h2>Хонандагоне, ки миёнаи холҳои чоряки {{ stats.quarter_ordinal }} дар ҳудуди 1–3 аст</h2>
+    {% if stats.totals.low == 0 %}
+        <p class="ok-note">✔ Хонандае бо миёнаи 1–3 нест.</p>
+    {% else %}
+    <table class="nz-table">
+        <thead><tr>
+            <th style="width:110px;">Синф</th>
+            <th>Хонанда</th>
+            <th class="center" style="width:110px;">Миёнаи хол</th>
+        </tr></thead>
+        <tbody>
+            {% for cls in stats.classes %}
+                {% for r in cls.low %}
+                <tr>
+                    <td>{{ cls.class_name }}</td>
+                    <td class="names">{{ r.name }}</td>
+                    <td class="center"><strong>{{ r.avg }}</strong></td>
+                </tr>
+                {% endfor %}
             {% endfor %}
         </tbody>
     </table>

@@ -53,6 +53,28 @@ class NazoratTests(GoldenBase):
             stats['classes'][0]['low'][0]['name'], 'Ҷаҳонгир Назаров')
         self.assertEqual(stats['classes'][0]['low'][0]['avg'], 3.0)
 
+    def test_low_band_students_listed_by_name(self):
+        # s1 avg (3+4)/2 = 3.5 -> the «Холҳои 1-3» card must link to a
+        # table that prints her name and mean, not just the count.
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=3)
+        make_quarter_grade(self.s1, '7-А', TAJIK, 1, grade=4)
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'))
+        self.assertContains(resp, 'id="low-grades"')
+        self.assertContains(resp, 'Миёнаи хол')
+        html = resp.content.decode()
+        low_pos = html.index('id="low-grades"')
+        name_pos = html.index('Фирӯз Раҳимов', low_pos)
+        # The mean renders localized (3,5 with Tajik decimal comma).
+        self.assertIn('3,5', html[low_pos:name_pos + 500])
+
+    def test_low_band_empty_shows_ok_note(self):
+        make_quarter_grade(self.s1, '7-А', MATH, 1, grade=8)
+        make_quarter_grade(self.s2, '7-А', MATH, 1, grade=7)
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.get(reverse('nazorat'))
+        self.assertContains(resp, 'Хонандае бо миёнаи 1–3 нест')
+
     def test_all_graded_shows_ok_note(self):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=8)
         make_quarter_grade(self.s2, '7-А', MATH, 1, grade=7)

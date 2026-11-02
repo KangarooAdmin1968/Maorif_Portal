@@ -64,9 +64,15 @@ class NazoratTests(GoldenBase):
         self.assertContains(resp, 'Миёнаи хол')
         html = resp.content.decode()
         low_pos = html.index('id="low-grades"')
-        name_pos = html.index('Фирӯз Раҳимов', low_pos)
+        end_pos = html.index('Давомат', low_pos)
+        section = html[low_pos:end_pos]
+        name_pos = section.index('Фирӯз Раҳимов')
         # The mean renders localized (3,5 with Tajik decimal comma).
-        self.assertIn('3,5', html[low_pos:name_pos + 500])
+        self.assertIn('3,5', section[name_pos:name_pos + 500])
+        # The weak-subject column names only the dragging subject:
+        # МАТЕМАТИКА (3) shows; ЗАБОНИ ТОҶИКӢ at 4 does not.
+        self.assertIn('МАТЕМАТИКА (3)', section)
+        self.assertNotIn('ЗАБОНИ ТОҶИКӢ', section)
 
     def test_low_band_empty_shows_ok_note(self):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=8)

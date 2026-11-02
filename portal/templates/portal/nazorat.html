@@ -137,6 +137,7 @@
         <thead><tr>
             <th style="width:110px;">Синф</th>
             <th>Хонанда</th>
+            <th>Фанҳо (холи камтар аз 4)</th>
             <th class="center" style="width:110px;">Миёнаи хол</th>
         </tr></thead>
         <tbody>
@@ -145,6 +146,7 @@
                 <tr>
                     <td>{{ cls.class_name }}</td>
                     <td class="names">{{ r.name }}</td>
+                    <td class="names">{% for subj, mark in r.weak %}{{ subj }} ({{ mark }}){% if not forloop.last %}, {% endif %}{% endfor %}</td>
                     <td class="center"><strong>{{ r.avg }}</strong></td>
                 </tr>
                 {% endfor %}

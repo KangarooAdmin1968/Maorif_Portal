@@ -320,8 +320,13 @@ def collect_grading_control(school, quarter, today=None):
         total, count = sums[sid]
         avg = total / count
         if avg < 4:
+            weak = sorted(
+                ((subj, mark) for subj, mark in marks[sid].items()
+                 if mark < 4),
+                key=lambda sm: (sm[1], sm[0]))
             per_class[cls]['low'].append(
-                {'name': st['full_name'], 'avg': round(avg, 2)})
+                {'name': st['full_name'], 'avg': round(avg, 2),
+                 'weak': weak})
             totals['low'] += 1
 
     def sort_key(name):

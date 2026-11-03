@@ -15,14 +15,18 @@
     height: 80px;
     object-fit: contain;
 }
-/* News slider occupies the flag slot — same height, 16:9 width */
-.news-slider {
-    position: relative;
-    height: 80px;
-    aspect-ratio: 16 / 9;
-    border-radius: .4rem;
+/* News slider — standalone card: image block on top, info block below.
+   Height is pre-defined so the page never jumps when slides change. */
+.news-slider-card {
+    max-width: 1000px;
+    margin: 0 auto 1.5rem;
+    padding: 0;
     overflow: hidden;
-    flex: 0 0 auto;
+}
+.ns-stage {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #0b2440;
 }
 .ns-slide {
     position: absolute; inset: 0;
@@ -36,36 +40,64 @@
 .ns-slide img {
     width: 100%; height: 100%;
     object-fit: cover;
+    object-position: center 30%;
     display: block;
 }
-.ns-cap {
-    position: absolute; left: 0; right: 0; bottom: 0;
-    background: rgba(0, 0, 0, .55);
-    color: #fff;
-    font-size: .58rem;
-    line-height: 1.25;
-    padding: 2px 5px;
-    display: block;
-    text-align: left;
-}
-.ns-cap b { color: #ffd166; font-weight: 600; }
-.ns-cap .l2 { display: block; opacity: .85; }
 .ns-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
     background: rgba(0, 0, 0, .45); color: #fff;
     border: none; border-radius: 50%;
-    width: 20px; height: 20px; font-size: .8rem; line-height: 1;
+    width: 34px; height: 34px; font-size: 1.15rem; line-height: 1;
     cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;
 }
-.ns-prev { left: 3px; }
-.ns-next { right: 3px; }
+.ns-nav:hover { background: rgba(0, 0, 0, .65); }
+.ns-prev { left: 8px; }
+.ns-next { right: 8px; }
 .ns-count {
-    position: absolute; top: 3px; right: 4px;
+    position: absolute; top: 8px; right: 8px;
     background: rgba(0, 0, 0, .5); color: #fff;
-    font-size: .6rem; padding: 1px 5px; border-radius: .4rem;
+    font-size: .75rem; padding: 2px 8px; border-radius: .5rem;
+}
+/* Info block under the image — fixed height, never overlaps the photo */
+.ns-infos {
+    position: relative;
+    height: 132px;
+    padding: .7rem .95rem;
+    box-sizing: border-box;
+    background: #fff;
+}
+.ns-info {
+    position: absolute; inset: .7rem .95rem;
+    opacity: 0;
+    transition: opacity .45s ease;
+    pointer-events: none;
+    overflow: hidden;
+}
+.ns-info.active { opacity: 1; pointer-events: auto; }
+.ns-info .cat {
+    display: inline-block;
+    background: #003366; color: #fff;
+    font-size: .72rem; font-weight: 600;
+    padding: .15rem .55rem; border-radius: .4rem;
+    margin-bottom: .3rem;
+}
+.ns-info .ns-title {
+    display: block;
+    color: #111827; font-size: 1.02rem; font-weight: 700;
+    text-decoration: none; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-bottom: .2rem;
+}
+.ns-info .ns-title:hover { text-decoration: underline; }
+.ns-info .meta { font-size: .82rem; color: #6b7280; margin-bottom: .25rem; }
+.ns-info .sum {
+    font-size: .85rem; color: #374151; line-height: 1.45;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 @media (prefers-reduced-motion: reduce) {
-    .ns-slide { transition: none; }
+    .ns-slide, .ns-info { transition: none; }
 }
 .site-header h1 {
     margin: 0;
@@ -83,10 +115,9 @@
     .site-header img {
         height: 55px;
     }
-    .news-slider {
-        height: 55px;
-    }
-    .ns-cap .l2 { display: none; }
+    .news-slider-card { margin-bottom: 1rem; }
+    .ns-infos { height: 158px; }
+    .ns-info .ns-title { font-size: .95rem; }
     .site-header h1 {
         font-size: 1.5rem;
     }
@@ -247,13 +278,16 @@
 <div class="site-header">
     <img src="{% static 'assets/gerb.png' %}" alt="Герб">
     <h1>Шуъбаи маорифи ноҳияи Зафаробод</h1>
-    {% if news_slides %}
-    <div class="news-slider" id="newsSlider" role="region" aria-label="Слайдери хабарҳо">
+    <img src="{% static 'assets/flag.gif' %}" alt="Парчам">
+</div>
+
+{% if news_slides %}
+<section class="card news-slider-card" id="newsSlider" aria-label="Слайдери хабарҳо">
+    <div class="ns-stage">
         {% for s in news_slides %}
         <a class="ns-slide{% if forloop.first %} active{% endif %}" href="{{ s.url }}"
            title="{{ s.category }} · {{ s.title }}&#10;{{ s.school_name }} · {{ s.event_date }}&#10;{{ s.summary }}">
             <img src="{{ s.image }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>
-            <span class="ns-cap"><b>{{ s.category }}</b> {{ s.title }}<span class="l2">{{ s.school_name }} · {{ s.event_date }}</span></span>
         </a>
         {% endfor %}
         {% if news_slides|length > 1 %}
@@ -262,10 +296,18 @@
         <span class="ns-count">1/{{ news_slides|length }}</span>
         {% endif %}
     </div>
-    {% else %}
-    <img src="{% static 'assets/flag.gif' %}" alt="Парчам">
-    {% endif %}
-</div>
+    <div class="ns-infos">
+        {% for s in news_slides %}
+        <div class="ns-info{% if forloop.first %} active{% endif %}">
+            <span class="cat">{{ s.category }}</span>
+            <a class="ns-title" href="{{ s.url }}">{{ s.title }}</a>
+            <div class="meta">🏫 {{ s.school_name }} · 📅 {{ s.event_date }}</div>
+            <div class="sum">{{ s.summary }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
 
 <section class="stats-grid">
     <div class="card stat-card">
@@ -794,6 +836,7 @@
     var root = document.getElementById('newsSlider');
     if (!root) return;
     var slides = root.querySelectorAll('.ns-slide');
+    var infos = root.querySelectorAll('.ns-info');
     if (slides.length < 2) return;
     var count = root.querySelector('.ns-count');
     var i = 0, timer = null;
@@ -802,8 +845,10 @@
 
     function show(n) {
         slides[i].classList.remove('active');
+        if (infos[i]) infos[i].classList.remove('active');
         i = (n + slides.length) % slides.length;
         slides[i].classList.add('active');
+        if (infos[i]) infos[i].classList.add('active');
         if (count) count.textContent = (i + 1) + '/' + slides.length;
     }
     function start() {

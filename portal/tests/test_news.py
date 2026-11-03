@@ -210,7 +210,8 @@ class NewsTests(GoldenBase):
                 'meeting', title=f'Ҷаласа {i}'), day=5 - i)
             self._add_photo(n)
         n = self._publish(self._make_news('renovation', title='Навгонӣ'), day=1)
-        self._add_photo(n)
+        self._add_photo(n, order=0)
+        self._add_photo(n, order=1, is_main=False)  # 2 photos -> 2 slides
         # excluded statuses
         for status in (News.STATUS_DRAFT, News.STATUS_UNPUBLISHED,
                        News.STATUS_ARCHIVED):
@@ -218,11 +219,15 @@ class NewsTests(GoldenBase):
             self._add_photo(x)
 
         slides = news_mod.slider_slides()
-        self.assertEqual(len(slides), 8)  # 5 visit + 2 meeting + 1 renov.
+        # 5 visit + 2 meeting + 2 photos of the renovation news
+        self.assertEqual(len(slides), 9)
         cats = [s['category'] for s in slides]
         self.assertEqual(cats[:5], ['Боздидҳо'] * 5)
         self.assertEqual(cats[5:7], ['Ҷаласаҳо'] * 2)
-        self.assertEqual(cats[7], 'Навгониҳо')
+        # every photo of one news becomes its own consecutive slide
+        self.assertEqual(cats[7:9], ['Навгониҳо'] * 2)
+        self.assertEqual(slides[7]['title'], 'Навгонӣ')
+        self.assertEqual(slides[8]['title'], 'Навгонӣ')
         # event + achievement categories are empty -> skipped, no gaps
         # newest visit first (day=10-i -> i=0 is newest)
         self.assertEqual(slides[0]['title'], 'Боздид 0')
@@ -253,7 +258,8 @@ class NewsTests(GoldenBase):
         resp = self.client.get(reverse('dashboard'))
         self.assertContains(resp, 'id="newsSlider"')
         self.assertContains(resp, 'Слайд')
-        self.assertNotContains(resp, 'flag.gif')
+        # the flag stays in the header alongside the slider
+        self.assertContains(resp, 'flag.gif')
 
     def test_archive_shows_only_published(self):
         self._publish(self._make_news(title='Намоён'), day=1)

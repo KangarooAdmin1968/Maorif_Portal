@@ -22,7 +22,7 @@ from PIL import Image, ImageOps
 
 from .models import News, NewsPhoto
 
-NEWS_SLIDES_CACHE_KEY = 'news:slides:v1'
+NEWS_SLIDES_CACHE_KEY = 'news:slides:v2'
 NEWS_SLIDES_CACHE_SECONDS = 300          # 5 min; invalidated on writes
 NEWS_PER_CATEGORY = 5                    # spec: max 5 latest per category
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024      # 15 MB per file
@@ -57,16 +57,15 @@ def invalidate_news_cache():
 def slider_slides():
     """Ordered slide list for the dashboard, cached.
 
-    Order = category order (5 per category, newest first). Each slide:
-    image url, category label, title, school name, event date, summary,
-    detail url. Returns [] when nothing is published — the caller then
-    shows the flag instead.
+    Order = category order (5 news per category, newest first). Each
+    news contributes ALL its photos (main first, then by order) as
+    consecutive slides. Empty categories are skipped. Returns [] when
+    nothing is published — the caller then shows the flag instead.
     """
     data = cache.get(NEWS_SLIDES_CACHE_KEY)
     if data is not None:
         return data
 
-    photos_main = NewsPhoto.objects.filter(is_main=True)
     by_cat = {}
     items = (
         News.objects.filter(status=News.STATUS_PUBLISHED)
@@ -77,23 +76,27 @@ def slider_slides():
     for n in items:
         if len(by_cat.get(n.category, ())) >= NEWS_PER_CATEGORY:
             continue
-        main = n.main_photo
-        if not main or not main.slider_image:
+        photos = [p for p in n.photos.all() if p.slider_image]
+        if not photos:
             continue
-        by_cat.setdefault(n.category, []).append({
+        # Main photo first, the rest follow in their stored order.
+        photos.sort(key=lambda p: (not p.is_main, p.order, p.id))
+        slides_for_news = [{
             'id': n.pk,
             'category': n.get_category_display(),
             'title': n.title,
             'school_name': n.school_name,
             'event_date': n.event_date.strftime('%d.%m.%Y'),
             'summary': n.summary,
-            'image': main.slider_image.url,
+            'image': p.slider_image.url,
             'url': f'/news/{n.pk}/',
-        })
+        } for p in photos]
+        by_cat.setdefault(n.category, []).append(slides_for_news)
 
     slides = []
     for key, _label in News.CATEGORY_CHOICES:
-        slides.extend(by_cat.get(key, ()))
+        for news_slides in by_cat.get(key, ()):
+            slides.extend(news_slides)
 
     cache.set(NEWS_SLIDES_CACHE_KEY, slides, NEWS_SLIDES_CACHE_SECONDS)
     return slides

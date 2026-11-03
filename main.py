@@ -413,7 +413,7 @@ class SchoolManagementSystem(QMainWindow):
         
         self.add_image(self.header_layout, "assets/gerb.png", is_gif=False)
         
-        self.title_label = QLabel("Шӯъбаи маорифи ноҳияи Зафаробод")
+        self.title_label = QLabel("Шуъбаи маорифи ноҳияи Зафаробод")
         self.title_label.setObjectName("titleLabel")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_font = QFont("Arial", 32)

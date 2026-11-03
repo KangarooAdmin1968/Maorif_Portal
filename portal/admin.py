@@ -18,7 +18,7 @@ from .utils import (
 )
 
 
-admin.site.site_header = "Шӯъбаи маорифи ноҳияи Зафаробод"
+admin.site.site_header = "Шуъбаи маорифи ноҳияи Зафаробод"
 admin.site.site_title = "Портали маориф"
 admin.site.index_title = "Маркази идоракунӣ"
 

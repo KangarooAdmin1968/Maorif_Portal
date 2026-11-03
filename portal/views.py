@@ -57,6 +57,7 @@ from .tabel import (
 from .class_report import ClassReportError, build_class_report_workbook
 from .academic_calendar import is_school_day
 from .exemptions import active_exemption_map
+from .norm_pace import ATTENDANCE_MARKS, absence_counts
 from .maorif_report import (
     build_maorif_grades_district_workbook, build_maorif_grades_workbook,
     build_maorif_report_workbook, build_maorif_total_workbook)
@@ -259,12 +260,14 @@ def _journal_norm_status(class_name, subject, class_subject, students, today,
     """Journal status payload for one School + Class + Subject context.
 
     Counts only ACADEMIC rows (score__isnull=False — the same pool every
-    academic consumer uses): attendance-only '+'/'-' marks, behavior-only
-    and sticker-only Grade rows never satisfy the grading norm. A row that
-    carries a real score alongside an attendance mark still counts once.
+    academic consumer uses) for the real-grade tallies. Attendance
+    '+'/'-' rows ("Иштирок накардан дар дарс") are pulled by the same
+    single query into a second-degree credit pool: they count toward
+    the norm check only, never become grades. A row that carries a real
+    score alongside an attendance mark still counts once — as presence.
     Completion is scoped to the students visible in this journal (a regular
     teacher's own group on grouped subjects, else the class): Пурра only
-    when EVERY student has >= norm scored rows this quarter. One grouped
+    when EVERY student reaches the norm this quarter. One grouped
     aggregate query — no per-student work.
 
     ``exempt_ids`` removes students from the norm denominator only: an
@@ -275,18 +278,31 @@ def _journal_norm_status(class_name, subject, class_subject, students, today,
     norm = quarter_min_norm(class_name, subject, class_subject)
     student_ids = [s.id for s in students]
     exempt = set(exempt_ids or ()) & set(student_ids)
+    # One quarter-scoped query feeds both pools: scored rows count real
+    # grades; attendance rows feed the missed-lesson credit map.
+    quarter_rows = list(Grade.objects.filter(
+        student_id__in=student_ids,
+        subject=subject,
+        date__range=(q_start, q_end),
+    ).filter(Q(score__isnull=False) | Q(attendance__in=ATTENDANCE_MARKS)))
     per_student = defaultdict(int)
-    for g in canonical_grade_rows(Grade.objects.filter(
-            student_id__in=student_ids,
-            subject=subject,
-            date__range=(q_start, q_end),
-            score__isnull=False).iterator()):
+    for g in canonical_grade_rows(g for g in quarter_rows
+                                  if g.score is not None):
         per_student[g.student_id] += 1
+    absences = absence_counts(quarter_rows)
     done = sum(per_student.values())
     met = sum(1 for sid in student_ids
-              if sid not in exempt and per_student.get(sid, 0) >= norm)
+              if sid not in exempt and per_student.get(sid, 0) > 0
+              and per_student[sid] + absences.get(sid, 0) >= norm)
     graded = len(student_ids) - len(exempt)
     required = norm * graded
+    # Aggregate credit: each student's missed lessons top their real
+    # count up to the norm — never beyond it and never for grade-less
+    # students, so every student enters the total exactly once and the
+    # fulfillment percentage (already capped at 100) cannot be inflated.
+    done_eff = sum(
+        actual + min(absences.get(sid, 0), max(0, norm - actual))
+        for sid, actual in per_student.items() if actual > 0)
     return {
         'done': done,
         'required': required,
@@ -295,11 +311,12 @@ def _journal_norm_status(class_name, subject, class_subject, students, today,
         'students_met': met,
         'students_exempt': len(exempt),
         'status': _journal_status(done, met, graded),
-        'fulfillment': _norm_fulfillment(done, required, _quarter_progress(today)),
+        'fulfillment': _norm_fulfillment(done_eff, required, _quarter_progress(today)),
         # The same aggregated counts the pace monitor (norm_pace.py)
         # reuses — exposing them here keeps the indicator math free of
         # any extra SQL.
         'per_student': dict(per_student),
+        'absences': absences,
     }
 
 
@@ -3997,7 +4014,8 @@ def grade_entry(request, school_id, class_name, subject):
     from .norm_pace import norm_pace_context
     pace = norm_pace_context(
         class_name, subject, class_subject, students,
-        today, exemption_map, journal['per_student'])
+        today, exemption_map, journal['per_student'],
+        journal['absences'])
     for s in students:
         s.pace = pace['by_id'].get(s.id)
 
@@ -4307,7 +4325,8 @@ def monthly_journal(request, school_id, class_name, subject):
     from .norm_pace import norm_pace_context
     pace = norm_pace_context(
         class_name, subject, class_subject, students,
-        today, exemption_map, journal['per_student'])
+        today, exemption_map, journal['per_student'],
+        journal['absences'])
     for s in students:
         s.pace = pace['by_id'].get(s.id)
 

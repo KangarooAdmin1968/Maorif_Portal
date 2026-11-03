@@ -32,7 +32,7 @@
       <td>{{ r.actual }}</td>
       <td>{{ r.needed }}</td>
       <td class="st"><span class="pace-dot pace-{{ r.status }}" title="{{ r.tip }}" data-tip="{{ r.tip }}"></span>{{ r.status_title }}</td>
-      <td class="rs">{{ r.note }}</td>
+      <td class="rs">{% if r.missed %}Иштирок накардан дар дарс: {{ r.missed }}{% if r.note %} · {% endif %}{% endif %}{{ r.note }}</td>
       {% endif %}
     </tr>
     {% endfor %}

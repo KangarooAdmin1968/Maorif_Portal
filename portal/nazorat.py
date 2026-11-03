@@ -9,15 +9,16 @@ import calendar
 import datetime
 from collections import defaultdict
 
-from django.db.models import Count, Min
+from django.db.models import Count, Min, Q
 
 from .class_report import merged_quarter_marks
 from .curriculum_hours import UNGRADED_SUBJECTS
 from .exemptions import active_exemption_map
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
 from .models import ClassSubject, Grade, Student, StudentExemption, normalize_subject
-from .norm_pace import (PACE_BEHIND, PACE_CRITICAL, PACE_EXEMPT, PACE_MET,
-                        norm_pace_context)
+from .norm_pace import (ATTENDANCE_MARKS, PACE_BEHIND, PACE_CRITICAL,
+                        PACE_EXEMPT, PACE_MET, PACE_UNGRADED,
+                        absence_counts, norm_pace_context)
 from .ungraded import _cs_teacher_names
 from .utils import canonical_grade_rows, class_numeric_part
 
@@ -386,34 +387,50 @@ def collect_norm_tree(school, today=None):
 
     exempt_map = active_exemption_map(s.id for s in students)
 
-    # One quarter-wide scored-row query — the same pool
-    # _journal_norm_status reads per class-subject — bucketed by
-    # (student, subject) so each class-subject reuses the shared counts.
-    per_subject = defaultdict(lambda: defaultdict(int))
-    for g in canonical_grade_rows(Grade.objects.filter(
+    # One quarter-wide query — the same pool _journal_norm_status reads
+    # per class-subject — bucketed by subject. Scored rows feed the real
+    # grade counts; attendance '+'/'-' rows feed the "Иштирок накардан
+    # дар дарс" credit map. Same dedup rules as the journals.
+    subject_rows = defaultdict(list)
+    for g in Grade.objects.filter(
             student__in=students,
             subject__in=subjects,
             date__range=(q_start, q_end),
-            score__isnull=False).iterator()):
-        per_subject[normalize_subject(g.subject)][g.student_id] += 1
+    ).filter(Q(score__isnull=False) | Q(attendance__in=ATTENDANCE_MARKS)
+             ).iterator():
+        subject_rows[normalize_subject(g.subject)].append(g)
+    per_subject = {}
+    abs_subject = {}
+    for subj, rows in subject_rows.items():
+        scored = defaultdict(int)
+        for g in canonical_grade_rows(r for r in rows
+                                      if r.score is not None):
+            scored[g.student_id] += 1
+        per_subject[subj] = scored
+        abs_subject[subj] = absence_counts(rows)
 
     teacher_names = _cs_teacher_names(class_subjects)
     by_teacher = defaultdict(list)
     # Student-level indicators: behind = ≥1 graded subject behind/critical;
     # met = on pace in EVERY graded subject; ungraded = zero scored rows in
-    # ≥1 graded subject; exempt = active exemption row.
+    # ≥1 graded subject (own state, never counted as behind or met);
+    # exempt = active exemption row.
     flagged = defaultdict(set)
     for cs in class_subjects:
         cs_students = by_class.get(cs.class_name, [])
         if not cs_students:
             continue
+        subj = normalize_subject(cs.subject)
         pace = norm_pace_context(
             cs.class_name, cs.subject, cs, cs_students,
-            today, exempt_map, per_subject[normalize_subject(cs.subject)])
-        # Detail rows list only the students a завуч acts on — зард/сурх
-        # and кабуд. Students on pace surface through the «Иҷро: n» chip,
-        # which keeps the page light when a class is in order.
-        order = {PACE_CRITICAL: 0, PACE_BEHIND: 1, PACE_EXEMPT: 2}
+            today, exempt_map, per_subject.get(subj, {}),
+            abs_subject.get(subj, {}))
+        # Detail rows list only the students a завуч acts on — сурх,
+        # хокистарӣ (баҳогузорӣ нашудааст), зард and кабуд. Students on
+        # pace surface through the «Иҷро: n» chip, which keeps the page
+        # light when a class is in order.
+        order = {PACE_CRITICAL: 0, PACE_UNGRADED: 1, PACE_BEHIND: 2,
+                 PACE_EXEMPT: 3}
         rows = sorted(
             (r for r in pace['by_id'].values()
              if r['dot'] and r['status'] != PACE_MET),

@@ -10,7 +10,7 @@ from .models import (
     School, Teacher, Student, Grade, QuarterGrade, QuarterLock,
     ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth,
     SubjectDeactivationRequest, StudentMovement, StudentExemption,
-    Lesson, Assessment, SubjectAvailability,
+    Lesson, Assessment, SubjectAvailability, News, NewsPhoto,
     normalize_class_name, normalize_subject,
 )
 from .utils import (
@@ -343,3 +343,23 @@ class TeacherTabelMonthAdmin(admin.ModelAdmin):
     list_display = ['teacher', 'school', 'year', 'month', 'updated_at']
     list_filter = ['school', 'year', 'month']
     search_fields = ['teacher__full_name']
+
+
+class NewsPhotoInline(admin.TabularInline):
+    model = NewsPhoto
+    extra = 0
+    readonly_fields = ['created_at']
+
+
+@admin.register(News)
+class NewsAdmin(admin.ModelAdmin):
+    list_display = ['title', 'category', 'school', 'event_date',
+                    'status', 'published_at', 'author', 'photos_count']
+    list_filter = ['status', 'category', 'school']
+    search_fields = ['title', 'summary']
+    date_hierarchy = 'event_date'
+    inlines = [NewsPhotoInline]
+
+    @admin.display(description='Аксҳо')
+    def photos_count(self, obj):
+        return obj.photos.count()

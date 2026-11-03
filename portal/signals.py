@@ -483,3 +483,38 @@ def recalc_quarter_on_assessment_delete(sender, instance, **kwargs):
     """Deletion detaches linked grades to the Ҷорӣ pool (SET_NULL) — recalc
     the students captured in pre_delete."""
     _assessment_recalc(instance, getattr(instance, '_recalc_rows', []))
+
+
+# ---------------------------------------------------------------------------
+# News slider cache — drop the cached slide list on any news/photo write.
+# ---------------------------------------------------------------------------
+from .models import News, NewsPhoto  # noqa: E402
+
+
+def _invalidate_news_slides(**kwargs):
+    try:
+        from .news import invalidate_news_cache
+        invalidate_news_cache()
+    except Exception:
+        logger.exception('Failed to invalidate news slider cache')
+
+
+@receiver(post_save, sender=News)
+@receiver(post_delete, sender=News)
+@receiver(post_save, sender=NewsPhoto)
+@receiver(post_delete, sender=NewsPhoto)
+def news_slider_cache_invalidate(sender, **kwargs):
+    _invalidate_news_slides()
+
+
+@receiver(post_delete, sender=NewsPhoto)
+def news_photo_files_cleanup(sender, instance, **kwargs):
+    """Remove the WebP renditions when a photo row is deleted."""
+    for field in ('image', 'slider_image'):
+        try:
+            f = getattr(instance, field)
+            if f and f.name:
+                f.storage.delete(f.name)
+        except Exception:
+            logger.exception('Failed to delete %s of NewsPhoto %s',
+                             field, instance.pk)

@@ -1,0 +1,178 @@
+{% extends 'portal/base.html' %}
+{% block title %}{% if news %}Таҳрири хабар{% else %}Хабари нав{% endif %}{% endblock %}
+{% block extra_head %}
+<style>
+  .nf-card { background:#fff; border:1px solid #e5e7eb; border-radius:.6rem; padding:1rem 1.25rem; margin-bottom:1rem; max-width:56rem; }
+  .nf-card h2 { margin:0 0 .75rem; font-size:1.05rem; color:#003366; }
+  .nf-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:.7rem; }
+  .nf-field { display:flex; flex-direction:column; gap:.2rem; font-size:.88rem; color:#374151; }
+  .nf-field input, .nf-field select, .nf-field textarea { padding:.45rem .6rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.95rem; font-family:inherit; }
+  .nf-field textarea { min-height:8rem; resize:vertical; }
+  .nf-errors { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:.5rem; padding:.6rem .9rem; margin-bottom:.8rem; font-size:.9rem; }
+  .nf-preview { display:flex; flex-wrap:wrap; gap:.6rem; margin-top:.6rem; }
+  .nf-preview .ph { position:relative; width:120px; }
+  .nf-preview img { width:120px; height:68px; object-fit:cover; border-radius:.35rem; border:1px solid #d1d5db; display:block; }
+  .nf-preview .ph .mk { position:absolute; top:2px; left:2px; background:#003366; color:#fff; font-size:.65rem; padding:1px 5px; border-radius:.3rem; }
+  .nf-existing { display:flex; flex-wrap:wrap; gap:.8rem; margin-top:.6rem; }
+  .nf-existing .ph { width:150px; text-align:center; font-size:.78rem; color:#374151; }
+  .nf-existing img { width:150px; height:84px; object-fit:cover; border-radius:.35rem; border:1px solid #d1d5db; display:block; }
+  .nf-existing .ph form { margin-top:.3rem; }
+  .nf-progress { display:none; margin-top:.8rem; }
+  .nf-progress .bar { background:#e5e7eb; border-radius:.4rem; height:14px; overflow:hidden; }
+  .nf-progress .bar > div { background:#003366; height:100%; width:0%; transition:width .15s; }
+  .nf-progress .pct { font-size:.82rem; color:#374151; margin-top:.25rem; }
+  .nf-cat-desc { font-size:.8rem; color:#6b7280; margin-top:.2rem; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>{% if news %}✏️ Таҳрири хабар{% else %}📰 Хабари нав{% endif %}</h1>
+
+{% if errors %}
+<div class="nf-errors">
+    {% for e in errors %}<div>{{ e }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="nf-card">
+<form method="post" enctype="multipart/form-data" id="newsForm">
+    {% csrf_token %}
+    <div class="nf-grid">
+        <label class="nf-field">Категория *
+            <select name="category" id="nfCat" required>
+                <option value="">— интихоб кунед —</option>
+                {% for k, label in categories %}
+                <option value="{{ k }}"{% if form.category == k %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <span class="nf-cat-desc" id="nfCatDesc"></span>
+        </label>
+        <label class="nf-field">Муассиса
+            <select name="school_id">
+                <option value="">Шуъбаи маорифи ноҳия</option>
+                {% for s in schools %}
+                <option value="{{ s.id }}"{% if form.school_id|stringformat:"s" == s.id|stringformat:"s" %} selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label class="nf-field">Санаи воқеа *
+            <input type="date" name="event_date" value="{{ form.event_date }}" required>
+        </label>
+    </div>
+    <label class="nf-field" style="margin-top:.7rem;">Сарлавҳаи хабар *
+        <input type="text" name="title" maxlength="200" value="{{ form.title }}" required>
+    </label>
+    <label class="nf-field" style="margin-top:.7rem;">Тавсифи кӯтоҳи хабар *
+        <textarea name="summary" required>{{ form.summary }}</textarea>
+    </label>
+
+    {% if news %}
+    <h2 style="margin-top:1.1rem;">Аксҳои мавҷуда ({{ news.photos.count }}/{{ max_photos }})</h2>
+    <div class="nf-existing">
+        {% for p in news.photos.all %}
+        <div class="ph">
+            <img src="{{ p.slider_image.url }}" alt="">
+            {% if p.is_main %}<div style="color:#10b981; font-weight:600;">★ Асосӣ</div>{% endif %}
+            <form method="post" action="{% url 'news_photo_action' p.pk %}">
+                {% csrf_token %}
+                {% if not p.is_main %}
+                <button class="btn" name="action" value="main" style="font-size:.75rem; padding:.2rem .45rem;">Асосӣ кун</button>
+                {% endif %}
+                <button class="btn btn-danger" name="action" value="delete" style="font-size:.75rem; padding:.2rem .45rem;"
+                    onclick="return confirm('Ин акс нест мешавад. Идома?')">Нест</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <label class="nf-field" style="margin-top:1rem;">Аксҳои нав (ҳадди ақал 1, ҳадди зиёд {{ max_photos }})
+        <input type="file" name="photos" id="nfPhotos" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple>
+    </label>
+    <div class="nf-preview" id="nfPreview"></div>
+
+    <div class="nf-progress" id="nfProgress">
+        <div class="bar"><div id="nfBar"></div></div>
+        <div class="pct" id="nfPct">0%</div>
+    </div>
+
+    <div style="margin-top:1rem; display:flex; gap:.5rem; flex-wrap:wrap;">
+        <button type="submit" class="btn btn-success" id="nfSubmit">
+            {% if news %}Нав кардан{% else %}Нигоҳ доштан (лоиҳа){% endif %}
+        </button>
+        <a class="btn" href="{% url 'news_admin' %}">Бекор кардан</a>
+        <noscript><div style="font-size:.82rem;color:#6b7280">(Бе JavaScript файлҳо ҳангоми пахши тугма бор мешаванд.)</div></noscript>
+    </div>
+</form>
+</div>
+
+<script>
+(function () {
+    var CAT_DESC = {
+        'visit': 'Боздиди роҳбари шуъба аз муассисаҳо, мушоҳидаи дарс, мулоқот бо омӯзгорон.',
+        'meeting': 'Маҷлисҳо, вохӯриҳои корӣ, муҳокимаи масъалаҳо.',
+        'event': 'Чорабиниҳои таълимӣ, фарҳангӣ, варзишӣ, озмунҳо, ҷашнҳо.',
+        'achievement': 'Ғолибони олимпиада, дастовардҳои хонандагон ва омӯзгорон.',
+        'renovation': 'Синфхонаҳои нав, таҷҳизот, таъмир, ташаббусҳои нав.'
+    };
+    var cat = document.getElementById('nfCat'), desc = document.getElementById('nfCatDesc');
+    function updCat() { desc.textContent = CAT_DESC[cat.value] || ''; }
+    cat.addEventListener('change', updCat); updCat();
+
+    var input = document.getElementById('nfPhotos'),
+        prev = document.getElementById('nfPreview'),
+        form = document.getElementById('newsForm'),
+        prog = document.getElementById('nfProgress'),
+        bar = document.getElementById('nfBar'),
+        pct = document.getElementById('nfPct'),
+        submit = document.getElementById('nfSubmit'),
+        MAX = {{ max_photos }};
+
+    input.addEventListener('change', function () {
+        prev.innerHTML = '';
+        if (input.files.length > MAX) {
+            alert('На зиёд аз ' + MAX + ' акс интихоб кунед.');
+            input.value = '';
+            return;
+        }
+        Array.prototype.forEach.call(input.files, function (f, i) {
+            if (!/^image\//.test(f.type)) return;
+            var d = document.createElement('div'); d.className = 'ph';
+            var img = document.createElement('img');
+            img.src = URL.createObjectURL(f);
+            if (i === 0) { var m = document.createElement('span'); m.className='mk'; m.textContent='Асосӣ'; d.appendChild(m); }
+            d.appendChild(img); prev.appendChild(d);
+        });
+    });
+
+    form.addEventListener('submit', function (e) {
+        if (!window.XMLHttpRequest || !window.FormData) return; // plain POST fallback
+        e.preventDefault();
+        submit.disabled = true;
+        prog.style.display = 'block';
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', form.action);
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.upload.onprogress = function (ev) {
+            if (!ev.lengthComputable) return;
+            var p = Math.round(ev.loaded / ev.total * 100);
+            bar.style.width = p + '%'; pct.textContent = p + '%';
+        };
+        xhr.onload = function () {
+            if (xhr.status >= 300 && xhr.status < 400 && xhr.getResponseHeader('Location')) {
+                window.location = xhr.getResponseHeader('Location');
+            } else if (xhr.responseURL && xhr.responseURL !== window.location.href) {
+                window.location = xhr.responseURL;
+            } else {
+                document.open(); document.write(xhr.responseText); document.close();
+            }
+        };
+        xhr.onerror = function () {
+            submit.disabled = false;
+            prog.style.display = 'none';
+            alert('Боркунӣ ноком шуд — такроран кӯшиш кунед.');
+        };
+        xhr.send(new FormData(form));
+    });
+})();
+</script>
+{% endblock %}

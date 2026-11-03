@@ -1,0 +1,102 @@
+{% extends 'portal/base.html' %}
+{% block title %}Ахбор ва хабарҳо{% endblock %}
+{% block extra_head %}
+<style>
+  .news-tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 1rem; }
+  .news-tabs a { padding: .4rem .8rem; border-radius: .5rem; border: 1px solid #d1d5db;
+    background: #f9fafb; color: #374151; text-decoration: none; font-size: .88rem; }
+  .news-tabs a.active { background: #003366; color: #fff; border-color: #003366; }
+  .news-cat-hint { background: #f0f6ff; border: 1px solid #bfdbfe; border-radius: .6rem;
+    padding: .8rem 1rem; margin-bottom: 1rem; font-size: .85rem; color: #1e3a8a; }
+  .news-cat-hint details summary { cursor: pointer; font-weight: 600; }
+  .news-cat-hint dl { margin: .5rem 0 0; }
+  .news-cat-hint dt { font-weight: 600; margin-top: .35rem; }
+  .news-cat-hint dd { margin: 0 0 0 1rem; color: #374151; }
+  table.news-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  table.news-table th, table.news-table td { border: 1px solid #d1d5db; padding: .45rem .6rem; text-align: left; vertical-align: middle; }
+  table.news-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
+  .news-thumb { width: 72px; height: 40px; object-fit: cover; border-radius: .25rem; display: block; }
+  .news-actions form { display: inline; }
+  .news-actions .btn { padding: .28rem .55rem; font-size: .78rem; margin: .1rem; }
+  .badge { display: inline-block; padding: .15rem .5rem; border-radius: .5rem; font-size: .78rem; color: #fff; }
+  .badge-draft { background: #6b7280; }
+  .badge-published { background: #10b981; }
+  .badge-unpublished { background: #f59e0b; }
+  .badge-archived { background: #3b82f6; }
+</style>
+{% endblock %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.5rem;">
+    <h1>📰 Ахбор ва хабарҳо</h1>
+    <div>
+        <a href="{% url 'news_create' %}" class="btn btn-success">+ Хабари нав</a>
+        <a href="{% url 'news_archive' %}" class="btn">Бойгонии оммавӣ</a>
+    </div>
+</div>
+
+<div class="news-cat-hint">
+    <details>
+        <summary>Тавсифи категорияҳо — кадом хабар ба куҷо?</summary>
+        <dl>
+            <dt>Боздидҳо</dt><dd>Аксҳои боздиди роҳбари шуъбаи маориф аз муассисаҳо, шиносоӣ бо шароити таълим, мушоҳидаи дарсҳо ва мулоқот бо омӯзгорон.</dd>
+            <dt>Ҷаласаҳо</dt><dd>Аксҳои маҷлисҳо, вохӯриҳои корӣ, муҳокимаи масъалаҳо ва мулоқот бо директорону омӯзгорон.</dd>
+            <dt>Чорабиниҳо</dt><dd>Аксҳои чорабиниҳои таълимӣ, фарҳангӣ, варзишӣ, озмунҳо ва ҷашнҳои мактабӣ.</dd>
+            <dt>Дастовардҳо</dt><dd>Аксҳои ғолибони олимпиадаҳо, дастовардҳои хонандагон, омӯзгорон ва муассисаҳо.</dd>
+            <dt>Навгониҳо</dt><dd>Аксҳои тағйироту навгониҳо, синфхонаҳои нав, таҷҳизот, таъмир ва ташаббусҳои нав.</dd>
+        </dl>
+    </details>
+</div>
+
+<div class="news-tabs">
+    <a href="{% url 'news_admin' %}" class="{% if status == 'all' %}active{% endif %}">Ҳама ({{ items|length }})</a>
+    {% for s, label, count in status_rows %}
+    <a href="{% url 'news_admin' %}?status={{ s }}" class="{% if status == s %}active{% endif %}">{{ label }} ({{ count }})</a>
+    {% endfor %}
+</div>
+
+<table class="news-table">
+    <thead>
+        <tr>
+            <th>Акс</th><th>Сарлавҳа</th><th>Категория</th><th>Муассиса</th>
+            <th>Санаи воқеа</th><th>Санаи нашр</th><th>Аксҳо</th><th>Ҳолат</th>
+            <th>Муаллиф</th><th>Амалҳо</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for n in items %}
+        <tr>
+            <td>{% with p=n.main_photo %}{% if p %}<img class="news-thumb" src="{{ p.slider_image.url }}" alt="">{% else %}—{% endif %}{% endwith %}</td>
+            <td><a href="{% url 'news_detail' n.pk %}">{{ n.title }}</a></td>
+            <td>{{ n.get_category_display }}</td>
+            <td>{{ n.school_name }}</td>
+            <td>{{ n.event_date|date:'d.m.Y' }}</td>
+            <td>{% if n.published_at %}{{ n.published_at|date:'d.m.Y H:i' }}{% else %}—{% endif %}</td>
+            <td>{{ n.photos.count }}</td>
+            <td><span class="badge badge-{{ n.status }}">{{ n.get_status_display }}</span></td>
+            <td>{% if n.author %}{{ n.author.get_full_name|default:n.author.username }}{% else %}—{% endif %}</td>
+            <td class="news-actions">
+                <a class="btn" href="{% url 'news_edit' n.pk %}">Таҳрир</a>
+                <a class="btn" href="{% url 'news_detail' n.pk %}">Пешнамоиш</a>
+                <form method="post" action="{% url 'news_action' n.pk %}">
+                    {% csrf_token %}
+                    {% if n.status != 'published' %}
+                        <button class="btn btn-success" name="action" value="publish">Нашр</button>
+                    {% else %}
+                        <button class="btn" name="action" value="unpublish">Аз нашр гирифтан</button>
+                    {% endif %}
+                    {% if n.status != 'archived' %}
+                        <button class="btn" name="action" value="archive">Бойгонӣ</button>
+                    {% else %}
+                        <button class="btn" name="action" value="restore">Барқарор</button>
+                    {% endif %}
+                    <button class="btn btn-danger" name="action" value="delete"
+                        onclick="return confirm('Хабар ва ҳамаи аксҳояш бутамом нест мешаванд. Идома медиҳед?')">Нест</button>
+                </form>
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="10">Ҳануз хабаре нест — «+ Хабари нав»-ро пахш кунед.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

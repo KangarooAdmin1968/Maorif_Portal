@@ -883,3 +883,107 @@ class DailyActivity(models.Model):
     def __str__(self):
         who = self.username or 'Анонимӣ'
         return f"{who} — {self.date} — {self.get_category_display()}"
+
+
+class News(models.Model):
+    """Официальная хабар/аксҳои Шуъбаи маориф — «Ахбор ва хабарҳо».
+
+    Status flow: draft -> published -> (unpublished | archived) -> restore.
+    Only the district chief (ROLE_DIRECTOR) and superusers manage news —
+    a published item never requires a second approval step.
+    """
+    CATEGORY_VISIT = 'visit'
+    CATEGORY_MEETING = 'meeting'
+    CATEGORY_EVENT = 'event'
+    CATEGORY_ACHIEVEMENT = 'achievement'
+    CATEGORY_RENOVATION = 'renovation'
+    CATEGORY_CHOICES = [
+        (CATEGORY_VISIT, 'Боздидҳо'),
+        (CATEGORY_MEETING, 'Ҷаласаҳо'),
+        (CATEGORY_EVENT, 'Чорабиниҳо'),
+        (CATEGORY_ACHIEVEMENT, 'Дастовардҳо'),
+        (CATEGORY_RENOVATION, 'Навгониҳо'),
+    ]
+
+    STATUS_DRAFT = 'draft'
+    STATUS_PUBLISHED = 'published'
+    STATUS_UNPUBLISHED = 'unpublished'
+    STATUS_ARCHIVED = 'archived'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Лоиҳа'),
+        (STATUS_PUBLISHED, 'Нашршуда'),
+        (STATUS_UNPUBLISHED, 'Аз нашр гирифташуда'),
+        (STATUS_ARCHIVED, 'Бойгонӣ'),
+    ]
+
+    category = models.CharField(
+        'Категория', max_length=20, choices=CATEGORY_CHOICES)
+    title = models.CharField('Сарлавҳа', max_length=200)
+    # Nullable: a news item may belong to the district department itself
+    # rather than one school. display label falls back to the dept name.
+    school = models.ForeignKey(
+        School, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='news_items', verbose_name='Муассиса')
+    event_date = models.DateField('Санаи воқеа')
+    summary = models.TextField('Тавсифи кӯтоҳ')
+    status = models.CharField(
+        'Ҳолат', max_length=20, choices=STATUS_CHOICES,
+        default=STATUS_DRAFT, db_index=True)
+    author = models.ForeignKey(
+        User, on_delete=models.SET_NULL, blank=True, null=True,
+        related_name='news_items', verbose_name='Муаллиф')
+    published_at = models.DateTimeField(
+        'Санаи нашр', blank=True, null=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Хабар'
+        verbose_name_plural = 'Хабарҳо'
+        ordering = ['-published_at', '-created_at']
+        indexes = [
+            models.Index(fields=['status', 'category']),
+            models.Index(fields=['status', '-published_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.title} — {self.get_category_display()}"
+
+    @property
+    def school_name(self):
+        return self.school.name if self.school else 'Шуъбаи маорифи ноҳия'
+
+    @property
+    def main_photo(self):
+        # photos.all() hits the prefetch cache when the caller used
+        # prefetch_related('photos') — no extra queries per row.
+        photos = list(self.photos.all())
+        for p in photos:
+            if p.is_main:
+                return p
+        return photos[0] if photos else None
+
+
+class NewsPhoto(models.Model):
+    """One photo of a news item (1–5 per item).
+
+    Two processed WebP renditions are stored — slider (1200×675 cover)
+    and gallery (max 1600px). The uploaded original is discarded after
+    processing so unmanaged originals never accumulate on the server.
+    """
+    news = models.ForeignKey(
+        News, on_delete=models.CASCADE, related_name='photos')
+    image = models.ImageField('Акс (галерея)', upload_to='news/%Y/%m/')
+    slider_image = models.ImageField(
+        'Акс (слайдер)', upload_to='news/%Y/%m/slider/')
+    order = models.PositiveSmallIntegerField('Тартиб', default=0)
+    is_main = models.BooleanField('Акси асосӣ', default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Акси хабар'
+        verbose_name_plural = 'Аксҳои хабарҳо'
+        ordering = ['order', 'id']
+
+    def __str__(self):
+        return f"Акс #{self.pk} — {self.news_id}"

@@ -1,0 +1,71 @@
+{% extends 'portal/base.html' %}
+{% block title %}Бойгонии хабарҳо{% endblock %}
+{% block extra_head %}
+<style>
+  .na-filters { display:flex; flex-wrap:wrap; gap:.45rem; margin:.75rem 0 1rem; align-items:center; }
+  .na-filters a { padding:.35rem .75rem; border-radius:.5rem; border:1px solid #d1d5db; background:#f9fafb; color:#374151; text-decoration:none; font-size:.85rem; }
+  .na-filters a.active { background:#003366; color:#fff; border-color:#003366; }
+  .na-filters select { padding:.4rem .6rem; border:1px solid #d1d5db; border-radius:.35rem; font-size:.85rem; }
+  .na-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1rem; }
+  .na-card { background:#fff; border:1px solid #e5e7eb; border-radius:.6rem; overflow:hidden; display:flex; flex-direction:column; text-decoration:none; color:inherit; transition:box-shadow .15s; }
+  .na-card:hover { box-shadow:0 4px 14px rgba(0,0,0,.12); }
+  .na-card img { width:100%; height:160px; object-fit:cover; display:block; }
+  .na-card .body { padding:.7rem .9rem .9rem; }
+  .na-card .cat { font-size:.72rem; color:#fff; background:#003366; padding:.15rem .5rem; border-radius:.4rem; }
+  .na-card h3 { margin:.45rem 0 .3rem; font-size:1rem; color:#1f2937; }
+  .na-card .meta { font-size:.8rem; color:#6b7280; }
+  .na-pager { display:flex; gap:.5rem; margin-top:1.2rem; }
+  .na-empty { background:#fff; border:1px solid #e5e7eb; border-radius:.6rem; padding:1.5rem; text-align:center; color:#6b7280; }
+</style>
+{% endblock %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.5rem;">
+    <h1>📰 Бойгонии хабарҳо</h1>
+    {% if can_manage %}<a class="btn btn-success" href="{% url 'news_admin' %}">Идоракунии хабарҳо</a>{% endif %}
+</div>
+
+<div class="na-filters">
+    <a href="{% url 'news_archive' %}" class="{% if not category %}active{% endif %}">Ҳама</a>
+    {% for k, label in categories %}
+    <a href="{% url 'news_archive' %}?cat={{ k }}" class="{% if category == k %}active{% endif %}">{{ label }}</a>
+    {% endfor %}
+    <form method="get" action="{% url 'news_archive' %}">
+        {% if category %}<input type="hidden" name="cat" value="{{ category }}">{% endif %}
+        <select name="school_id" onchange="this.form.submit()">
+            <option value="">— ҳамаи муассисаҳо —</option>
+            {% for s in schools %}
+            <option value="{{ s.id }}"{% if school_id == s.id|stringformat:"s" %} selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+{% if page.object_list %}
+<div class="na-grid">
+    {% for n in page %}
+    <a class="na-card" href="{% url 'news_detail' n.pk %}">
+        {% with p=n.main_photo %}{% if p %}<img src="{{ p.slider_image.url }}" alt="{{ n.title }}" loading="lazy">{% endif %}{% endwith %}
+        <div class="body">
+            <span class="cat">{{ n.get_category_display }}</span>
+            <h3>{{ n.title }}</h3>
+            <div class="meta">🏫 {{ n.school_name }} · 📅 {{ n.event_date|date:'d.m.Y' }}</div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+{% if page.has_other_pages %}
+<div class="na-pager">
+    {% if page.has_previous %}
+    <a class="btn" href="?page={{ page.previous_page_number }}{% if category %}&cat={{ category }}{% endif %}{% if school_id %}&school_id={{ school_id }}{% endif %}">← Пешина</a>
+    {% endif %}
+    <span style="align-self:center; font-size:.88rem; color:#6b7280;">Саҳифаи {{ page.number }} аз {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}
+    <a class="btn" href="?page={{ page.next_page_number }}{% if category %}&cat={{ category }}{% endif %}{% if school_id %}&school_id={{ school_id }}{% endif %}">Навбатӣ →</a>
+    {% endif %}
+</div>
+{% endif %}
+{% else %}
+<div class="na-empty">Ҳануз хабари нашршуда нест.</div>
+{% endif %}
+{% endblock %}

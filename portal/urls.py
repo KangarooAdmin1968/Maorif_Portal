@@ -95,4 +95,11 @@ urlpatterns = [
     path('schools/years/archive/', views.quarter_archive_download, name='quarter_archive_download'),
     path('top-students/', views.top_students_ajax, name='top_students_ajax'),
     path('class-rankings/', views.class_rankings_ajax, name='class_rankings_ajax'),
+    path('news/', views.news_archive, name='news_archive'),
+    path('news/<int:pk>/', views.news_detail, name='news_detail'),
+    path('news/manage/', views.news_admin, name='news_admin'),
+    path('news/manage/new/', views.news_create, name='news_create'),
+    path('news/manage/<int:pk>/edit/', views.news_edit, name='news_edit'),
+    path('news/manage/<int:pk>/action/', views.news_action, name='news_action'),
+    path('news/manage/photo/<int:photo_id>/', views.news_photo_action, name='news_photo_action'),
 ]

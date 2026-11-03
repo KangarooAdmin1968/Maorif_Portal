@@ -2417,6 +2417,8 @@ def dashboard(request):
         requested_by=request.user
     ).select_related('class_subject').order_by('-requested_at')) if request.user.is_authenticated else []
 
+    from .news import slider_slides
+
     context = {
         'role': role,
         'schools': schools,
@@ -2436,6 +2438,8 @@ def dashboard(request):
         'user_school': user_school,
         'selected_school': selected_school,
         'my_requests': my_requests,
+        'news_slides': slider_slides(),
+        'news_can_manage': _news_allowed(request),
     }
     return render(request, 'portal/dashboard.html', context)
 
@@ -9317,4 +9321,280 @@ def service_worker(request):
     response['Service-Worker-Allowed'] = '/'
     response['Cache-Control'] = 'no-cache'
     return response
+
+
+# ---------------------------------------------------------------------------
+# Ахбор ва хабарҳо — district news module
+# ---------------------------------------------------------------------------
+
+def _news_forbidden(request):
+    """Redirect unauthorized users away from news management."""
+    return redirect('dashboard')
+
+
+def _news_allowed(request):
+    from .news import can_manage_news
+    return can_manage_news(request.user)
+
+
+def news_archive(request):
+    """Public archive: published news by category, paginated."""
+    from django.core.paginator import Paginator
+    from .models import News
+
+    qs = (News.objects.filter(status=News.STATUS_PUBLISHED)
+          .select_related('school')
+          .prefetch_related('photos'))
+    category = request.GET.get('cat', '')
+    if category:
+        qs = qs.filter(category=category)
+    school_id = request.GET.get('school_id', '')
+    if school_id.isdigit():
+        qs = qs.filter(school_id=int(school_id))
+
+    page = Paginator(qs, 9).get_page(request.GET.get('page'))
+    return render(request, 'portal/news_archive.html', {
+        'page': page,
+        'categories': News.CATEGORY_CHOICES,
+        'category': category,
+        'school_id': school_id,
+        'schools': School.objects.all().order_by('name'),
+        'can_manage': _news_allowed(request),
+    })
+
+
+def news_detail(request, pk):
+    """Full news page. Public items only; managers may preview any status."""
+    from .models import News
+
+    news = get_object_or_404(
+        News.objects.select_related('school', 'author')
+        .prefetch_related('photos'), pk=pk)
+    is_manager = _news_allowed(request)
+    if news.status != News.STATUS_PUBLISHED and not is_manager:
+        return redirect('news_archive')
+    return render(request, 'portal/news_detail.html', {
+        'news': news,
+        'can_manage': is_manager,
+        'is_preview': news.status != News.STATUS_PUBLISHED,
+    })
+
+
+@login_required
+def news_admin(request):
+    """Management list with status tabs + per-item actions."""
+    if not _news_allowed(request):
+        return _news_forbidden(request)
+    from .models import News
+
+    status = request.GET.get('status', 'all')
+    qs = (News.objects.select_related('school', 'author')
+          .prefetch_related('photos')
+          .order_by('-updated_at'))
+    if status in dict(News.STATUS_CHOICES):
+        qs = qs.filter(status=status)
+    status_rows = [
+        (s, label, News.objects.filter(status=s).count())
+        for s, label in News.STATUS_CHOICES]
+    return render(request, 'portal/news_admin.html', {
+        'items': qs,
+        'status': status,
+        'status_rows': status_rows,
+    })
+
+
+def _news_form_context(news=None, errors=None, form=None):
+    from .models import News
+    return {
+        'news': news,
+        'errors': errors or [],
+        'form': form or {},
+        'categories': News.CATEGORY_CHOICES,
+        'schools': School.objects.all().order_by('name'),
+        'max_photos': 5,
+    }
+
+
+def _validate_news_post(request, news=None):
+    """Collect + validate form fields. Returns (data, files, errors)."""
+    from .models import News
+
+    data = {
+        'category': (request.POST.get('category') or '').strip(),
+        'title': (request.POST.get('title') or '').strip(),
+        'school_id': (request.POST.get('school_id') or '').strip(),
+        'event_date': (request.POST.get('event_date') or '').strip(),
+        'summary': (request.POST.get('summary') or '').strip(),
+    }
+    errors = []
+    if data['category'] not in dict(News.CATEGORY_CHOICES):
+        errors.append('Категорияро интихоб кунед.')
+    if not data['title']:
+        errors.append('Сарлавҳаро нависед.')
+    if not data['event_date']:
+        errors.append('Санаи воқеаро интихоб кунед.')
+    else:
+        try:
+            data['event_date'] = datetime.date.fromisoformat(
+                data['event_date'])
+        except ValueError:
+            errors.append('Санаи воқеа нодуруст аст.')
+    if not data['summary']:
+        errors.append('Тавсифи кӯтоҳро нависед.')
+
+    school = None
+    if data['school_id']:
+        try:
+            school = School.objects.get(pk=int(data['school_id']))
+        except (School.DoesNotExist, ValueError):
+            errors.append('Муассиса нодуруст интихоб шуд.')
+    data['school'] = school
+
+    files = request.FILES.getlist('photos')
+    existing = news.photos.count() if news else 0
+    if existing + len(files) > 5:
+        errors.append(f'Аксҳо наметавонанд зиёда аз 5 бошанд '
+                      f'(ҳоло {existing}, нав {len(files)}).')
+    elif existing + len(files) < 1:
+        errors.append('Ҳадди ақал як акс зарур аст.')
+    return data, files, errors
+
+
+@login_required
+def news_create(request):
+    if not _news_allowed(request):
+        return _news_forbidden(request)
+    from .models import News
+    from .news import save_photo
+
+    if request.method == 'POST':
+        data, files, errors = _validate_news_post(request)
+        if not errors:
+            news = News.objects.create(
+                category=data['category'], title=data['title'],
+                school=data['school'], event_date=data['event_date'],
+                summary=data['summary'], author=request.user)
+            try:
+                for i, f in enumerate(files):
+                    save_photo(news, f, order=i, is_main=(i == 0))
+            except ValueError as e:
+                news.delete()
+                errors.append(str(e))
+            else:
+                messages.success(request,
+                                 'Хабар ҳамчун лоиҳа нигоҳ дошта шуд.')
+                return redirect('news_admin')
+        return render(request, 'portal/news_form.html',
+                      _news_form_context(errors=errors, form=data))
+    return render(request, 'portal/news_form.html', _news_form_context())
+
+
+@login_required
+def news_edit(request, pk):
+    if not _news_allowed(request):
+        return _news_forbidden(request)
+    from .models import News
+    from .news import save_photo
+
+    news = get_object_or_404(
+        News.objects.prefetch_related('photos'), pk=pk)
+    if request.method == 'POST':
+        data, files, errors = _validate_news_post(request, news)
+        if not errors:
+            news.category = data['category']
+            news.title = data['title']
+            news.school = data['school']
+            news.event_date = data['event_date']
+            news.summary = data['summary']
+            news.save()
+            try:
+                start = news.photos.count()
+                for i, f in enumerate(files):
+                    save_photo(news, f, order=start + i)
+            except ValueError as e:
+                errors.append(str(e))
+            else:
+                if not news.photos.filter(is_main=True).exists():
+                    first = news.photos.first()
+                    if first:
+                        first.is_main = True
+                        first.save(update_fields=['is_main'])
+                messages.success(request, 'Хабар нав карда шуд.')
+                return redirect('news_admin')
+        form = dict(data)
+        form['school_id'] = data['school_id']
+        form['event_date'] = request.POST.get('event_date', '')
+        return render(request, 'portal/news_form.html',
+                      _news_form_context(news, errors, form))
+    form = {
+        'category': news.category, 'title': news.title,
+        'school_id': news.school_id or '',
+        'event_date': news.event_date.isoformat(),
+        'summary': news.summary,
+    }
+    return render(request, 'portal/news_form.html',
+                  _news_form_context(news, form=form))
+
+
+@login_required
+@require_POST
+def news_action(request, pk):
+    """Status transitions: publish / unpublish / archive / restore / delete."""
+    if not _news_allowed(request):
+        return _news_forbidden(request)
+    from .models import News
+    from . import news as news_mod
+
+    news = get_object_or_404(News, pk=pk)
+    action = request.POST.get('action', '')
+    if action == 'publish':
+        if not news.photos.exists():
+            messages.error(request, 'Бе акс нашр кардан мумкин нест.')
+        else:
+            news_mod.publish(news)
+            messages.success(request, 'Хабар нашр шуд.')
+    elif action == 'unpublish':
+        news_mod.unpublish(news)
+    elif action == 'archive':
+        news_mod.archive(news)
+    elif action == 'restore':
+        news_mod.restore(news)
+    elif action == 'delete':
+        news.delete()
+        messages.success(request, 'Хабар нест карда шуд.')
+    else:
+        messages.error(request, 'Амали нодуруст.')
+    return redirect(request.POST.get('next') or 'news_admin')
+
+
+@login_required
+@require_POST
+def news_photo_action(request, photo_id):
+    """Per-photo actions: delete / set-main."""
+    if not _news_allowed(request):
+        return _news_forbidden(request)
+    from .models import NewsPhoto
+    from .news import replace_main_photo
+
+    photo = get_object_or_404(NewsPhoto.objects.select_related('news'),
+                            pk=photo_id)
+    news_id = photo.news_id
+    action = request.POST.get('action', '')
+    if action == 'delete':
+        if photo.news.photos.count() <= 1 \
+                and photo.news.status == 'published':
+            messages.error(
+                request,
+                'Хабари нашршуда бояд ҳадди ақал як акс дошта бошад.')
+        else:
+            was_main = photo.is_main
+            photo.delete()
+            if was_main:
+                first = NewsPhoto.objects.filter(news_id=news_id).first()
+                if first:
+                    first.is_main = True
+                    first.save(update_fields=['is_main'])
+    elif action == 'main':
+        replace_main_photo(photo)
+    return redirect('news_edit', pk=news_id)
 

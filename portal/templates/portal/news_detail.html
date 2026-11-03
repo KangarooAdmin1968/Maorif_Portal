@@ -1,0 +1,59 @@
+{% extends 'portal/base.html' %}
+{% block title %}{{ news.title }}{% endblock %}
+{% block extra_head %}
+<style>
+  .nd-card { background:#fff; border:1px solid #e5e7eb; border-radius:.6rem; padding:1.2rem 1.4rem; max-width:60rem; }
+  .nd-meta { display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; font-size:.85rem; color:#6b7280; margin:.4rem 0 1rem; }
+  .nd-meta .cat { background:#003366; color:#fff; padding:.15rem .6rem; border-radius:.5rem; font-size:.8rem; }
+  .nd-summary { font-size:1rem; line-height:1.65; color:#1f2937; white-space:pre-line; }
+  .nd-gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:.7rem; margin-top:1.1rem; }
+  .nd-gallery img { width:100%; height:160px; object-fit:cover; border-radius:.45rem; border:1px solid #d1d5db; cursor:zoom-in; display:block; }
+  .nd-banner { background:#fef3c7; border:1px solid #fde68a; color:#92400e; border-radius:.5rem; padding:.5rem .9rem; margin-bottom:.9rem; font-size:.9rem; }
+  dialog#ndLight { border:none; padding:0; background:transparent; max-width:92vw; max-height:92vh; }
+  dialog#ndLight::backdrop { background:rgba(0,0,0,.8); }
+  dialog#ndLight img { max-width:92vw; max-height:88vh; border-radius:.4rem; display:block; }
+</style>
+{% endblock %}
+{% block content %}
+{% if is_preview %}
+<div class="nd-banner">Пешнамоиш — ин хабар ҳануз барои истифодабарандагон намоён нест (ҳолат: {{ news.get_status_display }}).</div>
+{% endif %}
+
+<div class="nd-card">
+    <h1 style="margin:0; font-size:1.5rem;">{{ news.title }}</h1>
+    <div class="nd-meta">
+        <span class="cat">{{ news.get_category_display }}</span>
+        <span>🏫 {{ news.school_name }}</span>
+        <span>📅 Воқеа: {{ news.event_date|date:'d.m.Y' }}</span>
+        {% if news.published_at %}<span>🕐 Нашр: {{ news.published_at|date:'d.m.Y H:i' }}</span>{% endif %}
+        {% if news.author %}<span>✍️ {{ news.author.get_full_name|default:news.author.username }}</span>{% endif %}
+    </div>
+    <div class="nd-summary">{{ news.summary }}</div>
+
+    {% if news.photos.all %}
+    <div class="nd-gallery">
+        {% for p in news.photos.all %}
+        <img src="{{ p.image.url }}" alt="{{ news.title }}" loading="lazy"
+             onclick="ndOpen('{{ p.image.url }}')">
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div style="margin-top:1.2rem; display:flex; gap:.5rem; flex-wrap:wrap;">
+        <a class="btn" href="{% url 'news_archive' %}">← Бойгонӣ</a>
+        {% if can_manage %}
+        <a class="btn" href="{% url 'news_edit' news.pk %}">Таҳрир</a>
+        <a class="btn" href="{% url 'news_admin' %}">Идоракунӣ</a>
+        {% endif %}
+    </div>
+</div>
+
+<dialog id="ndLight" onclick="this.close()"><img id="ndLightImg" alt=""></dialog>
+<script>
+function ndOpen(src) {
+    var d = document.getElementById('ndLight');
+    document.getElementById('ndLightImg').src = src;
+    if (d.showModal) d.showModal(); else window.open(src, '_blank');
+}
+</script>
+{% endblock %}

@@ -18,5 +18,8 @@ db.sqlite3
 # Shared ranking cache files (runtime artifacts, recreated on demand)
 data/cache/
 
+# Uploaded media (news photos etc.) — lives on the server, not in git
+media/
+
 # Local server ops scripts — run manually, never pushed to the repo
 server_healthcheck.py

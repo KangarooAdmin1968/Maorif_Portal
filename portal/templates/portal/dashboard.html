@@ -15,6 +15,58 @@
     height: 80px;
     object-fit: contain;
 }
+/* News slider occupies the flag slot — same height, 16:9 width */
+.news-slider {
+    position: relative;
+    height: 80px;
+    aspect-ratio: 16 / 9;
+    border-radius: .4rem;
+    overflow: hidden;
+    flex: 0 0 auto;
+}
+.ns-slide {
+    position: absolute; inset: 0;
+    display: block;
+    opacity: 0;
+    transition: opacity .45s ease;
+    pointer-events: none;
+    text-decoration: none;
+}
+.ns-slide.active { opacity: 1; pointer-events: auto; }
+.ns-slide img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.ns-cap {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, .55);
+    color: #fff;
+    font-size: .58rem;
+    line-height: 1.25;
+    padding: 2px 5px;
+    display: block;
+    text-align: left;
+}
+.ns-cap b { color: #ffd166; font-weight: 600; }
+.ns-cap .l2 { display: block; opacity: .85; }
+.ns-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    background: rgba(0, 0, 0, .45); color: #fff;
+    border: none; border-radius: 50%;
+    width: 20px; height: 20px; font-size: .8rem; line-height: 1;
+    cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;
+}
+.ns-prev { left: 3px; }
+.ns-next { right: 3px; }
+.ns-count {
+    position: absolute; top: 3px; right: 4px;
+    background: rgba(0, 0, 0, .5); color: #fff;
+    font-size: .6rem; padding: 1px 5px; border-radius: .4rem;
+}
+@media (prefers-reduced-motion: reduce) {
+    .ns-slide { transition: none; }
+}
 .site-header h1 {
     margin: 0;
     font-size: 2.2rem;
@@ -31,6 +83,10 @@
     .site-header img {
         height: 55px;
     }
+    .news-slider {
+        height: 55px;
+    }
+    .ns-cap .l2 { display: none; }
     .site-header h1 {
         font-size: 1.5rem;
     }
@@ -191,7 +247,24 @@
 <div class="site-header">
     <img src="{% static 'assets/gerb.png' %}" alt="Герб">
     <h1>Шуъбаи маорифи ноҳияи Зафаробод</h1>
+    {% if news_slides %}
+    <div class="news-slider" id="newsSlider" role="region" aria-label="Слайдери хабарҳо">
+        {% for s in news_slides %}
+        <a class="ns-slide{% if forloop.first %} active{% endif %}" href="{{ s.url }}"
+           title="{{ s.category }} · {{ s.title }}&#10;{{ s.school_name }} · {{ s.event_date }}&#10;{{ s.summary }}">
+            <img src="{{ s.image }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>
+            <span class="ns-cap"><b>{{ s.category }}</b> {{ s.title }}<span class="l2">{{ s.school_name }} · {{ s.event_date }}</span></span>
+        </a>
+        {% endfor %}
+        {% if news_slides|length > 1 %}
+        <button class="ns-nav ns-prev" type="button" aria-label="Слайди пешина">‹</button>
+        <button class="ns-nav ns-next" type="button" aria-label="Слайди навбатӣ">›</button>
+        <span class="ns-count">1/{{ news_slides|length }}</span>
+        {% endif %}
+    </div>
+    {% else %}
     <img src="{% static 'assets/flag.gif' %}" alt="Парчам">
+    {% endif %}
 </div>
 
 <section class="stats-grid">
@@ -713,6 +786,47 @@
     bindTabs();
     bindHonorRoll();
     bindClassRankings();
+})();
+</script>
+
+<script>
+(function () {
+    var root = document.getElementById('newsSlider');
+    if (!root) return;
+    var slides = root.querySelectorAll('.ns-slide');
+    if (slides.length < 2) return;
+    var count = root.querySelector('.ns-count');
+    var i = 0, timer = null;
+    var reduced = window.matchMedia &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function show(n) {
+        slides[i].classList.remove('active');
+        i = (n + slides.length) % slides.length;
+        slides[i].classList.add('active');
+        if (count) count.textContent = (i + 1) + '/' + slides.length;
+    }
+    function start() {
+        if (!reduced && !timer) timer = setInterval(function () { show(i + 1); }, 7000);
+    }
+    function stop() { clearInterval(timer); timer = null; }
+
+    var prev = root.querySelector('.ns-prev'),
+        next = root.querySelector('.ns-next');
+    if (prev) prev.addEventListener('click', function (e) { e.preventDefault(); show(i - 1); stop(); start(); });
+    if (next) next.addEventListener('click', function (e) { e.preventDefault(); show(i + 1); stop(); start(); });
+
+    root.addEventListener('mouseenter', stop);
+    root.addEventListener('mouseleave', start);
+    root.addEventListener('focusin', stop);
+    root.addEventListener('focusout', start);
+    var touchTimer = null;
+    root.addEventListener('touchstart', function () {
+        stop();
+        clearTimeout(touchTimer);
+        touchTimer = setTimeout(start, 15000);
+    }, { passive: true });
+    start();
 })();
 </script>
 {% endblock %}

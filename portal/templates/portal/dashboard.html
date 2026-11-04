@@ -43,12 +43,15 @@
     object-position: center 30%;
     display: block;
 }
-/* Video slide: cover + play button inside the same stage; the Instagram
-   iframe only exists after the visitor presses play. */
-.ns-video {
+/* Video pane: hidden until the "Видео" toggle below the stage is
+   pressed; the Instagram iframe only exists after that click. */
+.ns-video-pane {
+    position: absolute; inset: 0; display: none;
     background: linear-gradient(135deg, #0f172a, #312e81 55%, #7c3aed);
 }
-.ns-video .ns-vthumb {
+.ns-video-pane.ns-static { display: block; }
+.news-slider-card.ns-playing .ns-video-pane { display: block; }
+.ns-video-pane .ns-vthumb {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
     object-fit: contain;
@@ -64,44 +67,45 @@
     box-shadow: 0 4px 14px rgba(0,0,0,.35);
 }
 .ns-vplay:hover { background: #e5e7eb; }
-.ns-vclose {
-    position: absolute; top: 8px; left: 8px; z-index: 2;
-    display: none;
-    background: rgba(0,0,0,.55); color: #fff;
-    border: 0; border-radius: 50%;
-    width: 32px; height: 32px; font-size: 1rem;
-    cursor: pointer; align-items: center; justify-content: center;
-}
-.ns-vclose:hover { background: rgba(0,0,0,.75); }
 .ns-vlink {
     position: absolute; right: 10px; bottom: 8px; z-index: 1;
     color: #fff; font-size: .78rem; text-shadow: 0 1px 3px rgba(0,0,0,.6);
 }
-.ns-video iframe {
+.ns-video-pane iframe {
     position: absolute; top: 0;
     left: 50%; transform: translateX(-50%);
     width: min(100%, 430px); height: 100%; border: 0;
 }
+.ns-video-pane.playing .ns-vthumb,
+.ns-video-pane.playing .ns-vplay { display: none; }
 /* While a reel plays the stage grows to portrait height so Instagram's
    vertical embed is not cropped; closing restores 16/9. */
 .news-slider-card.ns-playing .ns-stage {
     aspect-ratio: auto;
     height: min(85vh, 840px);
 }
-.ns-video.playing .ns-vthumb,
-.ns-video.playing .ns-vplay,
-.ns-video.playing .ns-vlink { display: none; }
-.ns-video.playing .ns-vclose { display: flex; }
-.ns-vphotos {
-    position: absolute; top: 8px; right: 48px; z-index: 2;
-    display: none;
-    background: rgba(0,0,0,.55); color: #fff;
-    border: 0; border-radius: .5rem;
-    padding: .35rem .8rem; font-size: .82rem; font-family: inherit;
+/* Photo ↔ video toggle under the stage */
+.ns-toggle {
+    display: flex; gap: .5rem; justify-content: center;
+    padding: .55rem .95rem 0;
+}
+.ns-tbtn {
+    border: 1px solid #d1d5db; background: #fff; color: #374151;
+    border-radius: .55rem; padding: .4rem 1.1rem;
+    font-size: .88rem; font-weight: 600; font-family: inherit;
     cursor: pointer; white-space: nowrap;
 }
-.ns-vphotos:hover { background: rgba(0,0,0,.8); }
-.ns-video.playing .ns-vphotos { display: block; }
+.ns-tbtn:hover { border-color: #9ca3af; }
+.ns-tbtn.active {
+    background: #003366; border-color: #003366; color: #fff;
+}
+/* Video info swaps in over the photo info while playing */
+.ns-vinfo { display: none; }
+.news-slider-card.ns-playing .ns-info:not(.ns-vinfo) {
+    opacity: 0; pointer-events: none;
+}
+.news-slider-card.ns-playing .ns-vinfo { display: block; opacity: 1; }
+.ns-vinfo.ns-vshow { display: block; opacity: 1; }
 .ns-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
     background: rgba(0, 0, 0, .45); color: #fff;
@@ -340,42 +344,53 @@
     <img src="{% static 'assets/flag.gif' %}" alt="Парчам">
 </div>
 
-{% if news_slides %}
+{% if news_slides or news_video %}
 <section class="card news-slider-card" id="newsSlider" aria-label="Слайдери хабарҳо">
     <div class="ns-stage">
         {% for s in news_slides %}
-        {% if s.type == 'video' %}
-        <div class="ns-slide ns-video{% if forloop.first %} active{% endif %}"
-             data-embed="{{ s.embed }}">
-            {% if s.thumb %}<img class="ns-vthumb" src="{{ s.thumb }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>{% endif %}
-            <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
-            <button class="ns-vclose" type="button" aria-label="Ба аксҳо баргаштан">✕</button>
-            <button class="ns-vphotos" type="button">Ба аксҳо →</button>
-            <a class="ns-vlink" href="{{ s.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>
-        </div>
-        {% else %}
         <a class="ns-slide{% if forloop.first %} active{% endif %}" href="{{ s.url }}"
            title="{{ s.category }} · {{ s.title }}&#10;{{ s.school_name }} · {{ s.event_date }}&#10;{{ s.summary }}">
             <img src="{{ s.image }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>
         </a>
-        {% endif %}
         {% endfor %}
+        {% if news_video %}
+        <div class="ns-video-pane{% if not news_slides %} ns-static{% endif %}"
+             data-embed="{{ news_video.embed }}">
+            {% if news_video.thumb %}<img class="ns-vthumb" src="{{ news_video.thumb }}" alt="{{ news_video.title }}" loading="lazy">{% endif %}
+            <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
+            <a class="ns-vlink" href="{{ news_video.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>
+        </div>
+        {% endif %}
         {% if news_slides|length > 1 %}
         <button class="ns-nav ns-prev" type="button" aria-label="Слайди пешина">‹</button>
         <button class="ns-nav ns-next" type="button" aria-label="Слайди навбатӣ">›</button>
         <span class="ns-count">1/{{ news_slides|length }}</span>
         {% endif %}
     </div>
+    {% if news_video %}
+    <div class="ns-toggle">
+        {% if news_slides %}<button class="ns-tbtn ns-t-photos active" type="button">🖼 Аксҳо</button>{% endif %}
+        <button class="ns-tbtn ns-t-video" type="button">🎬 Видео</button>
+    </div>
+    {% endif %}
     <div class="ns-infos">
         {% for s in news_slides %}
         <div class="ns-info{% if forloop.first %} active{% endif %}">
             <span class="cat">{{ s.category }}</span>
-            {% if s.type == 'video' %}<span class="cat" style="background:#7c3aed;">🎬 Видео</span>{% endif %}
             <a class="ns-title" href="{{ s.url }}">{{ s.title }}</a>
             <div class="meta">🏫 {{ s.school_name }} · 📅 {{ s.event_date }}</div>
             <div class="sum">{{ s.summary }}</div>
         </div>
         {% endfor %}
+        {% if news_video %}
+        <div class="ns-info ns-vinfo{% if not news_slides %} ns-vshow{% endif %}">
+            <span class="cat">{{ news_video.category }}</span>
+            <span class="cat" style="background:#7c3aed;">🎬 Видео</span>
+            <a class="ns-title" href="{{ news_video.url }}">{{ news_video.title }}</a>
+            <div class="meta">🏫 {{ news_video.school_name }} · 📅 {{ news_video.event_date }}</div>
+            <div class="sum">{{ news_video.summary }}</div>
+        </div>
+        {% endif %}
     </div>
 </section>
 {% endif %}
@@ -907,7 +922,10 @@
     var root = document.getElementById('newsSlider');
     if (!root) return;
     var slides = root.querySelectorAll('.ns-slide');
-    var infos = root.querySelectorAll('.ns-info');
+    var infos = root.querySelectorAll('.ns-info:not(.ns-vinfo)');
+    var pane = root.querySelector('.ns-video-pane');
+    var tPhotos = root.querySelector('.ns-t-photos');
+    var tVideo = root.querySelector('.ns-t-video');
     var playing = false;
     var videoTimer = null;
     // Instagram sends no "ended" signal across the iframe boundary, so
@@ -915,52 +933,55 @@
     // typical reels are shorter than this.
     var VIDEO_WATCH_MS = 90000;
 
+    function setToggle(v) {
+        if (tPhotos) tPhotos.classList.toggle('active', !v);
+        if (tVideo) tVideo.classList.toggle('active', v);
+    }
+
     function closeVideo() {
         if (videoTimer) { clearTimeout(videoTimer); videoTimer = null; }
-        var open = root.querySelector('.ns-video.playing');
-        if (!open) return;
-        var f = open.querySelector('iframe');
+        var f = pane && pane.querySelector('iframe');
         if (f) f.remove();
-        open.classList.remove('playing');
+        if (pane) pane.classList.remove('playing');
         root.classList.remove('ns-playing');
         playing = false;
+        setToggle(false);
+    }
+
+    // "Видео" toggle / play button: the Instagram iframe is only
+    // created now; re-selecting video always builds a fresh iframe.
+    function playVideo() {
+        if (!pane || pane.querySelector('iframe')) return;
+        var src = pane.getAttribute('data-embed');
+        if (!src) return;
+        var f = document.createElement('iframe');
+        f.src = src;
+        f.setAttribute('allow', 'encrypted-media');
+        f.setAttribute('allowtransparency', 'true');
+        pane.appendChild(f);
+        pane.classList.add('playing');
+        root.classList.add('ns-playing');
+        playing = true;
+        setToggle(true);
+        stop();
+        videoTimer = setTimeout(toPhotos, VIDEO_WATCH_MS);
     }
 
     function toPhotos() {
         closeVideo();
-        if (slides.length > 1) { show(i + 1); stop(); start(); }
+        start();
     }
 
-    // Video slide: click-to-play (Instagram embed loads only now),
-    // close button returns the slide to its cover and resumes rotation.
     root.addEventListener('click', function (e) {
-        var play = e.target.closest('.ns-vplay');
-        if (play) {
+        var t = e.target;
+        if (t.closest('.ns-vplay') || t.closest('.ns-t-video')) {
             e.preventDefault();
-            var slide = play.closest('.ns-video');
-            var src = slide && slide.getAttribute('data-embed');
-            if (!src || slide.querySelector('iframe')) return;
-            var f = document.createElement('iframe');
-            f.src = src;
-            f.setAttribute('allow', 'encrypted-media');
-            f.setAttribute('allowtransparency', 'true');
-            slide.appendChild(f);
-            slide.classList.add('playing');
-            root.classList.add('ns-playing');
-            playing = true;
-            stop();
-            videoTimer = setTimeout(toPhotos, VIDEO_WATCH_MS);
+            playVideo();
             return;
         }
-        if (e.target.closest('.ns-vphotos')) {
+        if (t.closest('.ns-t-photos')) {
             e.preventDefault();
             toPhotos();
-            return;
-        }
-        if (e.target.closest('.ns-vclose')) {
-            e.preventDefault();
-            closeVideo();
-            start();
         }
     });
 

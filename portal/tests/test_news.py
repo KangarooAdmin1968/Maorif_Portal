@@ -374,19 +374,21 @@ class NewsTests(GoldenBase):
         n.video_url = self.VIDEO_CANON
         n.save()
         slides = news_mod.slider_slides()
-        self.assertEqual(len(slides), 1)
-        s = slides[0]
+        self.assertEqual(len(slides), 0)        # not in photo rotation
+        s = news_mod.slider_video()
+        self.assertIsNotNone(s)
         self.assertEqual(s['type'], 'video')
         self.assertEqual(
             s['embed'],
             'https://www.instagram.com/reel/DfSPXDhIq29/embed/')
         self.assertEqual(s['video_url'], self.VIDEO_CANON)
-        # a video item that also carries photos: photo slides lead and
-        # the video slide comes last so rotation wraps back to photos
+        # a video item that also carries photos: the photo stays in the
+        # rotation, the video is exposed through slider_video()
         self._add_photo(n)
         news_mod.invalidate_news_cache()
         slides = news_mod.slider_slides()
-        self.assertEqual([x['type'] for x in slides], ['photo', 'video'])
+        self.assertEqual([x['type'] for x in slides], ['photo'])
+        self.assertEqual(news_mod.slider_video()['id'], n.pk)
 
     def test_dashboard_video_slide_click_to_play(self):
         n = self._publish(self._make_news(title='Видеослайд'), day=1)
@@ -396,15 +398,16 @@ class NewsTests(GoldenBase):
         n.save()
         news_mod.invalidate_news_cache()
         resp = self.client.get(reverse('dashboard'))
-        self.assertContains(resp, 'ns-video')
+        self.assertContains(resp, 'class="ns-video-pane')
+        self.assertContains(resp, 'ns-t-video')
         self.assertContains(resp, 'Видеоро тамошо кардан')
         self.assertContains(resp, 'reel/DfSPXDhIq29/embed/')
         # iframe only exists after the visitor presses play
         self.assertNotContains(resp, '<iframe')
-        # feature flag off → video slide gone, photo slides unaffected
+        # feature flag off → video pane + toggle gone, photos unaffected
         with override_settings(NEWS_VIDEO_ENABLED=False):
             resp = self.client.get(reverse('dashboard'))
-            self.assertNotContains(resp, 'ns-slide ns-video')
+            self.assertNotContains(resp, 'class="ns-video-pane')
             self.assertNotContains(resp, 'data-embed="')
 
     def test_edit_form_preserves_video_url(self):

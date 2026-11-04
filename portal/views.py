@@ -2434,12 +2434,8 @@ def dashboard(request):
         requested_by=request.user
     ).select_related('class_subject').order_by('-requested_at')) if request.user.is_authenticated else []
 
-    from .news import slider_slides, video_enabled
+    from .news import slider_slides, slider_video
     news_slides = slider_slides()
-    if not video_enabled():
-        # Kill-switch: video slides are dropped from the dashboard while
-        # photo slides keep working; stored video data is untouched.
-        news_slides = [s for s in news_slides if s.get('type') != 'video']
 
     context = {
         'role': role,
@@ -2461,6 +2457,7 @@ def dashboard(request):
         'selected_school': selected_school,
         'my_requests': my_requests,
         'news_slides': news_slides,
+        'news_video': slider_video(),
         'news_can_manage': _news_allowed(request),
     }
     return render(request, 'portal/dashboard.html', context)

@@ -30,7 +30,7 @@ from .models import News, NewsPhoto
 
 logger = logging.getLogger(__name__)
 
-NEWS_SLIDES_CACHE_KEY = 'news:slides:v3'
+NEWS_SLIDES_CACHE_KEY = 'news:slides:v4'
 NEWS_SLIDES_CACHE_SECONDS = 300          # 5 min; invalidated on writes
 NEWS_PER_CATEGORY = 5                    # spec: max 5 latest per category
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024      # 15 MB per file
@@ -62,19 +62,27 @@ def invalidate_news_cache():
     cache.delete(NEWS_SLIDES_CACHE_KEY)
 
 
-def slider_slides():
-    """Ordered slide list for the dashboard, cached.
+def _base_slide(n):
+    return {
+        'id': n.pk,
+        'category': n.get_category_display(),
+        'title': n.title,
+        'school_name': n.school_name,
+        'event_date': n.event_date.strftime('%d.%m.%Y'),
+        'summary': n.summary,
+        'url': f'/news/{n.pk}/',
+    }
 
-    Order = category order (5 news per category, newest first). Each
-    news contributes ALL its photos (main first, then by order) as
-    consecutive slides. Empty categories are skipped. Returns [] when
-    nothing is published — the caller then shows the flag instead.
-    """
+
+def _slider_data():
+    """One cached payload: photo slides for the rotation + the newest
+    published video item for the dashboard toggle button."""
     data = cache.get(NEWS_SLIDES_CACHE_KEY)
     if data is not None:
         return data
 
     by_cat = {}
+    video = None
     items = (
         News.objects.filter(status=News.STATUS_PUBLISHED)
         .select_related('school')
@@ -82,44 +90,53 @@ def slider_slides():
         .order_by('-published_at', '-created_at')
     )
     for n in items:
+        if video is None and (n.media_type == News.MEDIA_VIDEO
+                              and n.video_code):
+            # Newest published video item — shown through the dedicated
+            # "Видео" toggle button, outside the photo rotation.
+            video = dict(_base_slide(n), type='video',
+                         embed=n.video_embed_url,
+                         video_url=n.video_url,
+                         thumb=n.video_thumb.url if n.video_thumb else '')
+        photos = [p for p in n.photos.all() if p.slider_image]
+        if not photos:
+            continue
         if len(by_cat.get(n.category, ())) >= NEWS_PER_CATEGORY:
             continue
-        photos = [p for p in n.photos.all() if p.slider_image]
-        has_video = (n.media_type == News.MEDIA_VIDEO and n.video_code)
-        if not photos and not has_video:
-            continue
-        base = {
-            'id': n.pk,
-            'category': n.get_category_display(),
-            'title': n.title,
-            'school_name': n.school_name,
-            'event_date': n.event_date.strftime('%d.%m.%Y'),
-            'summary': n.summary,
-            'url': f'/news/{n.pk}/',
-        }
         # Main photo first, the rest follow in their stored order.
         photos.sort(key=lambda p: (not p.is_main, p.order, p.id))
-        slides_for_news = [
-            dict(base, type='photo', image=p.slider_image.url)
-            for p in photos]
-        # One click-to-play video slide last — the Instagram iframe is
-        # only created in the browser after the visitor presses play.
-        # Photos lead so the slider opens exactly like before; after the
-        # video slide rotation naturally wraps to the first photo.
-        if has_video:
-            slides_for_news.append(dict(
-                base, type='video', embed=n.video_embed_url,
-                video_url=n.video_url,
-                thumb=n.video_thumb.url if n.video_thumb else ''))
-        by_cat.setdefault(n.category, []).append(slides_for_news)
+        by_cat.setdefault(n.category, []).append([
+            dict(_base_slide(n), type='photo', image=p.slider_image.url)
+            for p in photos])
 
     slides = []
     for key, _label in News.CATEGORY_CHOICES:
         for news_slides in by_cat.get(key, ()):
             slides.extend(news_slides)
 
-    cache.set(NEWS_SLIDES_CACHE_KEY, slides, NEWS_SLIDES_CACHE_SECONDS)
-    return slides
+    data = {'slides': slides, 'video': video}
+    cache.set(NEWS_SLIDES_CACHE_KEY, data, NEWS_SLIDES_CACHE_SECONDS)
+    return data
+
+
+def slider_slides():
+    """Ordered photo slide list for the dashboard rotation, cached.
+
+    Order = category order (5 news per category, newest first). Each
+    news contributes ALL its photos (main first, then by order) as
+    consecutive slides. Returns [] when nothing is published.
+    """
+    return _slider_data()['slides']
+
+
+def slider_video():
+    """Newest published video item for the dashboard "Видео" button,
+    or None when the feature is off / no video item is published.
+    The Instagram iframe is only created in the browser after the
+    visitor presses play."""
+    if not video_enabled():
+        return None
+    return _slider_data()['video']
 
 
 def _webp_bytes(img, quality=WEBP_QUALITY):

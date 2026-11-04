@@ -78,8 +78,15 @@
     color: #fff; font-size: .78rem; text-shadow: 0 1px 3px rgba(0,0,0,.6);
 }
 .ns-video iframe {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%; border: 0;
+    position: absolute; top: 0; bottom: 0;
+    left: 50%; transform: translateX(-50%);
+    width: min(100%, 430px); border: 0;
+}
+/* While a reel plays the stage grows to portrait height so Instagram's
+   vertical embed is not cropped; closing restores 16/9. */
+.news-slider-card.ns-playing .ns-stage {
+    aspect-ratio: auto;
+    height: min(76vh, 740px);
 }
 .ns-video.playing .ns-vthumb,
 .ns-video.playing .ns-vplay,
@@ -898,6 +905,7 @@
         var f = open.querySelector('iframe');
         if (f) f.remove();
         open.classList.remove('playing');
+        root.classList.remove('ns-playing');
         playing = false;
     }
 
@@ -917,6 +925,7 @@
             f.setAttribute('scrolling', 'no');
             slide.appendChild(f);
             slide.classList.add('playing');
+            root.classList.add('ns-playing');
             playing = true;
             stop();
             return;

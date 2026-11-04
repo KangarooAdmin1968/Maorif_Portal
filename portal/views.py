@@ -2434,7 +2434,7 @@ def dashboard(request):
         requested_by=request.user
     ).select_related('class_subject').order_by('-requested_at')) if request.user.is_authenticated else []
 
-    from .news import slider_slides, slider_videos
+    from .news import slider_slides, slider_videos, video_watch_seconds
     news_slides = slider_slides()
 
     context = {
@@ -2458,6 +2458,7 @@ def dashboard(request):
         'my_requests': my_requests,
         'news_slides': news_slides,
         'news_videos': slider_videos(),
+        'news_video_secs': video_watch_seconds(),
         'news_can_manage': _news_allowed(request),
     }
     return render(request, 'portal/dashboard.html', context)

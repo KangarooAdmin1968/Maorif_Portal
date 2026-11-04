@@ -345,7 +345,8 @@
 </div>
 
 {% if news_slides or news_videos %}
-<section class="card news-slider-card" id="newsSlider" aria-label="Слайдери хабарҳо">
+<section class="card news-slider-card" id="newsSlider" aria-label="Слайдери хабарҳо"
+         data-watch="{{ news_video_secs|default:90 }}">
     <div class="ns-stage">
         {% for s in news_slides %}
         <a class="ns-slide{% if forloop.first %} active{% endif %}" href="{{ s.url }}"
@@ -936,9 +937,10 @@
     var playing = false;
     var videoTimer = null;
     // Instagram sends no "ended" signal across the iframe boundary, so
-    // each video gets this much time before the next one (or the
-    // photos) takes over — typical reels are shorter than this.
-    var VIDEO_WATCH_MS = 90000;
+    // each video gets this long (NEWS_VIDEO_SECONDS from settings)
+    // before the next video / the photos take over.
+    var VIDEO_WATCH_MS = Math.max(15,
+        parseInt(root.getAttribute('data-watch'), 10) || 90) * 1000;
 
     function setToggle(v) {
         if (tPhotos) tPhotos.classList.toggle('active', !v);

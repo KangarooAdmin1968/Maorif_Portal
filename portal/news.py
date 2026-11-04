@@ -271,6 +271,18 @@ def video_enabled():
     return getattr(settings, 'NEWS_VIDEO_ENABLED', True)
 
 
+def video_watch_seconds():
+    """How long the dashboard shows one video before chaining to the
+    next video / back to the photo rotation. Instagram's embed cannot
+    report "ended" across the iframe boundary, so this timer
+    approximates it. Tune with NEWS_VIDEO_SECONDS in settings.py
+    (default 90 — covers typical reels; floor 15)."""
+    try:
+        return max(15, int(getattr(settings, 'NEWS_VIDEO_SECONDS', 90)))
+    except (TypeError, ValueError):
+        return 60
+
+
 def fetch_video_thumb(news):
     """Best-effort: download the reel's cover once via the public oEmbed
     endpoint and store it on news.video_thumb.

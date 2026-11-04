@@ -14,13 +14,21 @@ Slider feed (dashboard):
     News/NewsPhoto save/delete (signals.py).
 """
 import io
+import json
+import logging
+import re
+import urllib.request
+from urllib.parse import quote
 
+from django.conf import settings
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.utils import timezone
 from PIL import Image, ImageOps
 
 from .models import News, NewsPhoto
+
+logger = logging.getLogger(__name__)
 
 NEWS_SLIDES_CACHE_KEY = 'news:slides:v2'
 NEWS_SLIDES_CACHE_SECONDS = 300          # 5 min; invalidated on writes
@@ -189,3 +197,82 @@ def restore(news):
     news.status = News.STATUS_DRAFT
     news.published_at = None
     news.save(update_fields=['status', 'published_at', 'updated_at'])
+
+
+# --- Instagram video (Reels embed) -------------------------------------------
+#
+# Only official instagram.com post/reel/tv links are accepted. The stored
+# shortcode (A–Z, a–z, 0–9, -, _) is the single source for building the
+# official /embed/ iframe URL — raw HTML from Instagram never reaches the
+# page, so injected markup cannot sneak in through a crafted link.
+
+VIDEO_URL_RE = re.compile(
+    r'^https?://(?:www\.)?instagram\.com/'
+    r'(?:reel|reels|p|tv)/([A-Za-z0-9_-]{5,30})')
+
+VIDEO_OEMBED_URL = 'https://www.instagram.com/api/v1/oembed/'
+VIDEO_FETCH_TIMEOUT = 8                      # seconds per outbound request
+VIDEO_THUMB_MAX_BYTES = 6 * 1024 * 1024
+
+
+def extract_video_code(url):
+    """Instagram shortcode from a reel/post/tv URL, or None when the URL
+    is not an Instagram media link. Query strings (?igsh=…) are ignored."""
+    if not url:
+        return None
+    m = VIDEO_URL_RE.match(url.strip())
+    return m.group(1) if m else None
+
+
+def canonical_video_url(code):
+    return 'https://www.instagram.com/reel/' + code + '/'
+
+
+def video_enabled():
+    """Feature switch for Instagram video news.
+
+    To disable the feature instantly — e.g. if the dashboard slows down or
+    Instagram embeds break — set NEWS_VIDEO_ENABLED = False in
+    maorif_portal/settings.py. Stored video links and photos are kept;
+    photo news, the slider and journals are unaffected.
+    """
+    return getattr(settings, 'NEWS_VIDEO_ENABLED', True)
+
+
+def fetch_video_thumb(news):
+    """Best-effort: download the reel's cover once via the public oEmbed
+    endpoint and store it on news.video_thumb.
+
+    Runs only when a director/superuser saves a video news item — never on
+    the public request path. Any failure is logged and silently skipped:
+    the page then shows a styled placeholder cover instead. The fetched
+    thumbnail is an image file verified by Pillow, not HTML.
+    """
+    if not news.video_code:
+        return
+    url = (VIDEO_OEMBED_URL + '?url='
+           + quote(canonical_video_url(news.video_code), safe=''))
+    try:
+        req = urllib.request.Request(
+            url, headers={'User-Agent': 'MaorifPortal/1.0'})
+        with urllib.request.urlopen(req, timeout=VIDEO_FETCH_TIMEOUT) as r:
+            data = json.loads(r.read(1 << 20).decode('utf-8', 'replace'))
+        thumb_url = data.get('thumbnail_url') or ''
+        if not thumb_url.startswith('https://'):
+            return
+        req = urllib.request.Request(
+            thumb_url, headers={'User-Agent': 'MaorifPortal/1.0'})
+        with urllib.request.urlopen(req, timeout=VIDEO_FETCH_TIMEOUT) as r:
+            blob = r.read(VIDEO_THUMB_MAX_BYTES + 1)
+        if len(blob) > VIDEO_THUMB_MAX_BYTES:
+            return
+        Image.open(io.BytesIO(blob)).verify()          # content check
+        img = Image.open(io.BytesIO(blob))
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        news.video_thumb.save(
+            news.video_code + '.webp',
+            ContentFile(_webp_bytes(img)), save=False)
+    except Exception:
+        logger.exception(
+            'Failed to fetch Instagram thumbnail for %s', news.video_code)

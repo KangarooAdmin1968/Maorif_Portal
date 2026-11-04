@@ -518,3 +518,15 @@ def news_photo_files_cleanup(sender, instance, **kwargs):
         except Exception:
             logger.exception('Failed to delete %s of NewsPhoto %s',
                              field, instance.pk)
+
+
+@receiver(post_delete, sender=News)
+def news_video_thumb_cleanup(sender, instance, **kwargs):
+    """Remove the fetched video cover when the news item is deleted."""
+    try:
+        f = instance.video_thumb
+        if f and f.name:
+            f.storage.delete(f.name)
+    except Exception:
+        logger.exception(
+            'Failed to delete video_thumb of News %s', instance.pk)

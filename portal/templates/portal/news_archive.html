@@ -47,6 +47,7 @@
         {% with p=n.main_photo %}{% if p %}<img src="{{ p.slider_image.url }}" alt="{{ n.title }}" loading="lazy">{% endif %}{% endwith %}
         <div class="body">
             <span class="cat">{{ n.get_category_display }}</span>
+            {% if n.media_type == 'video' %}<span class="cat" style="background:#7c3aed;">🎬 Видео</span>{% endif %}
             <h3>{{ n.title }}</h3>
             <div class="meta">🏫 {{ n.school_name }} · 📅 {{ n.event_date|date:'d.m.Y' }}</div>
         </div>

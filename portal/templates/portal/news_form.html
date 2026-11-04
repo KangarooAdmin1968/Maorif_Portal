@@ -22,6 +22,12 @@
   .nf-progress .bar > div { background:#003366; height:100%; width:0%; transition:width .15s; }
   .nf-progress .pct { font-size:.82rem; color:#374151; margin-top:.25rem; }
   .nf-cat-desc { font-size:.8rem; color:#6b7280; margin-top:.2rem; }
+  .nf-media-row { display:flex; gap:1.2rem; margin-top:.3rem; font-size:.92rem; }
+  .nf-media-row label { display:flex; align-items:center; gap:.35rem; cursor:pointer; }
+  #nfVideo { display:none; margin-top:.9rem; background:#fdf4f8; border:1px solid #f5c6dd; border-radius:.5rem; padding:.8rem 1rem; }
+  #nfVideo.show { display:block; }
+  #nfVideoPreview { display:none; margin-top:.7rem; }
+  #nfVideoPreview iframe { width:100%; max-width:400px; height:500px; border:0; border-radius:.5rem; background:#fff; }
 </style>
 {% endblock %}
 {% block content %}
@@ -64,6 +70,33 @@
     <label class="nf-field" style="margin-top:.7rem;">Тавсифи кӯтоҳи хабар *
         <textarea name="summary" required>{{ form.summary }}</textarea>
     </label>
+
+    {% if video_enabled %}
+    <div class="nf-field" style="margin-top:1rem;">Навъи медиа
+        <div class="nf-media-row">
+            <label><input type="radio" name="media_type" value="photo"
+                {% if form.media_type != 'video' %}checked{% endif %}> 📷 Акс</label>
+            <label><input type="radio" name="media_type" value="video"
+                {% if form.media_type == 'video' %}checked{% endif %}> 🎬 Видео (Instagram Reels)</label>
+        </div>
+    </div>
+    <div id="nfVideo" class="{% if form.media_type == 'video' %}show{% endif %}">
+        <label class="nf-field">Ҳаволаи Instagram Reels *
+            <input type="url" name="video_url" id="nfVideoUrl" maxlength="300"
+                   placeholder="https://www.instagram.com/reel/…"
+                   value="{{ form.video_url }}">
+            <span class="nf-cat-desc">Танҳо ҳаволаи расмии Instagram Reels/пост қабул мешавад. Дар саҳифаи хабар ҳавола ҳамчун матн нишон дода намешавад.</span>
+        </label>
+        <div style="margin-top:.6rem; display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
+            <button type="button" class="btn" id="nfVideoCheck">Санҷидани видео</button>
+            <span id="nfVideoMsg" style="font-size:.82rem; color:#6b7280;"></span>
+        </div>
+        <div id="nfVideoPreview">
+            <iframe id="nfVideoFrame" title="Пешнамоиши видео"
+                    allow="encrypted-media" allowtransparency="true" scrolling="no"></iframe>
+        </div>
+    </div>
+    {% endif %}
 
     {% if news %}
     <h2 style="margin-top:1.1rem;">Аксҳои мавҷуда ({{ news.photos.count }}/{{ max_photos }})</h2>
@@ -117,6 +150,39 @@
     var cat = document.getElementById('nfCat'), desc = document.getElementById('nfCatDesc');
     function updCat() { desc.textContent = CAT_DESC[cat.value] || ''; }
     cat.addEventListener('change', updCat); updCat();
+
+    var videoBox = document.getElementById('nfVideo');
+    if (videoBox) {
+        var REEL = /^https?:\/\/(www\.)?instagram\.com\/(reel|reels|p|tv)\/([A-Za-z0-9_-]{5,30})/;
+        var urlInput = document.getElementById('nfVideoUrl'),
+            checkBtn = document.getElementById('nfVideoCheck'),
+            msg = document.getElementById('nfVideoMsg'),
+            preview = document.getElementById('nfVideoPreview'),
+            frame = document.getElementById('nfVideoFrame');
+        function updMediaType() {
+            var v = document.querySelector('input[name=media_type]:checked');
+            videoBox.classList.toggle('show', !!(v && v.value === 'video'));
+        }
+        Array.prototype.forEach.call(
+            document.querySelectorAll('input[name=media_type]'), function (r) {
+                r.addEventListener('change', updMediaType);
+            });
+        updMediaType();
+        checkBtn.addEventListener('click', function () {
+            var m = REEL.exec(urlInput.value.trim());
+            if (!m) {
+                preview.style.display = 'none';
+                frame.removeAttribute('src');
+                msg.style.color = '#991b1b';
+                msg.textContent = 'Ҳаволаи нодуруст — ҳаволаи Instagram Reels-ро ворид кунед.';
+                return;
+            }
+            msg.style.color = '#065f46';
+            msg.textContent = 'Видео ёфт шуд — пешнамоиш дар зер:';
+            frame.src = 'https://www.instagram.com/reel/' + m[3] + '/embed/';
+            preview.style.display = 'block';
+        });
+    }
 
     var input = document.getElementById('nfPhotos'),
         prev = document.getElementById('nfPreview'),

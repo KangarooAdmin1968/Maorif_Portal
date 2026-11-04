@@ -8,6 +8,7 @@ import datetime
 import io
 import shutil
 import tempfile
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
@@ -287,3 +288,158 @@ class NewsTests(GoldenBase):
         self.client.force_login(self.director)
         resp = self.client.get(reverse('news_detail', args=[draft.pk]))
         self.assertContains(resp, 'Пешнамоиш')
+
+    # -- Instagram video -----------------------------------------------------
+
+    VIDEO_URL = ('https://www.instagram.com/reel/DfSPXDhIq29/'
+                 '?vrfl=MTRsOGkxaTNheG14cg==')
+    VIDEO_CODE = 'DfSPXDhIq29'
+    VIDEO_CANON = 'https://www.instagram.com/reel/DfSPXDhIq29/'
+
+    def test_video_url_validation(self):
+        ex = news_mod.extract_video_code
+        self.assertEqual(ex(
+            'https://www.instagram.com/reel/DfSPXDhIq29/'), self.VIDEO_CODE)
+        self.assertEqual(ex(self.VIDEO_URL), self.VIDEO_CODE)
+        self.assertEqual(ex(
+            'https://instagram.com/p/ABC12_def-/'), 'ABC12_def-')
+        self.assertEqual(ex(
+            'https://www.instagram.com/tv/xyz_123/'), 'xyz_123')
+        for bad in ('https://youtube.com/watch?v=x',
+                    'https://instagram.com/maorif_zafarobod/',
+                    'javascript:alert(1)',
+                    '<script>alert(1)</script>',
+                    'https://instagram.com.evil.com/reel/abc12345/',
+                    'ftp://instagram.com/reel/abc12345/',
+                    '', '   ', 'not a url'):
+            self.assertIsNone(ex(bad), bad)
+
+    def test_create_video_news_without_photo(self):
+        self.client.force_login(self.director)
+        with patch('portal.news.fetch_video_thumb'):
+            resp = self.client.post(reverse('news_create'), self._post_data(
+                media_type='video', video_url=self.VIDEO_URL))
+        self.assertRedirects(resp, reverse('news_admin'),
+                             fetch_redirect_response=False)
+        n = News.objects.get()
+        self.assertEqual(n.media_type, 'video')
+        self.assertEqual(n.video_code, self.VIDEO_CODE)
+        self.assertEqual(n.video_url, self.VIDEO_CANON)
+        self.assertEqual(n.photos.count(), 0)
+
+    def test_create_video_rejects_foreign_url(self):
+        self.client.force_login(self.director)
+        for url in ('https://youtube.com/watch?v=x',
+                    'javascript:alert(1)', 'random text', ''):
+            resp = self.client.post(reverse('news_create'), self._post_data(
+                media_type='video', video_url=url))
+            self.assertEqual(resp.status_code, 200, url)
+            self.assertEqual(News.objects.count(), 0, url)
+
+    def test_video_publish_and_detail_page(self):
+        n = self._make_news(title='Видеои санҷишӣ')
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        self.client.force_login(self.director)
+        # publishing without a photo works when a video code exists
+        self.client.post(reverse('news_action', args=[n.pk]),
+                         {'action': 'publish'})
+        n.refresh_from_db()
+        self.assertEqual(n.status, News.STATUS_PUBLISHED)
+
+        resp = self.client.get(reverse('news_detail', args=[n.pk]))
+        self.assertContains(resp, 'Видеоро тамошо кардан')
+        self.assertContains(resp, 'Тамошо дар Instagram')
+        self.assertContains(resp, 'reel/DfSPXDhIq29/embed/')
+        # no iframe or Instagram JS until the visitor presses play
+        self.assertNotContains(resp, 'embed.js')
+        self.assertNotContains(resp, '<iframe')
+
+    def test_unpublished_video_hidden_from_public(self):
+        n = self._make_news(status='draft')
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        resp = self.client.get(reverse('news_detail', args=[n.pk]))
+        self.assertRedirects(resp, reverse('news_archive'),
+                             fetch_redirect_response=False)
+
+    def test_video_news_without_photos_not_in_slider(self):
+        n = self._publish(self._make_news(title='Видео'), day=1)
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        self.assertEqual(news_mod.slider_slides(), [])
+        # a video item that also carries photos still slides normally
+        self._add_photo(n)
+        news_mod.invalidate_news_cache()
+        self.assertEqual(len(news_mod.slider_slides()), 1)
+
+    def test_edit_form_preserves_video_url(self):
+        n = self._make_news()
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        self.client.force_login(self.director)
+        resp = self.client.get(reverse('news_edit', args=[n.pk]))
+        self.assertContains(resp, self.VIDEO_CANON)
+        # the video radio is the selected one → its section shows
+        self.assertContains(resp, 'id="nfVideo" class="show"')
+
+    def test_edit_switch_video_to_photo_clears_fields(self):
+        n = self._make_news()
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        self._add_photo(n)
+        self.client.force_login(self.director)
+        self.client.post(reverse('news_edit', args=[n.pk]),
+                         self._post_data(media_type='photo', video_url=''))
+        n.refresh_from_db()
+        self.assertEqual(n.media_type, 'photo')
+        self.assertEqual(n.video_code, '')
+        self.assertEqual(n.video_url, '')
+
+    def test_feature_disabled_hides_video_everywhere(self):
+        n = self._publish(self._make_news(title='Хомӯш'), day=1)
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        with override_settings(NEWS_VIDEO_ENABLED=False):
+            resp = self.client.get(reverse('news_detail', args=[n.pk]))
+            self.assertNotContains(resp, 'id="ndVPlay"')
+            self.assertNotContains(resp, 'data-embed')
+            self.assertNotContains(resp, 'Видеоро тамошо кардан')
+            # the create form hides the media-type selector entirely
+            self.client.force_login(self.director)
+            resp = self.client.get(reverse('news_create'))
+            self.assertNotContains(resp, 'name="media_type"')
+            # a tampered POST cannot create a video item while disabled
+            resp = self.client.post(reverse('news_create'), self._post_data(
+                media_type='video', video_url=self.VIDEO_URL))
+            self.assertEqual(News.objects.filter(media_type='video')
+                             .exclude(pk=n.pk).count(), 0)
+
+    def test_feature_disabled_preserves_existing_data(self):
+        """Editing a video item while the flag is off keeps its stored
+        media_type/video fields — disable never destroys data."""
+        n = self._make_news()
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        self._add_photo(n)
+        self.client.force_login(self.director)
+        with override_settings(NEWS_VIDEO_ENABLED=False):
+            self.client.post(reverse('news_edit', args=[n.pk]),
+                             self._post_data(title='Унвони нав'))
+        n.refresh_from_db()
+        self.assertEqual(n.media_type, 'video')
+        self.assertEqual(n.video_code, self.VIDEO_CODE)

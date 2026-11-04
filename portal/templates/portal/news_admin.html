@@ -65,8 +65,8 @@
     <tbody>
         {% for n in items %}
         <tr>
-            <td>{% with p=n.main_photo %}{% if p %}<img class="news-thumb" src="{{ p.slider_image.url }}" alt="">{% else %}—{% endif %}{% endwith %}</td>
-            <td><a href="{% url 'news_detail' n.pk %}">{{ n.title }}</a></td>
+            <td>{% with p=n.main_photo %}{% if p %}<img class="news-thumb" src="{{ p.slider_image.url }}" alt="">{% elif n.media_type == 'video' %}🎬{% else %}—{% endif %}{% endwith %}</td>
+            <td><a href="{% url 'news_detail' n.pk %}">{% if n.media_type == 'video' %}🎬 {% endif %}{{ n.title }}</a></td>
             <td>{{ n.get_category_display }}</td>
             <td>{{ n.school_name }}</td>
             <td>{{ n.event_date|date:'d.m.Y' }}</td>

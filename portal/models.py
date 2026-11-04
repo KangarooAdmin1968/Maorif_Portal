@@ -916,6 +916,13 @@ class News(models.Model):
         (STATUS_ARCHIVED, 'Бойгонӣ'),
     ]
 
+    MEDIA_PHOTO = 'photo'
+    MEDIA_VIDEO = 'video'
+    MEDIA_CHOICES = [
+        (MEDIA_PHOTO, 'Акс'),
+        (MEDIA_VIDEO, 'Видео'),
+    ]
+
     category = models.CharField(
         'Категория', max_length=20, choices=CATEGORY_CHOICES)
     title = models.CharField('Сарлавҳа', max_length=200)
@@ -926,6 +933,19 @@ class News(models.Model):
         related_name='news_items', verbose_name='Муассиса')
     event_date = models.DateField('Санаи воқеа')
     summary = models.TextField('Тавсифи кӯтоҳ')
+    # Media type: 'photo' keeps the classic photo flow; 'video' embeds an
+    # Instagram Reel via the official /embed/ endpoint. Only the validated
+    # shortcode is stored and rendered — raw Instagram HTML never enters
+    # the page. video_thumb is a cover fetched once at save time so the
+    # detail page needs no Instagram call before the user presses play.
+    media_type = models.CharField(
+        'Навъи медиа', max_length=10, choices=MEDIA_CHOICES,
+        default=MEDIA_PHOTO)
+    video_url = models.CharField(
+        'Ҳаволаи видеои Instagram', max_length=300, blank=True)
+    video_code = models.CharField(max_length=30, blank=True)
+    video_thumb = models.ImageField(
+        'Муқоваи видео', upload_to='news/%Y/%m/video/', blank=True)
     status = models.CharField(
         'Ҳолат', max_length=20, choices=STATUS_CHOICES,
         default=STATUS_DRAFT, db_index=True)
@@ -962,6 +982,14 @@ class News(models.Model):
             if p.is_main:
                 return p
         return photos[0] if photos else None
+
+    @property
+    def video_embed_url(self):
+        if not self.video_code:
+            return ''
+        return (
+            'https://www.instagram.com/reel/'
+            + self.video_code + '/embed/')
 
 
 class NewsPhoto(models.Model):

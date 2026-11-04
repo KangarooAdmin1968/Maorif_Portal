@@ -9392,10 +9392,14 @@ def news_detail(request, pk):
     is_manager = _news_allowed(request)
     if news.status != News.STATUS_PUBLISHED and not is_manager:
         return redirect('news_archive')
+    from .news import video_enabled
     return render(request, 'portal/news_detail.html', {
         'news': news,
         'can_manage': is_manager,
         'is_preview': news.status != News.STATUS_PUBLISHED,
+        'show_video': (video_enabled()
+                       and news.media_type == News.MEDIA_VIDEO
+                       and bool(news.video_code)),
     })
 
 
@@ -9424,6 +9428,7 @@ def news_admin(request):
 
 def _news_form_context(news=None, errors=None, form=None):
     from .models import News
+    from .news import video_enabled
     return {
         'news': news,
         'errors': errors or [],
@@ -9431,12 +9436,16 @@ def _news_form_context(news=None, errors=None, form=None):
         'categories': News.CATEGORY_CHOICES,
         'schools': School.objects.all().order_by('name'),
         'max_photos': 5,
+        'video_enabled': video_enabled(),
     }
 
 
 def _validate_news_post(request, news=None):
     """Collect + validate form fields. Returns (data, files, errors)."""
     from .models import News
+    from .news import (
+        canonical_video_url, extract_video_code, video_enabled,
+    )
 
     data = {
         'category': (request.POST.get('category') or '').strip(),
@@ -9469,12 +9478,35 @@ def _validate_news_post(request, news=None):
             errors.append('Муассиса нодуруст интихоб шуд.')
     data['school'] = school
 
+    # Media type: only a posted value is honoured; with the video feature
+    # switched off (or a stale client) the stored type is kept untouched.
+    posted_type = request.POST.get('media_type') or ''
+    if posted_type in dict(News.MEDIA_CHOICES) and (
+            posted_type != News.MEDIA_VIDEO or video_enabled()):
+        data['media_type'] = posted_type
+    elif news is not None:
+        data['media_type'] = news.media_type
+    else:
+        data['media_type'] = News.MEDIA_PHOTO
+
+    data['video_url'] = (request.POST.get('video_url') or '').strip()
+    data['video_code'] = ''
+    if data['media_type'] == News.MEDIA_VIDEO:
+        code = extract_video_code(data['video_url'])
+        if code is None:
+            errors.append('Ҳаволаи нодуруст — танҳо ҳаволаи расмии '
+                          'Instagram Reels қабул мешавад.')
+        else:
+            data['video_code'] = code
+            data['video_url'] = canonical_video_url(code)
+
     files = request.FILES.getlist('photos')
     existing = news.photos.count() if news else 0
     if existing + len(files) > 5:
         errors.append(f'Аксҳо наметавонанд зиёда аз 5 бошанд '
                       f'(ҳоло {existing}, нав {len(files)}).')
-    elif existing + len(files) < 1:
+    elif existing + len(files) < 1 \
+            and data['media_type'] != News.MEDIA_VIDEO:
         errors.append('Ҳадди ақал як акс зарур аст.')
     return data, files, errors
 
@@ -9492,7 +9524,12 @@ def news_create(request):
             news = News.objects.create(
                 category=data['category'], title=data['title'],
                 school=data['school'], event_date=data['event_date'],
-                summary=data['summary'], author=request.user)
+                summary=data['summary'], author=request.user,
+                media_type=data['media_type'],
+                video_url=(data['video_url']
+                           if data['media_type'] == News.MEDIA_VIDEO
+                           else ''),
+                video_code=data['video_code'])
             try:
                 for i, f in enumerate(files):
                     save_photo(news, f, order=i, is_main=(i == 0))
@@ -9500,6 +9537,14 @@ def news_create(request):
                 news.delete()
                 errors.append(str(e))
             else:
+                if news.video_code:
+                    # Cover fetched once at save time — never on the
+                    # public request path; a failure only falls back to
+                    # the styled placeholder cover.
+                    from .news import fetch_video_thumb
+                    fetch_video_thumb(news)
+                    if news.video_thumb:
+                        news.save(update_fields=['video_thumb'])
                 messages.success(request,
                                  'Хабар ҳамчун лоиҳа нигоҳ дошта шуд.')
                 return redirect('news_admin')
@@ -9520,11 +9565,21 @@ def news_edit(request, pk):
     if request.method == 'POST':
         data, files, errors = _validate_news_post(request, news)
         if not errors:
+            old_code = news.video_code
             news.category = data['category']
             news.title = data['title']
             news.school = data['school']
             news.event_date = data['event_date']
             news.summary = data['summary']
+            news.media_type = data['media_type']
+            if data['media_type'] == News.MEDIA_VIDEO:
+                news.video_url = data['video_url']
+                news.video_code = data['video_code']
+            else:
+                news.video_url = ''
+                news.video_code = ''
+                if news.video_thumb:
+                    news.video_thumb.delete(save=False)
             news.save()
             try:
                 start = news.photos.count()
@@ -9538,6 +9593,13 @@ def news_edit(request, pk):
                     if first:
                         first.is_main = True
                         first.save(update_fields=['is_main'])
+                if news.video_code and (
+                        news.video_code != old_code
+                        or not news.video_thumb):
+                    from .news import fetch_video_thumb
+                    fetch_video_thumb(news)
+                    if news.video_thumb:
+                        news.save(update_fields=['video_thumb'])
                 messages.success(request, 'Хабар нав карда шуд.')
                 return redirect('news_admin')
         form = dict(data)
@@ -9550,6 +9612,8 @@ def news_edit(request, pk):
         'school_id': news.school_id or '',
         'event_date': news.event_date.isoformat(),
         'summary': news.summary,
+        'media_type': news.media_type,
+        'video_url': news.video_url,
     }
     return render(request, 'portal/news_form.html',
                   _news_form_context(news, form=form))
@@ -9567,8 +9631,13 @@ def news_action(request, pk):
     news = get_object_or_404(News, pk=pk)
     action = request.POST.get('action', '')
     if action == 'publish':
-        if not news.photos.exists():
-            messages.error(request, 'Бе акс нашр кардан мумкин нест.')
+        from .news import video_enabled
+        has_media = news.photos.exists() or (
+            video_enabled()
+            and news.media_type == News.MEDIA_VIDEO
+            and bool(news.video_code))
+        if not has_media:
+            messages.error(request, 'Бе акс ё видео нашр кардан мумкин нест.')
         else:
             news_mod.publish(news)
             messages.success(request, 'Хабар нашр шуд.')
@@ -9600,8 +9669,12 @@ def news_photo_action(request, photo_id):
     news_id = photo.news_id
     action = request.POST.get('action', '')
     if action == 'delete':
+        # A published item needs at least one medium — a stored video
+        # shortcode counts, so video news may drop its last photo.
         if photo.news.photos.count() <= 1 \
-                and photo.news.status == 'published':
+                and photo.news.status == 'published' \
+                and not (photo.news.media_type == 'video'
+                         and photo.news.video_code):
             messages.error(
                 request,
                 'Хабари нашршуда бояд ҳадди ақал як акс дошта бошад.')

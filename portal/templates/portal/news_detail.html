@@ -12,6 +12,17 @@
   dialog#ndLight { border:none; padding:0; background:transparent; max-width:92vw; max-height:92vh; }
   dialog#ndLight::backdrop { background:rgba(0,0,0,.8); }
   dialog#ndLight img { max-width:92vw; max-height:88vh; border-radius:.4rem; display:block; }
+  .nd-video { margin-top:1.1rem; max-width:400px; }
+  .nd-vcover { position:relative; border-radius:.5rem; overflow:hidden; background:linear-gradient(135deg,#0f172a,#312e81 55%,#7c3aed); aspect-ratio:4/5; }
+  .nd-vcover img { width:100%; height:100%; object-fit:cover; display:block; }
+  .nd-vcover::after { content:''; position:absolute; inset:0; background:linear-gradient(180deg,transparent 55%,rgba(0,0,0,.45)); }
+  .nd-vplay { position:absolute; left:50%; bottom:1.1rem; transform:translateX(-50%); z-index:1;
+      background:#fff; color:#111827; border:0; border-radius:.6rem; padding:.6rem 1.1rem;
+      font-size:.95rem; font-weight:600; font-family:inherit; cursor:pointer; white-space:nowrap;
+      box-shadow:0 2px 10px rgba(0,0,0,.3); }
+  .nd-vplay:hover { background:#f3f4f6; }
+  .nd-vcover iframe { width:100%; height:100%; min-height:560px; border:0; display:block; background:#fff; }
+  .nd-vlink { display:inline-block; margin-top:.55rem; font-size:.85rem; color:#003366; }
 </style>
 {% endblock %}
 {% block content %}
@@ -29,6 +40,17 @@
         {% if news.author %}<span>✍️ {{ news.author.get_full_name|default:news.author.username }}</span>{% endif %}
     </div>
     <div class="nd-summary">{{ news.summary }}</div>
+
+    {% if show_video %}
+    <div class="nd-video">
+        <div class="nd-vcover" id="ndVCover" data-embed="{{ news.video_embed_url }}">
+            {% if news.video_thumb %}<img src="{{ news.video_thumb.url }}" alt="{{ news.title }}" loading="lazy">{% endif %}
+            <button type="button" class="nd-vplay" id="ndVPlay">▶ Видеоро тамошо кардан</button>
+        </div>
+        <a class="nd-vlink" href="{{ news.video_url }}" target="_blank"
+           rel="noopener noreferrer">Тамошо дар Instagram ↗</a>
+    </div>
+    {% endif %}
 
     {% if news.photos.all %}
     <div class="nd-gallery">
@@ -55,5 +77,23 @@ function ndOpen(src) {
     document.getElementById('ndLightImg').src = src;
     if (d.showModal) d.showModal(); else window.open(src, '_blank');
 }
+{% if show_video %}
+(function () {
+    var btn = document.getElementById('ndVPlay');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+        var cover = document.getElementById('ndVCover');
+        var src = cover.getAttribute('data-embed');
+        if (!src) return;
+        var f = document.createElement('iframe');
+        f.src = src;
+        f.setAttribute('allow', 'encrypted-media');
+        f.setAttribute('allowtransparency', 'true');
+        f.setAttribute('scrolling', 'no');
+        cover.textContent = '';
+        cover.appendChild(f);
+    });
+})();
+{% endif %}
 </script>
 {% endblock %}

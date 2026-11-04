@@ -43,6 +43,48 @@
     object-position: center 30%;
     display: block;
 }
+/* Video slide: cover + play button inside the same stage; the Instagram
+   iframe only exists after the visitor presses play. */
+.ns-video {
+    background: linear-gradient(135deg, #0f172a, #312e81 55%, #7c3aed);
+}
+.ns-video .ns-vthumb {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+.ns-vplay {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255,255,255,.95); color: #111827;
+    border: 0; border-radius: .6rem;
+    padding: .65rem 1.2rem; font-size: 1rem; font-weight: 700;
+    font-family: inherit; cursor: pointer; white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+.ns-vplay:hover { background: #e5e7eb; }
+.ns-vclose {
+    position: absolute; top: 8px; left: 8px; z-index: 2;
+    display: none;
+    background: rgba(0,0,0,.55); color: #fff;
+    border: 0; border-radius: 50%;
+    width: 32px; height: 32px; font-size: 1rem;
+    cursor: pointer; align-items: center; justify-content: center;
+}
+.ns-vclose:hover { background: rgba(0,0,0,.75); }
+.ns-vlink {
+    position: absolute; right: 10px; bottom: 8px; z-index: 1;
+    color: #fff; font-size: .78rem; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+}
+.ns-video iframe {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%; border: 0;
+}
+.ns-video.playing .ns-vthumb,
+.ns-video.playing .ns-vplay,
+.ns-video.playing .ns-vlink { display: none; }
+.ns-video.playing .ns-vclose { display: flex; }
 .ns-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
     background: rgba(0, 0, 0, .45); color: #fff;
@@ -285,10 +327,20 @@
 <section class="card news-slider-card" id="newsSlider" aria-label="Слайдери хабарҳо">
     <div class="ns-stage">
         {% for s in news_slides %}
+        {% if s.type == 'video' %}
+        <div class="ns-slide ns-video{% if forloop.first %} active{% endif %}"
+             data-embed="{{ s.embed }}">
+            {% if s.thumb %}<img class="ns-vthumb" src="{{ s.thumb }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>{% endif %}
+            <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
+            <button class="ns-vclose" type="button" aria-label="Ба аксҳо баргаштан">✕</button>
+            <a class="ns-vlink" href="{{ s.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>
+        </div>
+        {% else %}
         <a class="ns-slide{% if forloop.first %} active{% endif %}" href="{{ s.url }}"
            title="{{ s.category }} · {{ s.title }}&#10;{{ s.school_name }} · {{ s.event_date }}&#10;{{ s.summary }}">
             <img src="{{ s.image }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>
         </a>
+        {% endif %}
         {% endfor %}
         {% if news_slides|length > 1 %}
         <button class="ns-nav ns-prev" type="button" aria-label="Слайди пешина">‹</button>
@@ -300,6 +352,7 @@
         {% for s in news_slides %}
         <div class="ns-info{% if forloop.first %} active{% endif %}">
             <span class="cat">{{ s.category }}</span>
+            {% if s.type == 'video' %}<span class="cat" style="background:#7c3aed;">🎬 Видео</span>{% endif %}
             <a class="ns-title" href="{{ s.url }}">{{ s.title }}</a>
             <div class="meta">🏫 {{ s.school_name }} · 📅 {{ s.event_date }}</div>
             <div class="sum">{{ s.summary }}</div>
@@ -837,6 +890,44 @@
     if (!root) return;
     var slides = root.querySelectorAll('.ns-slide');
     var infos = root.querySelectorAll('.ns-info');
+    var playing = false;
+
+    function closeVideo() {
+        var open = root.querySelector('.ns-video.playing');
+        if (!open) return;
+        var f = open.querySelector('iframe');
+        if (f) f.remove();
+        open.classList.remove('playing');
+        playing = false;
+    }
+
+    // Video slide: click-to-play (Instagram embed loads only now),
+    // close button returns the slide to its cover and resumes rotation.
+    root.addEventListener('click', function (e) {
+        var play = e.target.closest('.ns-vplay');
+        if (play) {
+            e.preventDefault();
+            var slide = play.closest('.ns-video');
+            var src = slide && slide.getAttribute('data-embed');
+            if (!src || slide.querySelector('iframe')) return;
+            var f = document.createElement('iframe');
+            f.src = src;
+            f.setAttribute('allow', 'encrypted-media');
+            f.setAttribute('allowtransparency', 'true');
+            f.setAttribute('scrolling', 'no');
+            slide.appendChild(f);
+            slide.classList.add('playing');
+            playing = true;
+            stop();
+            return;
+        }
+        if (e.target.closest('.ns-vclose')) {
+            e.preventDefault();
+            closeVideo();
+            start();
+        }
+    });
+
     if (slides.length < 2) return;
     var count = root.querySelector('.ns-count');
     var i = 0, timer = null;
@@ -844,6 +935,7 @@
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     function show(n) {
+        closeVideo();                    // leaving the video stops playback
         slides[i].classList.remove('active');
         if (infos[i]) infos[i].classList.remove('active');
         i = (n + slides.length) % slides.length;
@@ -852,7 +944,7 @@
         if (count) count.textContent = (i + 1) + '/' + slides.length;
     }
     function start() {
-        if (!reduced && !timer) timer = setInterval(function () { show(i + 1); }, 7000);
+        if (!reduced && !timer && !playing) timer = setInterval(function () { show(i + 1); }, 7000);
     }
     function stop() { clearInterval(timer); timer = null; }
 

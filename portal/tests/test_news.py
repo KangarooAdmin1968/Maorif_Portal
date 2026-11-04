@@ -367,17 +367,45 @@ class NewsTests(GoldenBase):
         self.assertRedirects(resp, reverse('news_archive'),
                              fetch_redirect_response=False)
 
-    def test_video_news_without_photos_not_in_slider(self):
+    def test_video_news_gets_video_slide(self):
         n = self._publish(self._make_news(title='Видео'), day=1)
         n.media_type = 'video'
         n.video_code = self.VIDEO_CODE
         n.video_url = self.VIDEO_CANON
         n.save()
-        self.assertEqual(news_mod.slider_slides(), [])
-        # a video item that also carries photos still slides normally
+        slides = news_mod.slider_slides()
+        self.assertEqual(len(slides), 1)
+        s = slides[0]
+        self.assertEqual(s['type'], 'video')
+        self.assertEqual(
+            s['embed'],
+            'https://www.instagram.com/reel/DfSPXDhIq29/embed/')
+        self.assertEqual(s['video_url'], self.VIDEO_CANON)
+        # a video item that also carries photos: video slide first,
+        # photo slides continue after it
         self._add_photo(n)
         news_mod.invalidate_news_cache()
-        self.assertEqual(len(news_mod.slider_slides()), 1)
+        slides = news_mod.slider_slides()
+        self.assertEqual([x['type'] for x in slides], ['video', 'photo'])
+
+    def test_dashboard_video_slide_click_to_play(self):
+        n = self._publish(self._make_news(title='Видеослайд'), day=1)
+        n.media_type = 'video'
+        n.video_code = self.VIDEO_CODE
+        n.video_url = self.VIDEO_CANON
+        n.save()
+        news_mod.invalidate_news_cache()
+        resp = self.client.get(reverse('dashboard'))
+        self.assertContains(resp, 'ns-video')
+        self.assertContains(resp, 'Видеоро тамошо кардан')
+        self.assertContains(resp, 'reel/DfSPXDhIq29/embed/')
+        # iframe only exists after the visitor presses play
+        self.assertNotContains(resp, '<iframe')
+        # feature flag off → video slide gone, photo slides unaffected
+        with override_settings(NEWS_VIDEO_ENABLED=False):
+            resp = self.client.get(reverse('dashboard'))
+            self.assertNotContains(resp, 'ns-slide ns-video')
+            self.assertNotContains(resp, 'data-embed="')
 
     def test_edit_form_preserves_video_url(self):
         n = self._make_news()

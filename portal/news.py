@@ -30,7 +30,7 @@ from .models import News, NewsPhoto
 
 logger = logging.getLogger(__name__)
 
-NEWS_SLIDES_CACHE_KEY = 'news:slides:v2'
+NEWS_SLIDES_CACHE_KEY = 'news:slides:v3'
 NEWS_SLIDES_CACHE_SECONDS = 300          # 5 min; invalidated on writes
 NEWS_PER_CATEGORY = 5                    # spec: max 5 latest per category
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024      # 15 MB per file
@@ -85,20 +85,31 @@ def slider_slides():
         if len(by_cat.get(n.category, ())) >= NEWS_PER_CATEGORY:
             continue
         photos = [p for p in n.photos.all() if p.slider_image]
-        if not photos:
+        has_video = (n.media_type == News.MEDIA_VIDEO and n.video_code)
+        if not photos and not has_video:
             continue
-        # Main photo first, the rest follow in their stored order.
-        photos.sort(key=lambda p: (not p.is_main, p.order, p.id))
-        slides_for_news = [{
+        base = {
             'id': n.pk,
             'category': n.get_category_display(),
             'title': n.title,
             'school_name': n.school_name,
             'event_date': n.event_date.strftime('%d.%m.%Y'),
             'summary': n.summary,
-            'image': p.slider_image.url,
             'url': f'/news/{n.pk}/',
-        } for p in photos]
+        }
+        slides_for_news = []
+        if has_video:
+            # One click-to-play video slide first — the Instagram iframe is
+            # only created in the browser after the visitor presses play.
+            slides_for_news.append(dict(
+                base, type='video', embed=n.video_embed_url,
+                video_url=n.video_url,
+                thumb=n.video_thumb.url if n.video_thumb else ''))
+        # Main photo first, the rest follow in their stored order.
+        photos.sort(key=lambda p: (not p.is_main, p.order, p.id))
+        slides_for_news.extend(
+            dict(base, type='photo', image=p.slider_image.url)
+            for p in photos)
         by_cat.setdefault(n.category, []).append(slides_for_news)
 
     slides = []

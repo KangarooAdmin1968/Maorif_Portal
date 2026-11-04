@@ -344,7 +344,7 @@
     <img src="{% static 'assets/flag.gif' %}" alt="Парчам">
 </div>
 
-{% if news_slides or news_video %}
+{% if news_slides or news_videos %}
 <section class="card news-slider-card" id="newsSlider" aria-label="Слайдери хабарҳо">
     <div class="ns-stage">
         {% for s in news_slides %}
@@ -353,25 +353,26 @@
             <img src="{{ s.image }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>
         </a>
         {% endfor %}
-        {% if news_video %}
+        {% if news_videos %}{% with v=news_videos.0 %}
         <div class="ns-video-pane{% if not news_slides %} ns-static{% endif %}"
-             data-embed="{{ news_video.embed }}">
-            {% if news_video.thumb %}<img class="ns-vthumb" src="{{ news_video.thumb }}" alt="{{ news_video.title }}" loading="lazy">{% endif %}
+             data-embed="{{ v.embed }}">
+            {% if v.thumb %}<img class="ns-vthumb" src="{{ v.thumb }}" alt="{{ v.title }}" loading="lazy">{% endif %}
             <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
-            <a class="ns-vlink" href="{{ news_video.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>
+            <a class="ns-vlink" href="{{ v.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>
         </div>
-        {% endif %}
+        {% endwith %}{% endif %}
         {% if news_slides|length > 1 %}
         <button class="ns-nav ns-prev" type="button" aria-label="Слайди пешина">‹</button>
         <button class="ns-nav ns-next" type="button" aria-label="Слайди навбатӣ">›</button>
         <span class="ns-count">1/{{ news_slides|length }}</span>
         {% endif %}
     </div>
-    {% if news_video %}
+    {% if news_videos %}
     <div class="ns-toggle">
         {% if news_slides %}<button class="ns-tbtn ns-t-photos active" type="button">🖼 Аксҳо</button>{% endif %}
-        <button class="ns-tbtn ns-t-video" type="button">🎬 Видео</button>
+        <button class="ns-tbtn ns-t-video" type="button">🎬 Видео{% if news_videos|length > 1 %} ({{ news_videos|length }}){% endif %}</button>
     </div>
+    {{ news_videos|json_script:"ns-videos-data" }}
     {% endif %}
     <div class="ns-infos">
         {% for s in news_slides %}
@@ -382,15 +383,15 @@
             <div class="sum">{{ s.summary }}</div>
         </div>
         {% endfor %}
-        {% if news_video %}
+        {% if news_videos %}{% with v=news_videos.0 %}
         <div class="ns-info ns-vinfo{% if not news_slides %} ns-vshow{% endif %}">
-            <span class="cat">{{ news_video.category }}</span>
+            <span class="cat ns-vcat">{{ v.category }}</span>
             <span class="cat" style="background:#7c3aed;">🎬 Видео</span>
-            <a class="ns-title" href="{{ news_video.url }}">{{ news_video.title }}</a>
-            <div class="meta">🏫 {{ news_video.school_name }} · 📅 {{ news_video.event_date }}</div>
-            <div class="sum">{{ news_video.summary }}</div>
+            <a class="ns-title" href="{{ v.url }}">{{ v.title }}</a>
+            <div class="meta ns-vmeta">🏫 {{ v.school_name }} · 📅 {{ v.event_date }}</div>
+            <div class="sum ns-vsum">{{ v.summary }}</div>
         </div>
-        {% endif %}
+        {% endwith %}{% endif %}
     </div>
 </section>
 {% endif %}
@@ -926,16 +927,40 @@
     var pane = root.querySelector('.ns-video-pane');
     var tPhotos = root.querySelector('.ns-t-photos');
     var tVideo = root.querySelector('.ns-t-video');
+    var vinfo = root.querySelector('.ns-vinfo');
+    var vlink = pane && pane.querySelector('.ns-vlink');
+    var videos = [];
+    var vsrc = document.getElementById('ns-videos-data');
+    if (vsrc) { try { videos = JSON.parse(vsrc.textContent); } catch (e) {} }
+    var vIdx = 0;
     var playing = false;
     var videoTimer = null;
     // Instagram sends no "ended" signal across the iframe boundary, so
-    // after this long the slider returns to the photos on its own —
-    // typical reels are shorter than this.
+    // each video gets this much time before the next one (or the
+    // photos) takes over — typical reels are shorter than this.
     var VIDEO_WATCH_MS = 90000;
 
     function setToggle(v) {
         if (tPhotos) tPhotos.classList.toggle('active', !v);
         if (tVideo) tVideo.classList.toggle('active', v);
+    }
+
+    // Point the pane + info block at videos[idx].
+    function setVideo(idx) {
+        var v = videos[idx];
+        if (!v) return;
+        pane.setAttribute('data-embed', v.embed);
+        if (vlink) vlink.href = v.video_url;
+        if (vinfo) {
+            var t = vinfo.querySelector('.ns-title');
+            if (t) { t.textContent = v.title; t.href = v.url; }
+            var c = vinfo.querySelector('.ns-vcat');
+            if (c) c.textContent = v.category;
+            var m = vinfo.querySelector('.ns-vmeta');
+            if (m) m.textContent = '🏫 ' + v.school_name + ' · 📅 ' + v.event_date;
+            var s = vinfo.querySelector('.ns-vsum');
+            if (s) s.textContent = v.summary;
+        }
     }
 
     function closeVideo() {
@@ -949,12 +974,16 @@
     }
 
     // "Видео" toggle / play button: the Instagram iframe is only
-    // created now; re-selecting video always builds a fresh iframe.
-    function playVideo() {
-        if (!pane || pane.querySelector('iframe')) return;
+    // created now; each play always builds a fresh iframe.
+    function playVideo(idx) {
+        if (!pane) return;
+        if (idx !== undefined) vIdx = idx;
+        var f = pane.querySelector('iframe');
+        if (f) f.remove();
+        if (videos.length) setVideo(vIdx);
         var src = pane.getAttribute('data-embed');
         if (!src) return;
-        var f = document.createElement('iframe');
+        f = document.createElement('iframe');
         f.src = src;
         f.setAttribute('allow', 'encrypted-media');
         f.setAttribute('allowtransparency', 'true');
@@ -964,7 +993,16 @@
         playing = true;
         setToggle(true);
         stop();
-        videoTimer = setTimeout(toPhotos, VIDEO_WATCH_MS);
+        if (videoTimer) clearTimeout(videoTimer);
+        videoTimer = setTimeout(videoEnded, VIDEO_WATCH_MS);
+    }
+
+    // A video's time is up: chain to the next video when several are
+    // published, otherwise fall back to the photo rotation.
+    function videoEnded() {
+        videoTimer = null;
+        if (vIdx + 1 < videos.length) playVideo(vIdx + 1);
+        else toPhotos();
     }
 
     function toPhotos() {
@@ -976,7 +1014,7 @@
         var t = e.target;
         if (t.closest('.ns-vplay') || t.closest('.ns-t-video')) {
             e.preventDefault();
-            playVideo();
+            playVideo(0);
             return;
         }
         if (t.closest('.ns-t-photos')) {

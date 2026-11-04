@@ -375,20 +375,37 @@ class NewsTests(GoldenBase):
         n.save()
         slides = news_mod.slider_slides()
         self.assertEqual(len(slides), 0)        # not in photo rotation
-        s = news_mod.slider_video()
-        self.assertIsNotNone(s)
+        videos = news_mod.slider_videos()
+        self.assertEqual(len(videos), 1)
+        s = videos[0]
         self.assertEqual(s['type'], 'video')
         self.assertEqual(
             s['embed'],
             'https://www.instagram.com/reel/DfSPXDhIq29/embed/')
         self.assertEqual(s['video_url'], self.VIDEO_CANON)
         # a video item that also carries photos: the photo stays in the
-        # rotation, the video is exposed through slider_video()
+        # rotation, the video is exposed through slider_videos()
         self._add_photo(n)
         news_mod.invalidate_news_cache()
         slides = news_mod.slider_slides()
         self.assertEqual([x['type'] for x in slides], ['photo'])
-        self.assertEqual(news_mod.slider_video()['id'], n.pk)
+        self.assertEqual(news_mod.slider_videos()[0]['id'], n.pk)
+
+    def test_slider_videos_collects_multiple_newest(self):
+        v1 = self._publish(self._make_news(title='Видео 1'), day=1)
+        v2 = self._publish(self._make_news(title='Видео 2'), day=2)
+        for n in (v1, v2):
+            n.media_type = 'video'
+            n.video_code = self.VIDEO_CODE
+            n.video_url = self.VIDEO_CANON
+            n.save()
+        news_mod.invalidate_news_cache()
+        videos = news_mod.slider_videos()
+        self.assertEqual(len(videos), 2)
+        self.assertEqual(videos[0]['id'], v2.pk)   # newest first
+        # feature off → empty queue
+        with override_settings(NEWS_VIDEO_ENABLED=False):
+            self.assertEqual(news_mod.slider_videos(), [])
 
     def test_dashboard_video_slide_click_to_play(self):
         n = self._publish(self._make_news(title='Видеослайд'), day=1)

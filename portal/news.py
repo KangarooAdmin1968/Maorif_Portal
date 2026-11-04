@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 NEWS_SLIDES_CACHE_KEY = 'news:slides:v4'
 NEWS_SLIDES_CACHE_SECONDS = 300          # 5 min; invalidated on writes
 NEWS_PER_CATEGORY = 5                    # spec: max 5 latest per category
+MAX_VIDEOS = 4                           # newest video items in the dashboard queue
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024      # 15 MB per file
 MAX_PHOTOS = 5
 
@@ -82,7 +83,7 @@ def _slider_data():
         return data
 
     by_cat = {}
-    video = None
+    videos = []
     items = (
         News.objects.filter(status=News.STATUS_PUBLISHED)
         .select_related('school')
@@ -90,14 +91,15 @@ def _slider_data():
         .order_by('-published_at', '-created_at')
     )
     for n in items:
-        if video is None and (n.media_type == News.MEDIA_VIDEO
-                              and n.video_code):
-            # Newest published video item — shown through the dedicated
+        if (len(videos) < MAX_VIDEOS and n.video_code
+                and n.media_type == News.MEDIA_VIDEO):
+            # Newest published video items — played via the dashboard
             # "Видео" toggle button, outside the photo rotation.
-            video = dict(_base_slide(n), type='video',
-                         embed=n.video_embed_url,
-                         video_url=n.video_url,
-                         thumb=n.video_thumb.url if n.video_thumb else '')
+            videos.append(dict(
+                _base_slide(n), type='video',
+                embed=n.video_embed_url,
+                video_url=n.video_url,
+                thumb=n.video_thumb.url if n.video_thumb else ''))
         photos = [p for p in n.photos.all() if p.slider_image]
         if not photos:
             continue
@@ -114,7 +116,7 @@ def _slider_data():
         for news_slides in by_cat.get(key, ()):
             slides.extend(news_slides)
 
-    data = {'slides': slides, 'video': video}
+    data = {'slides': slides, 'videos': videos}
     cache.set(NEWS_SLIDES_CACHE_KEY, data, NEWS_SLIDES_CACHE_SECONDS)
     return data
 
@@ -129,14 +131,15 @@ def slider_slides():
     return _slider_data()['slides']
 
 
-def slider_video():
-    """Newest published video item for the dashboard "Видео" button,
-    or None when the feature is off / no video item is published.
+def slider_videos():
+    """Newest published video items (up to MAX_VIDEOS) for the dashboard
+    "Видео" button — played one after another, then photos resume.
+    Empty list when the feature is off or nothing is published.
     The Instagram iframe is only created in the browser after the
     visitor presses play."""
     if not video_enabled():
-        return None
-    return _slider_data()['video']
+        return []
+    return _slider_data()['videos']
 
 
 def _webp_bytes(img, quality=WEBP_QUALITY):

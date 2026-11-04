@@ -78,20 +78,30 @@
     color: #fff; font-size: .78rem; text-shadow: 0 1px 3px rgba(0,0,0,.6);
 }
 .ns-video iframe {
-    position: absolute; top: 0; bottom: 0;
+    position: absolute; top: 0;
     left: 50%; transform: translateX(-50%);
-    width: min(100%, 430px); border: 0;
+    width: min(100%, 430px); height: 100%; border: 0;
 }
 /* While a reel plays the stage grows to portrait height so Instagram's
    vertical embed is not cropped; closing restores 16/9. */
 .news-slider-card.ns-playing .ns-stage {
     aspect-ratio: auto;
-    height: min(76vh, 740px);
+    height: min(85vh, 840px);
 }
 .ns-video.playing .ns-vthumb,
 .ns-video.playing .ns-vplay,
 .ns-video.playing .ns-vlink { display: none; }
 .ns-video.playing .ns-vclose { display: flex; }
+.ns-vphotos {
+    position: absolute; top: 8px; right: 48px; z-index: 2;
+    display: none;
+    background: rgba(0,0,0,.55); color: #fff;
+    border: 0; border-radius: .5rem;
+    padding: .35rem .8rem; font-size: .82rem; font-family: inherit;
+    cursor: pointer; white-space: nowrap;
+}
+.ns-vphotos:hover { background: rgba(0,0,0,.8); }
+.ns-video.playing .ns-vphotos { display: block; }
 .ns-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
     background: rgba(0, 0, 0, .45); color: #fff;
@@ -340,6 +350,7 @@
             {% if s.thumb %}<img class="ns-vthumb" src="{{ s.thumb }}" alt="{{ s.title }}"{% if not forloop.first %} loading="lazy"{% endif %}>{% endif %}
             <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
             <button class="ns-vclose" type="button" aria-label="Ба аксҳо баргаштан">✕</button>
+            <button class="ns-vphotos" type="button">Ба аксҳо →</button>
             <a class="ns-vlink" href="{{ s.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>
         </div>
         {% else %}
@@ -898,8 +909,14 @@
     var slides = root.querySelectorAll('.ns-slide');
     var infos = root.querySelectorAll('.ns-info');
     var playing = false;
+    var videoTimer = null;
+    // Instagram sends no "ended" signal across the iframe boundary, so
+    // after this long the slider returns to the photos on its own —
+    // typical reels are shorter than this.
+    var VIDEO_WATCH_MS = 90000;
 
     function closeVideo() {
+        if (videoTimer) { clearTimeout(videoTimer); videoTimer = null; }
         var open = root.querySelector('.ns-video.playing');
         if (!open) return;
         var f = open.querySelector('iframe');
@@ -907,6 +924,11 @@
         open.classList.remove('playing');
         root.classList.remove('ns-playing');
         playing = false;
+    }
+
+    function toPhotos() {
+        closeVideo();
+        if (slides.length > 1) { show(i + 1); stop(); start(); }
     }
 
     // Video slide: click-to-play (Instagram embed loads only now),
@@ -922,12 +944,17 @@
             f.src = src;
             f.setAttribute('allow', 'encrypted-media');
             f.setAttribute('allowtransparency', 'true');
-            f.setAttribute('scrolling', 'no');
             slide.appendChild(f);
             slide.classList.add('playing');
             root.classList.add('ns-playing');
             playing = true;
             stop();
+            videoTimer = setTimeout(toPhotos, VIDEO_WATCH_MS);
+            return;
+        }
+        if (e.target.closest('.ns-vphotos')) {
+            e.preventDefault();
+            toPhotos();
             return;
         }
         if (e.target.closest('.ns-vclose')) {

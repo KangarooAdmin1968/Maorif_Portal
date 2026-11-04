@@ -97,19 +97,20 @@ def slider_slides():
             'summary': n.summary,
             'url': f'/news/{n.pk}/',
         }
-        slides_for_news = []
+        # Main photo first, the rest follow in their stored order.
+        photos.sort(key=lambda p: (not p.is_main, p.order, p.id))
+        slides_for_news = [
+            dict(base, type='photo', image=p.slider_image.url)
+            for p in photos]
+        # One click-to-play video slide last — the Instagram iframe is
+        # only created in the browser after the visitor presses play.
+        # Photos lead so the slider opens exactly like before; after the
+        # video slide rotation naturally wraps to the first photo.
         if has_video:
-            # One click-to-play video slide first — the Instagram iframe is
-            # only created in the browser after the visitor presses play.
             slides_for_news.append(dict(
                 base, type='video', embed=n.video_embed_url,
                 video_url=n.video_url,
                 thumb=n.video_thumb.url if n.video_thumb else ''))
-        # Main photo first, the rest follow in their stored order.
-        photos.sort(key=lambda p: (not p.is_main, p.order, p.id))
-        slides_for_news.extend(
-            dict(base, type='photo', image=p.slider_image.url)
-            for p in photos)
         by_cat.setdefault(n.category, []).append(slides_for_news)
 
     slides = []

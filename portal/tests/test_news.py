@@ -381,12 +381,12 @@ class NewsTests(GoldenBase):
             s['embed'],
             'https://www.instagram.com/reel/DfSPXDhIq29/embed/')
         self.assertEqual(s['video_url'], self.VIDEO_CANON)
-        # a video item that also carries photos: video slide first,
-        # photo slides continue after it
+        # a video item that also carries photos: photo slides lead and
+        # the video slide comes last so rotation wraps back to photos
         self._add_photo(n)
         news_mod.invalidate_news_cache()
         slides = news_mod.slider_slides()
-        self.assertEqual([x['type'] for x in slides], ['video', 'photo'])
+        self.assertEqual([x['type'] for x in slides], ['photo', 'video'])
 
     def test_dashboard_video_slide_click_to_play(self):
         n = self._publish(self._make_news(title='Видеослайд'), day=1)

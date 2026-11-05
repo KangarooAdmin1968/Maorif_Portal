@@ -399,6 +399,65 @@ def _grade_row_year_quarter(grade):
     return academic_year_start(grade.date), get_date_quarter(grade.date)
 
 
+def _quarter_contributing_filter(quarter, year):
+    """Q() keeping only Grade rows _split_quarter_grades can attribute to
+    (quarter, year) — the SQL form of _grade_row_year_quarter:
+
+    - assessment-linked rows follow the assessment: its declared quarter
+      plus the Sep..Aug year of the assessment's own date;
+    - unlinked rows follow the grade's date: the span
+      [q_start, next_q_start) covers the official window AND the
+      vacation gap get_date_quarter attributes to `quarter` (late
+      write-ups during a break belong to the quarter that just ended).
+
+    Returns None when quarter/year cannot be windowed — callers then run
+    the unfiltered scan, identical to the previous behavior. The scan it
+    narrows used to pull EVERY scored Ҷорӣ row for the student/subject
+    set and bucket in Python; the filter cuts that to one quarter's
+    window — the quarter pools are what the per-save recalc and the
+    reports iterate over.
+    """
+    if year is None:
+        return None
+    windows = academic_year_quarter_windows(year)
+    if quarter not in windows:
+        return None
+    q_start = windows[quarter][0]
+    q_next = (windows[quarter + 1][0] if quarter + 1 in windows
+              else datetime.date(year + 1, 9, 1))
+    ay_start = datetime.date(year, 9, 1)
+    ay_end = datetime.date(year + 1, 8, 31)
+    return (
+        Q(assessment__isnull=True, date__gte=q_start, date__lt=q_next)
+        | Q(assessment__quarter=quarter,
+            assessment__date__gte=ay_start, assessment__date__lte=ay_end)
+    )
+
+
+def _year_contributing_filter(year):
+    """Q() keeping only Grade rows _split_quarter_grades can attribute to
+    ANY quarter of academic `year` — the union of the per-quarter
+    filters for live projections that derive all four quarters at once:
+
+    - unlinked rows: grade.date inside the Sep..Aug bounds of `year`;
+    - linked rows: assessment quarter 1-4 AND the assessment's date
+      inside those same bounds (the year of a linked row is the
+      academic year of its assessment's date).
+
+    Rows outside can never contribute to quarters 1-4 of `year`, so the
+    scan skips prior-year history entirely.
+    """
+    if year is None:
+        return None
+    ay_start = datetime.date(year, 9, 1)
+    ay_end = datetime.date(year + 1, 8, 31)
+    return (
+        Q(assessment__isnull=True, date__gte=ay_start, date__lte=ay_end)
+        | Q(assessment__quarter__in=(1, 2, 3, 4),
+            assessment__date__gte=ay_start, assessment__date__lte=ay_end)
+    )
+
+
 def collect_quarter_inputs(student, subject, quarter, year=None):
     """Return (current_scores, ajm_results) for one student+subject+quarter.
 
@@ -408,14 +467,17 @@ def collect_quarter_inputs(student, subject, quarter, year=None):
     year never feeds this quarter just because its month buckets the same
     way.
     """
+    eff_year = year if year is not None else academic_year_start()
     grades = Grade.objects.filter(
         student=student,
         subject=subject,
         period='Холҳои ҷорӣ (Онлайн)',
         score__isnull=False,
     ).select_related('assessment')
-    return _split_quarter_grades(
-        grades, quarter, year if year is not None else academic_year_start())
+    contributing = _quarter_contributing_filter(quarter, eff_year)
+    if contributing is not None:
+        grades = grades.filter(contributing)
+    return _split_quarter_grades(grades, quarter, eff_year)
 
 
 def calc_quarter_value(current_scores, ajm_results):
@@ -459,12 +521,16 @@ def recalculate_quarter_grade(student, subject, quarter, year=None):
     if is_quarter_locked(
             student.school, student.class_name, subject, quarter, year):
         return
-    grades = list(Grade.objects.filter(
+    grades = Grade.objects.filter(
         student=student,
         subject=subject,
         period='Холҳои ҷорӣ (Онлайн)',
         score__isnull=False,
-    ).select_related('assessment'))
+    ).select_related('assessment')
+    contributing = _quarter_contributing_filter(quarter, year)
+    if contributing is not None:
+        grades = grades.filter(contributing)
+    grades = list(grades)
     value = calc_quarter_value(*_split_quarter_grades(grades, quarter, year))
     if value is None:
         QuarterGrade.objects.filter(
@@ -521,14 +587,26 @@ def recalculate_quarter_grades_bulk(rows):
         return
     subjects = {k[1] for k in keys}
     # One query per distinct subject — a journal batch edits a single
-    # subject, so this is normally exactly one fetch covering every
-    # quarter and year (membership is decided in Python below anyway).
+    # subject, so this is normally exactly one fetch. Rows are narrowed
+    # to the (quarter, year) windows the keys actually need instead of
+    # pulling every scored row of the year (membership is still decided
+    # in Python below — the filter only skips rows no key can use).
     pools = {}
     for subj in subjects:
-        for g in Grade.objects.filter(
-                student_id__in=students.keys(), subject=subj,
-                period='Холҳои ҷорӣ (Онлайн)',
-                score__isnull=False).select_related('assessment'):
+        qs = Grade.objects.filter(
+            student_id__in=students.keys(), subject=subj,
+            period='Холҳои ҷорӣ (Онлайн)',
+            score__isnull=False).select_related('assessment')
+        contributing = None
+        for q, year in {(k[2], k[3]) for k in keys if k[1] == subj}:
+            f = _quarter_contributing_filter(q, year)
+            if f is None:
+                contributing = None
+                break
+            contributing = f if contributing is None else contributing | f
+        if contributing is not None:
+            qs = qs.filter(contributing)
+        for g in qs:
             pools.setdefault(
                 (g.student_id, normalize_subject(subj)), []).append(g)
     # Every distinct lock key resolved in one query, then matched exactly.
@@ -742,7 +820,8 @@ def _live_quarter_payload(student, subject, class_name):
     grades = list(Grade.objects.filter(
         student=student, subject=subject,
         period='Холҳои ҷорӣ (Онлайн)',
-        score__isnull=False).select_related('assessment'))
+        score__isnull=False).select_related('assessment')
+        .filter(_year_contributing_filter(year)))
     qmap = {}
     live_flags = set()
     for q in (1, 2, 3, 4):
@@ -773,13 +852,14 @@ def _live_quarter_payloads(infos):
     if not subjects or not students:
         return out
     grade_pool = {}
+    year = academic_year_start()
     for g in Grade.objects.filter(
             student__in=students, subject__in=subjects,
             period='Холҳои ҷорӣ (Онлайн)',
-            score__isnull=False).select_related('assessment'):
+            score__isnull=False).select_related('assessment').filter(
+            _year_contributing_filter(year)):
         grade_pool.setdefault(
             (g.student_id, normalize_subject(g.subject)), []).append(g)
-    year = academic_year_start()
     qg_rows = {}
     for qg in QuarterGrade.objects.filter(
             student__in=students, subject__in=subjects,

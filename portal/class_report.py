@@ -118,12 +118,17 @@ def _live_quarter_grade_map(students, subjects, quarter, year):
     display-only and is never exported.
     """
     from .views import (  # local import: views imports this module
-        _split_quarter_grades, calc_quarter_value, std_round)
+        _quarter_contributing_filter, _split_quarter_grades,
+        calc_quarter_value, std_round)
     pool = defaultdict(list)
-    for g in Grade.objects.filter(
-            student__in=students, subject__in=subjects,
-            period='Холҳои ҷорӣ (Онлайн)', score__isnull=False,
-            ).select_related('assessment'):
+    qs = Grade.objects.filter(
+        student__in=students, subject__in=subjects,
+        period='Холҳои ҷорӣ (Онлайн)', score__isnull=False,
+    ).select_related('assessment')
+    contributing = _quarter_contributing_filter(quarter, year)
+    if contributing is not None:
+        qs = qs.filter(contributing)
+    for g in qs:
         pool[(g.student_id, normalize_subject(g.subject))].append(g)
     out = {}
     for (sid, subj), rows in pool.items():

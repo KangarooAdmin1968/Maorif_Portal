@@ -30,7 +30,7 @@ from portal.tests.test_phase4_lessons import (
 )
 from portal.views import (
     _all_student_gpas, _calculate_school_rankings_uncached,
-    _journal_norm_status, _live_quarter_payload,
+    _current_quarter_bounds, _journal_norm_status, _live_quarter_payload,
     academic_year_start, calculate_class_rankings,
     calculate_subject_rankings, calculate_top_students,
     collect_quarter_inputs,
@@ -1761,7 +1761,12 @@ class DuplicateCellCanonicalizationTests(GoldenBase):
         self.cs_a.hours_per_week = 3                     # norm 7/student
         self.cs_a.save()
         make_teacher_profile(self.teacher_a, self.school_a)
-        today = datetime.date.today()
+        # Clamp into the counted quarter window: a today inside an
+        # official vacation gap resolves the bounds to the quarter that
+        # just ended, and a gap-dated fixture row would not be counted.
+        today = min(
+            datetime.date.today(),
+            _current_quarter_bounds(datetime.date.today())[1])
         for _ in range(7):
             make_grade(self.s1, score=9, date=today)
         self.client.force_login(self.admin)

@@ -198,9 +198,12 @@ class GroupStudentScopeTests(GroupedFixture):
             class_subject=self.cs_math, date=D_Q1, quarter=1,
             category='control', number=2, lesson=l_g2)
         self.client.force_login(self.teacher_a)
-        resp = self.client.get(reverse(
-            'monthly_journal',
-            args=[self.school_a.id, '7-А', MATH]))
+        # The journal defaults to the CURRENT month — pin it to the
+        # fixtures' month so the test works whatever day it runs on.
+        resp = self.client.get(
+            reverse('monthly_journal',
+                    args=[self.school_a.id, '7-А', MATH])
+            + f'?month={D_Q1.strftime("%Y-%m")}')
         self.assertEqual(resp.status_code, 200)
         lesson_ids = {c['lesson_id'] for c in resp.context['columns']}
         self.assertIn(l_g1.id, lesson_ids)

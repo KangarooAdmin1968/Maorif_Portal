@@ -11,10 +11,27 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
+from portal.academic_calendar import is_school_day
 from portal.models import Grade, Lesson, SubjectGroupMembership, TeachingGroup
 from portal.tests.helpers import (
     D_Q1, MATH, PERIOD, GoldenBase, make_teacher_profile,
 )
+from portal.views import _current_quarter_bounds
+
+
+def _editable_month():
+    """YYYY-MM whose journal grid holds at least one editable day.
+
+    Editable cells need a school day <= today; a run inside an official
+    vacation gap (or early in a month that opens with one) has none in
+    the default current month, so pin the view to the month of the
+    first school day of the current quarter bounds.
+    """
+    today = datetime.date.today()
+    day, _ = _current_quarter_bounds(today)
+    while not (is_school_day(day) and day <= today):
+        day += datetime.timedelta(days=1)
+    return f'{day.year}-{day.month:02d}'
 
 
 class MonthlyJournalUxTests(GoldenBase):
@@ -23,11 +40,14 @@ class MonthlyJournalUxTests(GoldenBase):
         super().setUpTestData()
         make_teacher_profile(cls.teacher_a, cls.school_a)
 
-    def _get(self):
+    def _get(self, month=None):
         self.client.force_login(self.teacher_a)
-        resp = self.client.get(reverse('monthly_journal', kwargs={
+        url = reverse('monthly_journal', kwargs={
             'school_id': self.school_a.id, 'class_name': '7-А',
-            'subject': MATH}))
+            'subject': MATH})
+        if month is not None:
+            url += f'?month={month}'
+        resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200)
         return resp.content.decode()
 
@@ -55,7 +75,7 @@ class MonthlyJournalUxTests(GoldenBase):
         self.assertIn('applyHighlights(activeCell)', html)
 
     def test_active_cell_preserved(self):
-        html = self._get()
+        html = self._get(month=_editable_month())
         for marker in ('mcell-active', 'tabindex="-1"', 'setActiveCell',
                        'commitTypeBuf', 'typeBuf'):
             self.assertIn(marker, html)

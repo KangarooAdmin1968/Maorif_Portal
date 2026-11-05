@@ -31,9 +31,15 @@ TODAY = datetime.date.today()
 Q_START, Q_END = _current_quarter_bounds(TODAY)
 Q_PROGRESS = _quarter_progress(TODAY)
 PREV_Q = Q_START - datetime.timedelta(days=1)
+# Fixture dates must land INSIDE the current quarter window — the norm
+# counts rows by date__range(Q_START, Q_END), and a TODAY that falls in
+# an official vacation gap (Q bounds then resolve to the quarter that
+# just ended) would place fixture grades outside that range. Clamping
+# keeps 'a day this quarter counts' deterministic year-round.
+CUR_DAY = min(TODAY, Q_END)
 
 
-def make_control(cs, date=TODAY):
+def make_control(cs, date=CUR_DAY):
     return Assessment.objects.create(
         class_subject=cs, date=date, quarter=get_date_quarter(date),
         category='control',
@@ -122,7 +128,7 @@ class JournalNormStatusHelperTests(GoldenBase):
     def test_counts_only_current_quarter(self):
         for _ in range(7):
             make_grade(self.s1, subject=MATH, score=8, date=PREV_Q)
-        for d in (Q_START, TODAY):
+        for d in (Q_START, CUR_DAY):
             make_grade(self.s1, subject=MATH, score=9, date=d)
         j = self._status()
         self.assertEqual(j['done'], 2)
@@ -133,7 +139,7 @@ class JournalNormStatusHelperTests(GoldenBase):
     def test_attendance_plus_only_rows_do_not_count(self):
         # 7 'ғоиб бо сабаб' marks and zero scores -> met=False, Холӣ.
         for _ in range(7):
-            make_grade(self.s1, subject=MATH, attendance='+', date=TODAY)
+            make_grade(self.s1, subject=MATH, attendance='+', date=CUR_DAY)
         j = self._status()
         self.assertEqual(j['done'], 0)
         self.assertEqual(j['students_met'], 0)
@@ -141,21 +147,21 @@ class JournalNormStatusHelperTests(GoldenBase):
 
     def test_attendance_minus_only_rows_do_not_count(self):
         for _ in range(7):
-            make_grade(self.s1, subject=MATH, attendance='-', date=TODAY)
+            make_grade(self.s1, subject=MATH, attendance='-', date=CUR_DAY)
         j = self._status()
         self.assertEqual(j['done'], 0)
         self.assertEqual(j['status'], 'empty')
 
     def test_behavior_only_rows_do_not_count(self):
         for _ in range(7):
-            make_grade(self.s1, subject=MATH, behavior=4, date=TODAY)
+            make_grade(self.s1, subject=MATH, behavior=4, date=CUR_DAY)
         j = self._status()
         self.assertEqual(j['done'], 0)
         self.assertEqual(j['status'], 'empty')
 
     def test_sticker_only_rows_do_not_count(self):
         for _ in range(7):
-            make_grade(self.s1, subject=MATH, sticker='⭐', date=TODAY)
+            make_grade(self.s1, subject=MATH, sticker='⭐', date=CUR_DAY)
         j = self._status()
         self.assertEqual(j['done'], 0)
         self.assertEqual(j['status'], 'empty')
@@ -166,7 +172,7 @@ class JournalNormStatusHelperTests(GoldenBase):
             make_grade(self.s1, subject=MATH, score=8,
                        date=Q_START + datetime.timedelta(days=i))
         for _ in range(10):
-            make_grade(self.s1, subject=MATH, attendance='-', date=TODAY)
+            make_grade(self.s1, subject=MATH, attendance='-', date=CUR_DAY)
         j = self._status()
         self.assertEqual(j['done'], 3)
         self.assertEqual(j['students_met'], 0)
@@ -179,7 +185,7 @@ class JournalNormStatusHelperTests(GoldenBase):
                 make_grade(s, subject=MATH, score=9,
                            date=Q_START + datetime.timedelta(days=i))
             for _ in range(10):
-                make_grade(s, subject=MATH, attendance='+', date=TODAY)
+                make_grade(s, subject=MATH, attendance='+', date=CUR_DAY)
         j = self._status()
         self.assertEqual(j['done'], 14)
         self.assertEqual(j['students_met'], 2)
@@ -187,7 +193,7 @@ class JournalNormStatusHelperTests(GoldenBase):
 
     def test_row_with_score_and_attendance_counts_once(self):
         make_grade(self.s1, subject=MATH, score=9, attendance='+',
-                   date=TODAY)
+                   date=CUR_DAY)
         j = self._status()
         self.assertEqual(j['done'], 1)
         self.assertEqual(j['status'], 'partial')
@@ -195,7 +201,7 @@ class JournalNormStatusHelperTests(GoldenBase):
     def test_assessment_linked_score_row_counts(self):
         a = make_control(self.cs_a)
         Grade.objects.create(student=self.s1, subject=MATH, score=9,
-                             date=TODAY, assessment=a)
+                             date=CUR_DAY, assessment=a)
         j = self._status()
         self.assertEqual(j['done'], 1)
         self.assertEqual(j['status'], 'partial')
@@ -269,7 +275,7 @@ class MonthlyJournalStatusTests(GoldenBase):
         for s in (self.s1, self.s2):
             for _ in range(7):
                 make_grade(s, subject=MATH, score=9, date=PREV_Q)
-        make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        make_grade(self.s1, subject=MATH, score=9, date=CUR_DAY)
         j = self._journal(self.client.get(self.url))
         self.assertEqual(j['done'], 1)
         self.assertEqual(j['status'], 'partial')
@@ -303,7 +309,7 @@ class MonthlyJournalStatusTests(GoldenBase):
         self.assertEqual(j['status'], 'empty')
 
     def test_page_shows_status_and_to_imruz_label(self):
-        make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        make_grade(self.s1, subject=MATH, score=9, date=CUR_DAY)
         resp = self.client.get(self.url)
         html = resp.content.decode()
         self.assertIn('Иҷрои меъёр то имрӯз', html)
@@ -315,7 +321,7 @@ class MonthlyJournalStatusTests(GoldenBase):
         # Journal Пурра early — a normal save must still pass.
         for s in (self.s1, self.s2):
             for _ in range(7):
-                make_grade(s, subject=MATH, score=9, date=TODAY)
+                make_grade(s, subject=MATH, score=9, date=CUR_DAY)
         resp = self.client.post(reverse('save_grade_ajax'), {
             'student_id': self.s1.id, 'subject': MATH,
             # A school day — TODAY may be a vacation day/Sunday, which the
@@ -340,7 +346,7 @@ class GradeEntryStatusTests(GoldenBase):
         })
 
     def test_status_present(self):
-        make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+        make_grade(self.s1, subject=MATH, score=9, date=CUR_DAY)
         resp = self.client.get(self.url)
         self.assertEqual(resp.context['journal']['status'], 'partial')
         html = resp.content.decode()
@@ -379,7 +385,7 @@ class ReadinessJournalStatusTests(GoldenBase):
         cs8.hours_per_week = 3
         cs8.save()
         for _ in range(7):
-            make_grade(self.s1, subject=MATH, score=9, date=TODAY)
+            make_grade(self.s1, subject=MATH, score=9, date=CUR_DAY)
         _, t = self._teacher()
         statuses = {j['class_name']: j['status'] for j in t['journal']}
         self.assertEqual(statuses['7-А'], 'partial')

@@ -631,6 +631,14 @@ class Grade(models.Model):
         verbose_name = 'Хол'
         verbose_name_plural = 'Холҳо'
         ordering = ['-date']
+        indexes = [
+            # Quarter pools + per-cell recalc: (student, subject, period)
+            # equality then the date window of the contributing quarter.
+            models.Index(fields=['student', 'subject', 'period', 'date'],
+                         name='grade_stu_subj_per_date'),
+            # School-wide month/norm scans: subject + date range.
+            models.Index(fields=['subject', 'date'], name='grade_subj_date'),
+        ]
 
     def __str__(self):
         return f"{self.student} — {self.subject} — {self.score} — {self.attendance} — {self.behavior_score}"

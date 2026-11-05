@@ -32,6 +32,7 @@ from .models import (
     ClassSubject, Grade, QuarterGrade, Student, TeacherProfile,
     normalize_class_name, normalize_subject,
 )
+from .tajik_sort import sort_students
 from .utils import default_subjects_for_class
 
 TEMPLATE_PATH = (
@@ -221,10 +222,8 @@ def build_class_report_workbook(school, class_name, quarter, today=None):
     a subject list that cannot fit the template's 20 subject columns.
     """
     class_name = normalize_class_name(class_name)
-    students = list(
-        Student.objects.filter(school=school, class_name=class_name)
-        .order_by('full_name')
-    )
+    students = sort_students(
+        Student.objects.filter(school=school, class_name=class_name))
     if not students:
         raise ClassReportError('Дар синфи интихобшуда хонанда нест.')
 

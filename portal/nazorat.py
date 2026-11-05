@@ -19,6 +19,7 @@ from .models import ClassSubject, Grade, Student, StudentExemption, normalize_su
 from .norm_pace import (ATTENDANCE_MARKS, PACE_BEHIND, PACE_CRITICAL,
                         PACE_EXEMPT, PACE_MET, PACE_UNGRADED,
                         absence_counts, norm_pace_context)
+from .tajik_sort import name_key, sort_students
 from .ungraded import _cs_teacher_names
 from .utils import canonical_grade_rows, class_numeric_part
 
@@ -152,7 +153,8 @@ def collect_absence_students(school, period, min_hours=3, today=None):
             .filter(n__gte=min_hours))
     rows = sorted(rows, key=lambda r: (
         class_numeric_part(r['student__class_name']) or 0,
-        r['student__class_name'], -r['n'], r['student__full_name']))
+        r['student__class_name'], -r['n'],
+        name_key(r['student__full_name'])))
     return {'period': value, 'period_label': label, 'min': min_hours,
             'rows': [{'class_name': r['student__class_name'],
                       'name': r['student__full_name'], 'n': r['n']}
@@ -194,7 +196,8 @@ def collect_behavior_issues(school):
         rows.append({'class_name': st.class_name, 'name': st.full_name,
                      'avg': round(avg, 2), 'status': status})
     rows.sort(key=lambda r: (class_numeric_part(r['class_name']) or 0,
-                             r['class_name'], r['avg'], r['name']))
+                             r['class_name'], r['avg'],
+                             name_key(r['name'])))
     return {'rows': rows}
 
 
@@ -336,7 +339,7 @@ def collect_grading_control(school, quarter, today=None):
     classes = [{'class_name': name, **per_class[name]}
                for name in sorted(per_class, key=sort_key)]
     for cls in classes:
-        cls['ungraded'].sort()
+        cls['ungraded'].sort(key=name_key)
         cls['low'].sort(key=lambda r: r['avg'])
     return {
         'quarter': quarter,
@@ -376,11 +379,11 @@ def collect_norm_tree(school, today=None):
 
     class_names = {cs.class_name for cs in class_subjects}
     subjects = {normalize_subject(cs.subject) for cs in class_subjects}
-    students = [
-        s for s in (Student.objects.filter(school=school)
-                    .exclude(class_name='').order_by('full_name'))
+    students = sort_students(
+        s for s in Student.objects.filter(school=school)
+        .exclude(class_name='')
         if s.class_name in class_names
-    ]
+    )
     by_class = defaultdict(list)
     for st in students:
         by_class[st.class_name].append(st)
@@ -435,7 +438,7 @@ def collect_norm_tree(school, today=None):
             (r for r in pace['by_id'].values()
              if r['dot'] and r['status'] != PACE_MET),
             key=lambda r: (order.get(r['status'], 9),
-                           r['student'].full_name))
+                           name_key(r['student'].full_name)))
         by_teacher[teacher_names.get(cs.id) or 'таъйин нашудааст'].append({
             'class_name': cs.class_name, 'subject': cs.subject,
             'rows': rows,

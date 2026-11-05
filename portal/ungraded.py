@@ -21,6 +21,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from .exemptions import active_exemption_map
 from .models import Student, TeacherProfile
+from .tajik_sort import name_key
 from .utils import (class_numeric_part, normalize_class_name,
                     normalize_subject)
 
@@ -97,7 +98,8 @@ def collect_ungraded_students(school, quarter, today=None):
                     'teacher': teacher_names.get(cs.id, ''),
                 })
     rows.sort(key=lambda r: (class_numeric_part(r['class_name']) or 0,
-                             r['class_name'], r['student'], r['subject']))
+                             r['class_name'], name_key(r['student']),
+                             r['subject']))
     return {
         'quarter': quarter, 'academic_year': ay, 'rows': rows,
         'students': len({r['student'] for r in rows}),

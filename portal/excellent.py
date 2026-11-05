@@ -19,6 +19,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from .curriculum_hours import UNGRADED_SUBJECTS
 from .models import ClassSubject, Student
+from .tajik_sort import name_key
 from .utils import (class_numeric_part, is_non_graded,
                     normalize_class_name, normalize_subject)
 
@@ -89,10 +90,10 @@ def collect_excellent_students(school, quarter, today=None):
             blocked.append((st, missing))
     result.sort(key=lambda s: (class_numeric_part(s.class_name) or 0,
                                normalize_class_name(s.class_name),
-                               s.full_name))
+                               name_key(s.full_name)))
     blocked.sort(key=lambda b: (
         len(b[1]), class_numeric_part(b[0].class_name) or 0,
-        normalize_class_name(b[0].class_name), b[0].full_name))
+        normalize_class_name(b[0].class_name), name_key(b[0].full_name)))
     return {'quarter': quarter, 'academic_year': ay, 'students': result,
             'blocked': blocked,
             'title': excellent_list_title(school, ay)}

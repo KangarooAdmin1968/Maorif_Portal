@@ -21,6 +21,7 @@ from .exemptions import active_exemption_map
 from .maorif_report import LEVELS, QUARTER_WORD_ORDINALS
 from .models import (ClassSubject, Grade, QuarterLock, Student,
                      normalize_subject)
+from .tajik_sort import name_key
 from .utils import class_numeric_part, get_school_number
 
 def _archive_dir():
@@ -215,6 +216,8 @@ def build_quarter_archive(school, quarter, year):
     classes = defaultdict(list)
     for st in students:
         classes[st.class_name].append(st)
+    for names in classes.values():
+        names.sort(key=lambda st: name_key(st.full_name))
 
     subjects_by_class = {}
     for cs in ClassSubject.objects.filter(
@@ -273,7 +276,7 @@ def build_quarter_archive(school, quarter, year):
         c.font, c.fill = head, fill
     for (cls, name), (exc, unx) in sorted(
             att.items(), key=lambda kv: (class_numeric_part(kv[0][0]) or 0,
-                                         kv[0][0], kv[0][1])):
+                                         kv[0][0], name_key(kv[0][1]))):
         ws.append([cls, name, exc, unx, exc + unx])
     ws.column_dimensions['B'].width = 30
 

@@ -77,6 +77,7 @@ from .assessment_catalog import (
 from .grouping import (
     GROUP_LABELS, gender_split, balanced_split, validate_assignment,
 )
+from .tajik_sort import name_key, sort_students
 
 import logging
 
@@ -1567,7 +1568,8 @@ _GROUP_UNSET = object()
 
 
 def visible_students_for(user, cs, group=_GROUP_UNSET, has_groups=None):
-    """Students visible to `user` for this ClassSubject (ordered by name).
+    """Students visible to `user` for this ClassSubject, as a list in
+    Tajik-alphabet order (sort_students honors the rollback flag).
 
     No active groups -> the whole class (legacy). Grouped -> all students
     for privileged roles; only own-group members for regular teachers.
@@ -1582,7 +1584,7 @@ def visible_students_for(user, cs, group=_GROUP_UNSET, has_groups=None):
         school=cs.school, class_name=cs.class_name
     ).order_by('full_name')
     if not _is_regular_teacher(user):
-        return students
+        return sort_students(students)
     if group is _GROUP_UNSET:
         group = teacher_group_for(user, cs)
     if group is None:
@@ -1590,12 +1592,12 @@ def visible_students_for(user, cs, group=_GROUP_UNSET, has_groups=None):
         if has_groups is None:
             has_groups = cs.groups.filter(is_active=True).exists()
         if has_groups:
-            return students.none()
-        return students
-    return students.filter(
+            return []
+        return sort_students(students)
+    return sort_students(students.filter(
         subject_group_memberships__class_subject=cs,
         subject_group_memberships__group=group,
-    )
+    ))
 
 
 def _teacher_can_write_student(user, student, cs):
@@ -2719,6 +2721,8 @@ def search(request):
             .order_by('school_id', 'class_name', 'full_name')
             [:SEARCH_RESULT_LIMIT]
         )
+        results.sort(key=lambda r: (
+            r['school_id'], r['class_name'], name_key(r['full_name'])))
 
     return render(request, 'portal/search.html', {
         'q': q,
@@ -3031,8 +3035,8 @@ def class_detail(request, school_id, class_name):
     if not is_academic_school(school):
         return redirect('school_list')
     ensure_class_subjects(school, class_name)
-    students = list(Student.objects.filter(
-        school=school, class_name=class_name).order_by('full_name'))
+    students = sort_students(Student.objects.filter(
+        school=school, class_name=class_name))
     total_count = len(students)
     male_count = sum(1 for s in students if s.gender == 'M')
     female_count = sum(1 for s in students if s.gender == 'F')
@@ -3044,10 +3048,9 @@ def class_detail(request, school_id, class_name):
     # Archived (рафт) students of this class — collapsed section with a
     # restore path; history is preserved, so re-enrollment never merges
     # or loses anything.
-    archived_students = list(
+    archived_students = sort_students(
         Student.all_objects
-        .filter(school=school, class_name=class_name, is_archived=True)
-        .order_by('full_name'))
+        .filter(school=school, class_name=class_name, is_archived=True))
     subjects = ClassSubject.objects.filter(
         school=school, class_name=class_name, is_active=True,
         subject__in=official_subjects_for(school, class_name)
@@ -3137,7 +3140,8 @@ def sticker_entry(request, school_id, class_name):
             return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
         return HttpResponse('Дастрасӣ манъ аст.', status=403)
 
-    students = Student.objects.filter(school=school, class_name=class_name).order_by('full_name')
+    students = sort_students(
+        Student.objects.filter(school=school, class_name=class_name))
 
     date_str = request.GET.get('date', '')
     try:
@@ -3539,9 +3543,8 @@ def grade_entry(request, school_id, class_name, subject):
     if class_subject is not None:
         students = visible_students_for(request.user, class_subject)
     else:
-        students = Student.objects.filter(
-            school=school, class_name=class_name
-        ).order_by('full_name')
+        students = sort_students(Student.objects.filter(
+            school=school, class_name=class_name))
     students = list(students)
     # «Дар давлати дигар таҳсил мекунад» exemptions: blue indicators in the
     # journal + removal from the norm denominator (one grouped query).
@@ -4125,9 +4128,8 @@ def monthly_journal(request, school_id, class_name, subject):
             request.user, class_subject,
             group=teacher_group, has_groups=has_groups))
     else:
-        students = list(Student.objects.filter(
-            school=school, class_name=class_name
-        ).order_by('full_name'))
+        students = sort_students(Student.objects.filter(
+            school=school, class_name=class_name))
     # «Дар давлати дигар таҳсил мекунад» exemptions: blue indicators in
     # the student column + removal from the norm denominator (one query).
     exemption_map = active_exemption_map(s.id for s in students)
@@ -4400,14 +4402,17 @@ def export_journal_excel(request, school_id, class_name, subject):
         if class_subject is not None
         else Student.objects.filter(school=school, class_name=class_name)
     )
-    grades = Grade.objects.filter(
-        student__in=students,
-        subject=subject,
-        period='Холҳои ҷорӣ (Онлайн)',
-        date__range=(month_start, month_end),
-    ).select_related('student', 'assessment', 'lesson').order_by(
-        'student__full_name', 'date', 'lesson__lesson_number', 'id'
-    )
+    grades = sorted(
+        Grade.objects.filter(
+            student__in=students,
+            subject=subject,
+            period='Холҳои ҷорӣ (Онлайн)',
+            date__range=(month_start, month_end),
+        ).select_related('student', 'assessment', 'lesson'),
+        key=lambda g: (
+            name_key(g.student.full_name), g.date,
+            g.lesson.lesson_number if g.lesson_id else -1,
+            g.pk))
 
     wb = Workbook()
     ws = wb.active
@@ -7129,10 +7134,8 @@ def class_groups(request, cs_id):
         return redirect('dashboard')
 
     school = cs.school
-    students = list(
-        Student.objects.filter(school=school, class_name=cs.class_name)
-        .order_by('full_name')
-    )
+    students = sort_students(
+        Student.objects.filter(school=school, class_name=cs.class_name))
     students_json = [
         {'id': s.id, 'name': s.full_name, 'gender': s.gender or ''}
         for s in students

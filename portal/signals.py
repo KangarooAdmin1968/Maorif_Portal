@@ -522,11 +522,13 @@ def news_photo_files_cleanup(sender, instance, **kwargs):
 
 @receiver(post_delete, sender=News)
 def news_video_thumb_cleanup(sender, instance, **kwargs):
-    """Remove the fetched video cover when the news item is deleted."""
-    try:
-        f = instance.video_thumb
-        if f and f.name:
-            f.storage.delete(f.name)
-    except Exception:
-        logger.exception(
-            'Failed to delete video_thumb of News %s', instance.pk)
+    """Remove the fetched video cover and the uploaded video file when
+    the news item is deleted — otherwise large files linger on disk."""
+    for field in ('video_thumb', 'video_file'):
+        try:
+            f = getattr(instance, field)
+            if f and f.name:
+                f.storage.delete(f.name)
+        except Exception:
+            logger.exception(
+                'Failed to delete %s of News %s', field, instance.pk)

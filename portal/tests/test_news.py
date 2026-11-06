@@ -6,6 +6,7 @@ the dashboard flag fallback, archive visibility.
 """
 import datetime
 import io
+import os
 import shutil
 import tempfile
 from unittest.mock import patch
@@ -574,3 +575,12 @@ class NewsTests(GoldenBase):
                          self._post_data(media_type='photo', video_url=''))
         n.refresh_from_db()
         self.assertFalse(bool(n.video_file))
+
+    def test_delete_news_removes_video_file_from_storage(self):
+        n = self._make_news()
+        n.media_type = 'video'
+        n.video_file.save('dars.mp4', self._vid('dars.mp4'), save=True)
+        path = n.video_file.path
+        self.assertTrue(os.path.exists(path))
+        n.delete()
+        self.assertFalse(os.path.exists(path))

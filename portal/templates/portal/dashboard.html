@@ -364,7 +364,8 @@
              data-embed="{{ v.embed }}" data-file="{{ v.file }}">
             {% if v.thumb %}<img class="ns-vthumb" src="{{ v.thumb }}" alt="{{ v.title }}" loading="lazy">{% endif %}
             <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
-            {% if v.video_url %}<a class="ns-vlink" href="{{ v.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>{% endif %}
+            <a class="ns-vlink" target="_blank" rel="noopener noreferrer"
+               href="{% if v.video_url %}{{ v.video_url }}{% else %}https://www.instagram.com/maorif_zafarobod/{% endif %}">{% if v.video_url %}Instagram ↗{% else %}Мо дар Instagram ↗{% endif %}</a>
         </div>
         {% endwith %}{% endif %}
         {% if news_slides|length > 1 %}
@@ -961,10 +962,12 @@
         if (vlink) {
             if (v.video_url) {
                 vlink.href = v.video_url;
-                vlink.style.display = '';
+                vlink.textContent = 'Instagram ↗';
             } else {
-                vlink.style.display = 'none';
+                vlink.href = 'https://www.instagram.com/maorif_zafarobod/';
+                vlink.textContent = 'Мо дар Instagram ↗';
             }
+            vlink.style.display = '';
         }
         if (vinfo) {
             var t = vinfo.querySelector('.ns-title');

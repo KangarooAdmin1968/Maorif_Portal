@@ -71,6 +71,15 @@
     position: absolute; right: 10px; bottom: 8px; z-index: 1;
     color: #fff; font-size: .78rem; text-shadow: 0 1px 3px rgba(0,0,0,.6);
 }
+/* Instagram profile link — its own row under the stage/toggle, always
+   visible while the video section exists. */
+.ns-igrow { text-align: center; padding-top: .4rem; }
+.ns-ig {
+    display: inline-flex; align-items: center; gap: .45rem;
+    font-size: 1.05rem; font-weight: 700; text-decoration: none;
+    color: #bc1888; white-space: nowrap;
+}
+.ns-ig:hover { color: #8f0f67; text-decoration: underline; }
 .ns-video-pane iframe {
     position: absolute; top: 0;
     left: 50%; transform: translateX(-50%);
@@ -364,8 +373,7 @@
              data-embed="{{ v.embed }}" data-file="{{ v.file }}">
             {% if v.thumb %}<img class="ns-vthumb" src="{{ v.thumb }}" alt="{{ v.title }}" loading="lazy">{% endif %}
             <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
-            <a class="ns-vlink" target="_blank" rel="noopener noreferrer"
-               href="{% if v.video_url %}{{ v.video_url }}{% else %}https://www.instagram.com/maorif_zafarobod/{% endif %}">{% if v.video_url %}Instagram ↗{% else %}Мо дар Instagram ↗{% endif %}</a>
+            {% if v.video_url %}<a class="ns-vlink" href="{{ v.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>{% endif %}
         </div>
         {% endwith %}{% endif %}
         {% if news_slides|length > 1 %}
@@ -378,6 +386,10 @@
     <div class="ns-toggle">
         {% if news_slides %}<button class="ns-tbtn ns-t-photos active" type="button">🖼 Аксҳо</button>{% endif %}
         <button class="ns-tbtn ns-t-video" type="button">🎬 Видео{% if news_videos|length > 1 %} ({{ news_videos|length }}){% endif %}</button>
+    </div>
+    <div class="ns-igrow">
+        <a class="ns-ig" href="https://www.instagram.com/maorif_zafarobod/"
+           target="_blank" rel="noopener noreferrer">📷 Мо дар Instagram</a>
     </div>
     {{ news_videos|json_script:"ns-videos-data" }}
     {% endif %}
@@ -962,12 +974,10 @@
         if (vlink) {
             if (v.video_url) {
                 vlink.href = v.video_url;
-                vlink.textContent = 'Instagram ↗';
+                vlink.style.display = '';
             } else {
-                vlink.href = 'https://www.instagram.com/maorif_zafarobod/';
-                vlink.textContent = 'Мо дар Instagram ↗';
+                vlink.style.display = 'none';
             }
-            vlink.style.display = '';
         }
         if (vinfo) {
             var t = vinfo.querySelector('.ns-title');

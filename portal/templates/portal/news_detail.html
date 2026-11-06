@@ -24,6 +24,7 @@
   .nd-vcover.playing { aspect-ratio:auto; height:min(80vh,760px); overflow:visible; }
   .nd-vcover.playing::after { display:none; }
   .nd-vcover iframe { width:100%; height:100%; border:0; display:block; background:#fff; }
+  .nd-vfile { width:100%; max-width:560px; border-radius:.5rem; background:#000; display:block; }
   .nd-vlink { display:inline-block; margin-top:.55rem; font-size:.85rem; color:#003366; }
 </style>
 {% endblock %}
@@ -45,12 +46,20 @@
 
     {% if show_video %}
     <div class="nd-video">
+        {% if news.video_file %}
+        <video class="nd-vfile" controls preload="metadata" playsinline
+               {% if news.video_thumb %}poster="{{ news.video_thumb.url }}"{% endif %}>
+            <source src="{{ news.video_file.url }}">
+            Браузери шумо видеоро дастгирӣ намекунад.
+        </video>
+        {% else %}
         <div class="nd-vcover" id="ndVCover" data-embed="{{ news.video_embed_url }}">
             {% if news.video_thumb %}<img src="{{ news.video_thumb.url }}" alt="{{ news.title }}" loading="lazy">{% endif %}
             <button type="button" class="nd-vplay" id="ndVPlay">▶ Видеоро тамошо кардан</button>
         </div>
         <a class="nd-vlink" href="{{ news.video_url }}" target="_blank"
            rel="noopener noreferrer">Тамошо дар Instagram ↗</a>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -79,7 +88,7 @@ function ndOpen(src) {
     document.getElementById('ndLightImg').src = src;
     if (d.showModal) d.showModal(); else window.open(src, '_blank');
 }
-{% if show_video %}
+{% if show_video and not news.video_file %}
 (function () {
     var btn = document.getElementById('ndVPlay');
     if (!btn) return;

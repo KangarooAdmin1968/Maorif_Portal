@@ -193,6 +193,26 @@ def quarter_min_norm(class_name, subject, class_subject=None):
     return quarter_minimum_grades(weekly_hours(class_name, subject, class_subject))
 
 
+def group_weekly_hours(group, class_subject):
+    """Weekly hours credited to one TeachingGroup.
+
+    The group's explicit ``hours_per_week`` (used by таҳсил дар хона
+    groups, which never carry the class's full subject load) wins; a NULL
+    falls back to the class subject's regular resolution.
+    """
+    if getattr(group, 'hours_per_week', None) is not None:
+        return disp_hours(group.hours_per_week)
+    return weekly_hours(
+        class_subject.class_name, class_subject.subject, class_subject)
+
+
+def group_min_norm(group, class_subject):
+    """Quarter minimum grades for a group's members — honors group hours."""
+    if normalize_subject(class_subject.subject) in UNGRADED_SUBJECTS:
+        return 0
+    return quarter_minimum_grades(group_weekly_hours(group, class_subject))
+
+
 def class_norms(class_name):
     """Return {subject: (weekly_hours, quarter_minimum)} for a class level."""
     level = grade_level(class_name)

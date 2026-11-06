@@ -1,0 +1,187 @@
+{% extends 'portal/base.html' %}
+{% block title %}Таҳсил дар хона — {{ school.name }}{% endblock %}
+{% block extra_head %}
+<style>
+  .home-note { color: #4b5563; font-size: .92rem; margin: .25rem 0 1rem; }
+  .home-form {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: .6rem; align-items: end;
+    background: #f9fafb; border: 1px solid #e5e7eb; border-radius: .6rem;
+    padding: .9rem; margin-bottom: 1.25rem;
+  }
+  .home-form .fld label {
+    display: block; font-size: .8rem; font-weight: 600; color: #6b7280;
+    margin-bottom: .25rem;
+  }
+  .home-form .fld input, .home-form .fld select {
+    width: 100%; padding: .45rem .55rem; border: 1px solid #d1d5db;
+    border-radius: .4rem; font-size: .9rem; background: #fff; color: #111827;
+    box-sizing: border-box;
+  }
+  .home-form .fld.hidden { display: none; }
+  .home-badge {
+    display: inline-block; font-size: .72rem; font-weight: 700;
+    background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;
+    border-radius: 999px; padding: .05rem .5rem;
+  }
+  .member-chip {
+    display: inline-flex; align-items: center; gap: .35rem;
+    background: #eff6ff; border: 1px solid #bfdbfe; border-radius: .4rem;
+    padding: .15rem .45rem; margin: .1rem .15rem .1rem 0; font-size: .87rem;
+  }
+  .member-chip form { display: inline; }
+  .member-chip button {
+    border: none; background: none; color: #b91c1c; cursor: pointer;
+    font-size: .85rem; padding: 0 .1rem; line-height: 1;
+  }
+</style>
+{% endblock %}
+{% block content %}
+{% if is_superuser and all_schools %}
+<div style="margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.75rem; background: #f1f5f9; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #cbd5e1;">
+    <label for="home-school-select" style="font-weight: 700; color: #1e293b; font-size: 0.95rem;">🏫 Интихоби муассиса:</label>
+    <select id="home-school-select" class="form-select" style="padding: 0.4rem 0.8rem; font-weight: 600; border-radius: 6px; border: 1px solid #94a3b8; background: #fff;"
+            onchange="location.href='{% url 'home_education' %}?school_id=' + this.value">
+        {% for sc in all_schools %}
+        <option value="{{ sc.id }}" {% if sc.id == school.id %}selected{% endif %}>{{ sc.name }}</option>
+        {% endfor %}
+    </select>
+</div>
+{% endif %}
+
+<h1>{{ school.name }} — Таҳсил дар хона</h1>
+<p class="home-note">
+    Хонандагоне, ки бо фармоиши мактаб дар хона таҳсил мекунанд. Ин хонандагон
+    дар журнали кунонаи синф намоён намешаванд; омӯзгори таъиншуда баҳоларро
+    дар «Журнали таҳсил дар хона» мегузорад ва соатҳо ба сарбории умумии ӯ
+    ҳамроҳ мешаванд. Баҳои чоряк ба ҳуҷҷатҳои расмии синф гузаронида мешавад.
+</p>
+
+<div class="card" style="padding:1rem;">
+    <h2 style="margin:0 0 .6rem; font-size:1rem; color:#003366;">Хонандаи нав илова кардан</h2>
+    <form method="post" action="{% url 'home_education_add' %}" class="home-form">
+        {% csrf_token %}
+        {% if is_superuser %}<input type="hidden" name="school_id" value="{{ school.id }}">{% endif %}
+        <div class="fld">
+            <label for="he-class">Синф</label>
+            <select id="he-class" name="class_name" required>
+                <option value="">Интихоб кунед...</option>
+                {% for cn in class_names %}<option value="{{ cn }}">{{ cn }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="fld">
+            <label for="he-student">Хонанда (аз рӯйхат)</label>
+            <select id="he-student" name="student_id">
+                <option value="">— Рӯйхатда нест —</option>
+            </select>
+        </div>
+        <div class="fld">
+            <label for="he-newname">Ё Ному насаби нав</label>
+            <input type="text" id="he-newname" name="new_name" maxlength="255"
+                   placeholder="Насаби Ном" autocomplete="off">
+        </div>
+        <div class="fld">
+            <label for="he-subject">Фан</label>
+            <select id="he-subject" name="subject" required>
+                <option value="">Интихоб кунед...</option>
+            </select>
+        </div>
+        <div class="fld">
+            <label for="he-teacher">Омӯзгор</label>
+            <select id="he-teacher" name="teacher_id" required>
+                <option value="">Интихоб кунед...</option>
+                {% for t in teachers %}<option value="{{ t.id }}">{{ t.full_name }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="fld" style="max-width:8rem;">
+            <label for="he-hours">Соатҳои ҳафтаина</label>
+            <input type="number" id="he-hours" name="hours" min="0.5"
+                   max="{{ max_weekly_hours }}" step="0.5" required>
+        </div>
+        <div class="fld">
+            <label for="he-doc">Ҳуҷҷати тасдиқкунанда</label>
+            <input type="text" id="he-doc" name="document" maxlength="255"
+                   placeholder="Рақами фармоиш / маълумотнома">
+        </div>
+        <div class="fld">
+            <button type="submit" class="btn btn-success">💾 Сабт кардан</button>
+        </div>
+    </form>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Хонанда</th><th>Синф</th><th>Фан</th>
+            <th>Омӯзгор</th><th>Соатҳои ҳафтаина</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        {% for m in row.members %}
+        <tr>
+            <td>
+                {{ m.student.full_name }}
+                {% if forloop.first %}<span class="home-badge">{{ home_label }}</span>{% endif %}
+            </td>
+            <td>{{ row.class_name }}</td>
+            <td>{{ row.subject }}</td>
+            <td>{{ row.teacher.full_name|default:'—' }}</td>
+            <td>
+                {{ row.hours }}
+                <form method="post" action="{% url 'home_education_remove' %}" style="display:inline; float:right;"
+                      onsubmit="return confirm('{{ m.student.full_name }} аз таҳсил дар хона хориҷ карда шавад?');">
+                    {% csrf_token %}
+                    {% if is_superuser %}<input type="hidden" name="school_id" value="{{ school.id }}">{% endif %}
+                    <input type="hidden" name="membership_id" value="{{ m.id }}">
+                    <button type="submit" class="btn btn-danger btn-sm" title="Хориҷ">×</button>
+                </form>
+            </td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td>{{ row.class_name }}</td><td>{{ row.subject }}</td>
+            <td>{{ row.teacher.full_name|default:'—' }}</td>
+            <td>{{ row.hours }}</td><td><em>Узв надорад</em></td>
+        </tr>
+        {% endfor %}
+        {% empty %}
+        <tr><td colspan="5" style="text-align:center; color:#6b7280; padding:1.2rem;">
+            Ҳануз ягон хонандаи таҳсил дар хона сабт нашудааст.
+        </td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<script>
+const STUDENTS = {{ students_json|safe }};
+const SUBJECTS = {{ subjects_json|safe }};
+const classSel = document.getElementById('he-class');
+const studentSel = document.getElementById('he-student');
+const subjectSel = document.getElementById('he-subject');
+
+function refreshClassDependents() {
+    const cn = classSel.value;
+    studentSel.innerHTML = '<option value="">— Рӯйхатда нест —</option>';
+    STUDENTS.filter(s => s.class_name === cn).forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.id; o.textContent = s.name;
+        studentSel.appendChild(o);
+    });
+    subjectSel.innerHTML = '<option value="">Интихоб кунед...</option>';
+    (SUBJECTS[cn] || []).forEach(subj => {
+        const o = document.createElement('option');
+        o.value = subj; o.textContent = subj;
+        subjectSel.appendChild(o);
+    });
+}
+classSel.addEventListener('change', refreshClassDependents);
+studentSel.addEventListener('change', () => {
+    if (studentSel.value) document.getElementById('he-newname').value = '';
+});
+document.getElementById('he-newname').addEventListener('input', e => {
+    if (e.target.value.trim()) studentSel.value = '';
+});
+refreshClassDependents();
+</script>
+{% endblock %}

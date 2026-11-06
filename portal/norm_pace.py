@@ -32,7 +32,8 @@ means "limited under the estimate", not a mathematically certain verdict.
 import datetime
 import math
 
-from .curriculum_hours import quarter_min_norm, weekly_hours
+from .curriculum_hours import (
+    quarter_min_norm, weekly_hours, group_weekly_hours, group_min_norm)
 
 PACE_EXEMPT = 'exempt'
 PACE_MET = 'met'
@@ -147,7 +148,7 @@ def _tip_text(status, norm, planned, actual, needed, reason, missed=0):
 
 
 def norm_pace_context(class_name, subject, class_subject, students, today,
-                      exemption_map, per_student, absences=None):
+                      exemption_map, per_student, absences=None, group=None):
     """Pace payload for one journal: per-student records + the lists.
 
     ``per_student`` is the scored-row count map and ``absences`` the
@@ -164,8 +165,15 @@ def norm_pace_context(class_name, subject, class_subject, students, today,
     """
     from .views import _current_quarter_bounds  # local import avoids cycles
 
-    norm = quarter_min_norm(class_name, subject, class_subject)
-    hours = weekly_hours(class_name, subject, class_subject)
+    # ``group`` is the regular teacher's TeachingGroup on this CS — a
+    # таҳсил дар хона journal paces against that group's own weekly
+    # hours instead of the class subject's.
+    if group is not None and class_subject is not None:
+        norm = group_min_norm(group, class_subject)
+        hours = group_weekly_hours(group, class_subject)
+    else:
+        norm = quarter_min_norm(class_name, subject, class_subject)
+        hours = weekly_hours(class_name, subject, class_subject)
     q_start, q_end = _current_quarter_bounds(today)
     total = (q_end - q_start).days + 1
     elapsed = min(max((today - q_start).days + 1, 1), total)

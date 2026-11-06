@@ -77,15 +77,23 @@
             <label><input type="radio" name="media_type" value="photo"
                 {% if form.media_type != 'video' %}checked{% endif %}> 📷 Акс</label>
             <label><input type="radio" name="media_type" value="video"
-                {% if form.media_type == 'video' %}checked{% endif %}> 🎬 Видео (Instagram Reels)</label>
+                {% if form.media_type == 'video' %}checked{% endif %}> 🎬 Видео</label>
         </div>
     </div>
     <div id="nfVideo" class="{% if form.media_type == 'video' %}show{% endif %}">
-        <label class="nf-field">Ҳаволаи Instagram Reels *
+        <label class="nf-field">Файли видео (MP4/WebM, то 45 МБ)
+            <input type="file" name="video_file" id="nfVideoFile" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v">
+            {% if news and news.video_file %}
+            <span class="nf-cat-desc">Ҳоло: {{ news.video_file.name }} — файл нав бор карда шавад, иваз мешавад.</span>
+            {% else %}
+            <span class="nf-cat-desc">Видео бевосита дар сайт пахш мешавад — саҳифа суст намешавад.</span>
+            {% endif %}
+        </label>
+        <label class="nf-field" style="margin-top:.6rem;">Ё ҳаволаи Instagram Reels
             <input type="url" name="video_url" id="nfVideoUrl" maxlength="300"
                    placeholder="https://www.instagram.com/reel/…"
                    value="{{ form.video_url }}">
-            <span class="nf-cat-desc">Танҳо ҳаволаи расмии Instagram Reels/пост қабул мешавад. Дар саҳифаи хабар ҳавола ҳамчун матн нишон дода намешавад.</span>
+            <span class="nf-cat-desc">Агар файл бор нашавад — танҳо ҳаволаи расмии Instagram Reels/пост қабул мешавад.</span>
         </label>
         <div style="margin-top:.6rem; display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;">
             <button type="button" class="btn" id="nfVideoCheck">Санҷидани видео</button>

@@ -341,6 +341,7 @@ class StudentExemption(models.Model):
     """
     REASON_CHOICES = [
         ('abroad', 'Дар давлати дигар таҳсил мекунад'),
+        ('home', 'Дар хона таҳсил мегирад'),
         ('temporary', 'Муваққатан баҳогузорӣ карда намешавад'),
         ('other', 'Сабаби дигар'),
     ]
@@ -483,6 +484,15 @@ class TeachingGroup(models.Model):
         'TeacherProfile', on_delete=models.SET_NULL, blank=True, null=True,
         related_name='teaching_groups', verbose_name='Омӯзгор')
     is_active = models.BooleanField('Фаъол?', default=True)
+    # Home-education group (таҳсил дар хона): lives alongside the class
+    # subject without switching it into group-scoped mode — the regular
+    # class teacher keeps full journal access and only the home students
+    # are split out. Weekly hours are explicit because a home group never
+    # carries the class's full subject load.
+    is_home = models.BooleanField('Таҳсил дар хона?', default=False)
+    hours_per_week = models.DecimalField(
+        'Соат дар як ҳафта', max_digits=3, decimal_places=1,
+        blank=True, null=True)
 
     class Meta:
         constraints = [
@@ -954,6 +964,8 @@ class News(models.Model):
     video_code = models.CharField(max_length=30, blank=True)
     video_thumb = models.ImageField(
         'Муқоваи видео', upload_to='news/%Y/%m/video/', blank=True)
+    video_file = models.FileField(
+        'Файли видео', upload_to='news/%Y/%m/video_file/', blank=True)
     status = models.CharField(
         'Ҳолат', max_length=20, choices=STATUS_CHOICES,
         default=STATUS_DRAFT, db_index=True)

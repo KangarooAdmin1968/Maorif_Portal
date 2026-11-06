@@ -145,6 +145,32 @@
         </div>
         {% endif %}
     </div>
+    {% if teacher_hours %}
+    <div style="margin-top:.9rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:.6rem; padding:.7rem 1rem;">
+        <h3 style="margin:0 0 .5rem; font-size:.95rem; color:#003366;">Соатҳои ҳафтаинаи шумо</h3>
+        <table style="width:auto; border-collapse:collapse; font-size:.9rem;">
+            <thead>
+                <tr>
+                    <th style="text-align:left; padding:.15rem 1.2rem .15rem 0; color:#6b7280;">Фан</th>
+                    <th style="text-align:left; padding:.15rem 1.2rem .15rem 0; color:#6b7280;">Синф</th>
+                    <th style="text-align:left; padding:.15rem 0; color:#6b7280;">Соат дар як ҳафта</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for th in teacher_hours %}
+                <tr>
+                    <td style="padding:.15rem 1.2rem .15rem 0;">
+                        {{ th.subject }}{% if th.is_home %} — Таҳсил дар хона{% elif th.label %} — {{ th.label }}{% endif %}
+                    </td>
+                    <td style="padding:.15rem 1.2rem .15rem 0;">{{ class_name }}</td>
+                    <td style="padding:.15rem 0;">{{ th.hours }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p style="margin:.5rem 0 0; font-size:.8rem; color:#6b7280;">Агар миқдори соатҳо нодуруст бошад, ба муовини директор муроҷиат кунед.</p>
+    </div>
+    {% endif %}
     <table class="data-table">
         <thead><tr><th>№</th><th>Ному насаб</th><th>Ҷинс</th><th>Амал</th></tr></thead>
         <tbody>
@@ -162,7 +188,7 @@
                 </td>
                 <td>
                     {% if can_manage %}
-                    <button type="button" class="btn btn-primary btn-sm" data-id="{{ s.id }}" data-name="{{ s.full_name }}" data-gender="{{ s.gender|default_if_none:'' }}" data-exempt="{{ s.exemption|yesno:'1,0' }}" data-doc="{{ s.exemption.document|default:'' }}" data-end="{% if s.exemption.end_date %}{{ s.exemption.end_date|date:'Y-m-d' }}{% endif %}" onclick="openEditStudentModal(this)">Таҳрир</button>
+                    <button type="button" class="btn btn-primary btn-sm" data-id="{{ s.id }}" data-name="{{ s.full_name }}" data-gender="{{ s.gender|default_if_none:'' }}" data-exempt="{% if s.exemption.reason == 'abroad' %}1{% else %}0{% endif %}" data-doc="{{ s.exemption.document|default:'' }}" data-end="{% if s.exemption.end_date %}{{ s.exemption.end_date|date:'Y-m-d' }}{% endif %}" onclick="openEditStudentModal(this)">Таҳрир</button>
                     <form action="{% url 'remove_student' school.id class_name %}" method="post" class="inline-form" onsubmit="return confirm('Оё шумо дар ҳақиқат мехоҳед хонандаро хориҷ кунед?') && saveScrollPos();" style="display:inline;">
                         {% csrf_token %}
                         <input type="hidden" name="student_id" value="{{ s.id }}">

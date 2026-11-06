@@ -491,3 +491,86 @@ class NewsTests(GoldenBase):
         n.refresh_from_db()
         self.assertEqual(n.media_type, 'video')
         self.assertEqual(n.video_code, self.VIDEO_CODE)
+
+    # -- local video file ----------------------------------------------------
+
+    def _vid(self, name='v.mp4', size=1024, ctype='video/mp4'):
+        return SimpleUploadedFile(name, b'\x00' * size, content_type=ctype)
+
+    def test_validate_video_file(self):
+        self.assertEqual(news_mod.validate_video_file(
+            self._vid()).name, 'v.mp4')
+        for bad in (self._vid(name='v.exe'), self._vid(name='v.txt'),
+                    self._vid(ctype='text/plain', name='v.bin')):
+            with self.assertRaises(ValueError, msg=bad.name):
+                news_mod.validate_video_file(bad)
+        too_big = SimpleUploadedFile(
+            'big.mp4', b'\x00' * (news_mod.MAX_VIDEO_BYTES + 1),
+            content_type='video/mp4')
+        with self.assertRaises(ValueError):
+            news_mod.validate_video_file(too_big)
+
+    def test_create_video_news_with_local_file(self):
+        self.client.force_login(self.director)
+        data = self._post_data(media_type='video', video_url='')
+        data['video_file'] = self._vid('dars.mp4')
+        resp = self.client.post(reverse('news_create'), data)
+        self.assertRedirects(resp, reverse('news_admin'),
+                             fetch_redirect_response=False)
+        n = News.objects.get()
+        self.assertTrue(n.video_file.name.endswith('.mp4'))
+        self.assertEqual(n.video_code, '')
+        self.assertEqual(n.video_url, '')
+
+    def test_local_video_detail_plays_inline(self):
+        n = self._publish(self._make_news(title='Видеои маҳаллӣ'), day=1)
+        n.media_type = 'video'
+        n.video_file.save('dars.mp4', self._vid('dars.mp4'), save=True)
+        resp = self.client.get(reverse('news_detail', args=[n.pk]))
+        self.assertContains(resp, '<video')
+        self.assertContains(resp, n.video_file.url)
+        # no Instagram embed path for a local file
+        self.assertNotContains(resp, 'data-embed')
+        self.assertNotContains(resp, 'Тамошо дар Instagram')
+
+    def test_local_video_publish_without_photo(self):
+        n = self._make_news()
+        n.media_type = 'video'
+        n.video_file.save('dars.mp4', self._vid('dars.mp4'), save=True)
+        self.client.force_login(self.director)
+        self.client.post(reverse('news_action', args=[n.pk]),
+                         {'action': 'publish'})
+        n.refresh_from_db()
+        self.assertEqual(n.status, News.STATUS_PUBLISHED)
+
+    def test_local_video_in_slider_videos(self):
+        n = self._publish(self._make_news(title='Лок'), day=1)
+        n.media_type = 'video'
+        n.video_file.save('dars.mp4', self._vid('dars.mp4'), save=True)
+        news_mod.invalidate_news_cache()
+        videos = news_mod.slider_videos()
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0]['file'], n.video_file.url)
+        self.assertEqual(videos[0]['embed'], '')
+
+    def test_edit_local_video_keeps_file_when_nothing_posted(self):
+        n = self._make_news()
+        n.media_type = 'video'
+        n.video_file.save('dars.mp4', self._vid('dars.mp4'), save=True)
+        self._add_photo(n)
+        self.client.force_login(self.director)
+        self.client.post(reverse('news_edit', args=[n.pk]),
+                         self._post_data(media_type='video', video_url=''))
+        n.refresh_from_db()
+        self.assertTrue(bool(n.video_file))
+
+    def test_edit_switch_video_to_photo_deletes_file(self):
+        n = self._make_news()
+        n.media_type = 'video'
+        n.video_file.save('dars.mp4', self._vid('dars.mp4'), save=True)
+        self._add_photo(n)
+        self.client.force_login(self.director)
+        self.client.post(reverse('news_edit', args=[n.pk]),
+                         self._post_data(media_type='photo', video_url=''))
+        n.refresh_from_db()
+        self.assertFalse(bool(n.video_file))

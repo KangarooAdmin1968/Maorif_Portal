@@ -44,6 +44,7 @@ from .utils import (
 from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
     weekly_hours, quarter_min_norm, disp_hours,
+    group_weekly_hours, group_min_norm,
 )
 from .tabel import (
     BAND_KEYS, MONTH_NAMES_TJ,
@@ -56,7 +57,7 @@ from .tabel import (
 )
 from .class_report import ClassReportError, build_class_report_workbook
 from .academic_calendar import is_school_day
-from .exemptions import active_exemption_map
+from .exemptions import active_exemption_map, home_student_ids
 from .norm_pace import ATTENDANCE_MARKS, absence_counts
 from .maorif_report import (
     build_maorif_grades_district_workbook, build_maorif_grades_workbook,
@@ -257,7 +258,7 @@ def _journal_status(done, met, total):
 
 
 def _journal_norm_status(class_name, subject, class_subject, students, today,
-                         exempt_ids=None):
+                         exempt_ids=None, group=None):
     """Journal status payload for one School + Class + Subject context.
 
     Counts only ACADEMIC rows (score__isnull=False — the same pool every
@@ -274,9 +275,17 @@ def _journal_norm_status(class_name, subject, class_subject, students, today,
     ``exempt_ids`` removes students from the norm denominator only: an
     exempt student (дар давлати дигар таҳсил мекунад) keeps their marks
     counted in ``done`` but is never required to reach the norm.
+
+    ``group`` (the regular teacher's TeachingGroup on this CS) shifts the
+    norm to that group's own weekly hours — used by таҳсил дар хона
+    journals whose explicit «Соат дар як ҳафта» differs from the class's.
     """
     q_start, q_end = _current_quarter_bounds(today)
-    norm = quarter_min_norm(class_name, subject, class_subject)
+    norm = (
+        group_min_norm(group, class_subject)
+        if group is not None and class_subject is not None
+        else quarter_min_norm(class_name, subject, class_subject)
+    )
     student_ids = [s.id for s in students]
     exempt = set(exempt_ids or ()) & set(student_ids)
     # One quarter-scoped query feeds both pools: scored rows count real
@@ -1612,14 +1621,47 @@ def can_view_grade_journal(user, school, class_name, subject):
 # Privileged roles (superuser/director/principal/zavuch) keep full access.
 # ---------------------------------------------------------------------------
 
+# Home-education (таҳсил дар хона) groups sit beside the class subject
+# without narrowing it: the canonical two-group UI (Гурӯҳи 1/2) switches a
+# ClassSubject into group-scoped mode, a home group does NOT — the regular
+# class teacher keeps full access minus the home students.
+HOME_GROUP_LABEL = 'Таҳсил дар хона'
+
+
+def _canonical_group_q():
+    """Active TeachingGroups that drive group-scoped mode (excludes home)."""
+    return Q(is_active=True, is_home=False)
+
+
 def _teacher_can_access_cs(user, cs):
     """True if a regular teacher may open this ClassSubject's journal.
 
     Grouped CS -> only its active group teachers; ungrouped CS -> the legacy
-    teacher/allocated_teacher assignment. Not for privileged roles.
+    teacher/allocated_teacher assignment. A home-education group grants its
+    own teacher access either way. Not for privileged roles.
+
+    Uses the prefetched ``cs.groups`` cache when callers provide it (the
+    permission sweep in class_detail / can_edit_grade_journal) — a Python
+    scan over a handful of groups instead of two EXISTS queries per CS.
     """
-    if cs.groups.filter(is_active=True).exists():
-        return cs.groups.filter(is_active=True, teacher__user=user).exists()
+    groups = [g for g in cs.groups.all() if g.is_active]
+    if not groups:
+        # Ungrouped CS: no profile lookup needed at all.
+        return cs.teacher_id == user.id or (
+            cs.allocated_teacher_id is not None
+            and cs.allocated_teacher.user_id == user.id
+        )
+    try:
+        profile_id = user.teacherprofile.id
+    except TeacherProfile.DoesNotExist:
+        profile_id = None
+    if profile_id is not None and any(
+            g.is_home and g.teacher_id == profile_id for g in groups):
+        return True
+    canonical = [g for g in groups if not g.is_home]
+    if canonical:
+        return profile_id is not None and any(
+            g.teacher_id == profile_id for g in canonical)
     return cs.teacher_id == user.id or (
         cs.allocated_teacher_id is not None
         and cs.allocated_teacher.user_id == user.id
@@ -1627,10 +1669,17 @@ def _teacher_can_access_cs(user, cs):
 
 
 def teacher_group_for(user, cs):
-    """The regular teacher's active TeachingGroup on this CS, else None."""
+    """The regular teacher's active TeachingGroup on this CS, else None.
+
+    A teacher owning both a canonical and a таҳсил дар хона group on the
+    same CS resolves to the canonical one (is_home=False sorts first) —
+    deterministic, and the class journal keeps its primary meaning.
+    """
     if not _is_regular_teacher(user):
         return None
-    return cs.groups.filter(is_active=True, teacher__user=user).first()
+    return cs.groups.filter(
+        is_active=True, teacher__user=user
+    ).order_by('is_home', 'pk').first()
 
 
 def _class_subject_for(school, class_name, subject):
@@ -1647,6 +1696,17 @@ def _class_subject_for(school, class_name, subject):
 _GROUP_UNSET = object()
 
 
+def _exclude_home_students(students):
+    """Drop students with an active «Дар хона таҳсил мегирад» exemption —
+    they appear only in the home-education journal, never in the class
+    journal roster."""
+    return students.exclude(
+        pk__in=StudentExemption.objects.filter(
+            reason='home', cancelled_at__isnull=True,
+            start_date__lte=timezone.localdate(),
+        ).exclude(end_date__lt=timezone.localdate()).values('student_id'))
+
+
 def visible_students_for(user, cs, group=_GROUP_UNSET, has_groups=None):
     """Students visible to `user` for this ClassSubject, as a list in
     Tajik-alphabet order (sort_students honors the rollback flag).
@@ -1655,41 +1715,64 @@ def visible_students_for(user, cs, group=_GROUP_UNSET, has_groups=None):
     for privileged roles; only own-group members for regular teachers.
     Students without membership in an active group stay invisible to
     teachers until the Admin/Zavuch assigns them in the group UI.
+    Home-education students (истиснои «Дар хона таҳсил мегирад») are
+    excluded from every whole-class branch — they are reached through
+    their own is_home TeachingGroup only.
 
-    `group` (a teacher_group_for result) and `has_groups` (the active-group
-    existence flag) may be passed by a caller that already resolved them
-    for the same (user, cs) pair, avoiding duplicate queries in a request.
+    `group` (a teacher_group_for result) and `has_groups` (the canonical
+    active-group existence flag) may be passed by a caller that already
+    resolved them for the same (user, cs) pair, avoiding duplicate queries
+    in a request.
     """
     students = Student.objects.filter(
         school=cs.school, class_name=cs.class_name
     ).order_by('full_name')
     if not _is_regular_teacher(user):
-        return sort_students(students)
+        return sort_students(_exclude_home_students(students))
     if group is _GROUP_UNSET:
         group = teacher_group_for(user, cs)
     if group is None:
-        # Grouped CS without an own group -> nothing; ungrouped -> legacy.
+        # Canonical-grouped CS without an own group -> nothing; ungrouped
+        # -> legacy class roster minus home-education students.
         if has_groups is None:
-            has_groups = cs.groups.filter(is_active=True).exists()
+            has_groups = cs.groups.filter(_canonical_group_q()).exists()
         if has_groups:
             return []
-        return sort_students(students)
+        return sort_students(_exclude_home_students(students))
     return sort_students(students.filter(
         subject_group_memberships__class_subject=cs,
         subject_group_memberships__group=group,
     ))
 
 
+def _student_is_home(student):
+    """True when the student has an active «Дар хона таҳсил мегирад» status."""
+    today = timezone.localdate()
+    return student.exemptions.filter(
+        reason='home', cancelled_at__isnull=True,
+        start_date__lte=today).exclude(end_date__lt=today).exists()
+
+
 def _teacher_can_write_student(user, student, cs):
     """Server-side membership guard for single-student writes.
 
-    Ungrouped CS -> True (legacy). Grouped CS -> regular teachers may only
-    write students whose membership sits in their own active group.
+    Ungrouped CS -> True (legacy), except a home-education student, whom
+    only the owning home-group teacher may write. Grouped CS -> regular
+    teachers may only write students whose membership sits in their own
+    active group.
     """
     if cs is None or not _is_regular_teacher(user):
         return True
-    if not cs.groups.filter(is_active=True).exists():
-        return True
+    if not cs.groups.filter(_canonical_group_q()).exists():
+        if not _student_is_home(student):
+            return True
+        return SubjectGroupMembership.objects.filter(
+            class_subject=cs,
+            student=student,
+            group__is_active=True,
+            group__is_home=True,
+            group__teacher__user=user,
+        ).exists()
     return SubjectGroupMembership.objects.filter(
         class_subject=cs,
         student=student,
@@ -1701,32 +1784,44 @@ def _teacher_can_write_student(user, student, cs):
 def _teacher_can_use_lesson(user, lesson):
     """Group check on a Lesson for grade/journal use by regular teachers.
 
-    Ungrouped CS -> True; grouped CS -> own-group lessons plus legacy
-    group=NULL lessons (shared class history, readable by all).
+    group=NULL lessons are shared class history — usable by any teacher
+    who reached this journal, EXCEPT a teacher whose only group is
+    таҳсил дар хона (shared class lessons are not theirs). A grouped
+    lesson (canonical or home) is usable only by that group's teacher.
     """
-    cs = lesson.class_subject
     if not _is_regular_teacher(user):
         return True
-    if not cs.groups.filter(is_active=True).exists():
-        return True
     if lesson.group_id is None:
-        return True
-    return cs.groups.filter(
+        own = teacher_group_for(user, lesson.class_subject)
+        return own is None or not own.is_home
+    return lesson.class_subject.groups.filter(
         is_active=True, teacher__user=user, pk=lesson.group_id
     ).exists()
 
 
 def _teacher_can_edit_lesson(user, lesson):
     """Stricter variant: teachers may edit/delete only own-group lessons;
-    legacy group=NULL lessons stay read-only for them (Admin/Zavuch manage)."""
+    legacy group=NULL lessons stay read-only for them (Admin/Zavuch manage).
+
+    On a CS carrying only a home-education group the class teacher keeps
+    full legacy edit rights, while a teacher owning ONLY the home group
+    may not touch shared class lessons.
+    """
     cs = lesson.class_subject
     if not _is_regular_teacher(user):
         return True
-    if not cs.groups.filter(is_active=True).exists():
-        return True
-    return lesson.group_id is not None and cs.groups.filter(
-        is_active=True, teacher__user=user, pk=lesson.group_id
-    ).exists()
+    if lesson.group_id is not None:
+        return cs.groups.filter(
+            is_active=True, teacher__user=user, pk=lesson.group_id
+        ).exists()
+    if cs.groups.filter(_canonical_group_q()).exists():
+        return False
+    if cs.groups.filter(is_active=True, teacher__user=user).exists() and not (
+            cs.teacher_id == user.id
+            or (cs.allocated_teacher_id is not None
+                and cs.allocated_teacher.user_id == user.id)):
+        return False
+    return True
 
 
 def _visible_lessons_q(user, cs, group=_GROUP_UNSET):
@@ -1739,6 +1834,10 @@ def _visible_lessons_q(user, cs, group=_GROUP_UNSET):
         group = teacher_group_for(user, cs)
     if group is None:
         return Q(group__isnull=True)
+    if group.is_home:
+        # The home journal sees only its own lessons — shared class
+        # lessons never belong to home-education teaching.
+        return Q(group=group)
     return Q(group=group) | Q(group__isnull=True)
 
 
@@ -1749,6 +1848,8 @@ def _visible_assessments_q(user, cs, group=_GROUP_UNSET):
         group = teacher_group_for(user, cs)
     if group is None:
         return Q(lesson__isnull=True)
+    if group.is_home:
+        return Q(lesson__group=group)
     return Q(lesson__isnull=True) | Q(lesson__group=group)
 
 
@@ -3137,6 +3238,7 @@ def class_detail(request, school_id, class_name):
     ).order_by('subject')
     # Regular teachers only see their own assigned subjects in the journal
     # picker — for grouped subjects that means their TeachingGroup.
+    teacher_hours = []
     if _is_regular_teacher(request.user):
         subjects = [
             cs for cs in subjects.prefetch_related('groups', 'allocated_teacher')
@@ -3145,6 +3247,20 @@ def class_detail(request, school_id, class_name):
         for cs in subjects:
             own_group = teacher_group_for(request.user, cs)
             cs.group_label = own_group.label if own_group else None
+            # «Соатҳои ҳафтаинаи шумо» — the hours the teacher is actually
+            # paid for. For a home-education group that is its own explicit
+            # value; otherwise the class-subject weekly hours (confirmed in
+            # «Тақсимоти дарсҳо» or the national curriculum).
+            if own_group is not None and own_group.is_home:
+                hours_val = group_weekly_hours(own_group, cs)
+            else:
+                hours_val = weekly_hours(class_name, cs.subject, cs)
+            teacher_hours.append({
+                'subject': cs.subject,
+                'label': own_group.label if own_group else None,
+                'is_home': bool(own_group is not None and own_group.is_home),
+                'hours': disp_hours(hours_val),
+            })
     non_graded = is_non_graded(class_name)
     student_classes = {
         c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()
@@ -3174,6 +3290,7 @@ def class_detail(request, school_id, class_name):
         'all_classes': all_classes,
         'empty_targets': empty_targets,
         'archived_students': archived_students,
+        'teacher_hours': teacher_hours,
     })
 
 
@@ -3220,8 +3337,8 @@ def sticker_entry(request, school_id, class_name):
             return redirect('class_list', school_id=user_school.id) if user_school else redirect('dashboard')
         return HttpResponse('Дастрасӣ манъ аст.', status=403)
 
-    students = sort_students(
-        Student.objects.filter(school=school, class_name=class_name))
+    students = sort_students(_exclude_home_students(
+        Student.objects.filter(school=school, class_name=class_name)))
 
     date_str = request.GET.get('date', '')
     try:
@@ -3478,6 +3595,11 @@ def edit_student(request, school_id, class_name):
     # завуч/директор in this same edit dialog (no approval workflow).
     exempt_on = request.POST.get('exempt_abroad') == 'on'
     exemption = active_exemption_map([student.id]).get(student.id)
+    # This dialog manages the 'abroad' status only — a «Дар хона таҳсил
+    # мегирад» exemption lives under the таҳсил дар хона tab and must
+    # never be toggled or cancelled here.
+    if exemption is not None and exemption.reason != 'abroad':
+        exemption = None
     if exempt_on:
         document = request.POST.get('exempt_document', '').strip()[:255]
         end_raw = request.POST.get('exempt_end_date', '').strip()
@@ -3623,12 +3745,23 @@ def grade_entry(request, school_id, class_name, subject):
     if class_subject is not None:
         students = visible_students_for(request.user, class_subject)
     else:
-        students = sort_students(Student.objects.filter(
-            school=school, class_name=class_name))
+        students = sort_students(_exclude_home_students(
+            Student.objects.filter(school=school, class_name=class_name)))
     students = list(students)
     # «Дар давлати дигар таҳсил мекунад» exemptions: blue indicators in the
     # journal + removal from the norm denominator (one grouped query).
     exemption_map = active_exemption_map(s.id for s in students)
+    # In the таҳсил дар хона journal the «Дар хона таҳсил мегирад» status is
+    # not an exemption — these students ARE the journal's roster and count
+    # toward its norm like any ordinary student.
+    journal_group = (
+        teacher_group_for(request.user, class_subject)
+        if class_subject is not None else None
+    )
+    if journal_group is not None and journal_group.is_home:
+        exemption_map = {
+            sid: ex for sid, ex in exemption_map.items()
+            if ex.reason != 'home'}
     for s in students:
         s.exemption = exemption_map.get(s.id)
 
@@ -3973,10 +4106,19 @@ def grade_entry(request, school_id, class_name, subject):
         assessments_qs = Assessment.objects.filter(
             class_subject=class_subject, category='control'
         )
-        if _is_regular_teacher(request.user) and class_subject.groups.filter(is_active=True).exists():
+        if _is_regular_teacher(request.user) and class_subject.groups.filter(
+                _canonical_group_q()).exists():
             assessments_qs = assessments_qs.filter(
                 _visible_assessments_q(request.user, class_subject)
             )
+        elif _is_regular_teacher(request.user):
+            # A таҳсил дар хона group alone does not group-scope the class
+            # journal — but the home teacher's own assessments stay scoped
+            # to their home journal.
+            own = teacher_group_for(request.user, class_subject)
+            if own is not None and own.is_home:
+                assessments_qs = assessments_qs.filter(
+                    _visible_assessments_q(request.user, class_subject))
         for a in assessments_qs.order_by('quarter', 'number', 'date', 'id'):
             control_assessments.append({
                 'id': a.id,
@@ -4094,14 +4236,17 @@ def grade_entry(request, school_id, class_name, subject):
                     )
 
     today = timezone.localdate()
+    # The teacher's own group (таҳсил дар хона гуруҳи included) shifts the
+    # journal norm to that group's weekly hours when they differ —
+    # `journal_group` was resolved above with the student roster.
     journal = _journal_norm_status(
         class_name, subject, class_subject, students,
-        today, exempt_ids=set(exemption_map))
+        today, exempt_ids=set(exemption_map), group=journal_group)
     from .norm_pace import norm_pace_context
     pace = norm_pace_context(
         class_name, subject, class_subject, students,
         today, exemption_map, journal['per_student'],
-        journal['absences'])
+        journal['absences'], group=journal_group)
     for s in students:
         s.pace = pace['by_id'].get(s.id)
 
@@ -4124,10 +4269,7 @@ def grade_entry(request, school_id, class_name, subject):
         'locked_quarters': locked_quarters,
         'daily_quarter_locked': daily_quarter_locked,
         'class_subject_id': class_subject.id if class_subject else None,
-        'teacher_group': (
-            teacher_group_for(request.user, class_subject)
-            if class_subject else None
-        ),
+        'teacher_group': journal_group,
         'lessons': lessons_payload,
         'selected_lesson': selected_lesson,
         'selected_lesson_has_data': next(
@@ -4200,19 +4342,24 @@ def monthly_journal(request, school_id, class_name, subject):
     has_groups = False
     teacher_group = None
     if class_subject is not None and is_regular:
-        has_groups = class_subject.groups.filter(is_active=True).exists()
-        if has_groups:
-            teacher_group = teacher_group_for(request.user, class_subject)
+        has_groups = class_subject.groups.filter(_canonical_group_q()).exists()
+        teacher_group = teacher_group_for(request.user, class_subject)
     if class_subject is not None:
         students = list(visible_students_for(
             request.user, class_subject,
             group=teacher_group, has_groups=has_groups))
     else:
-        students = sort_students(Student.objects.filter(
-            school=school, class_name=class_name))
+        students = sort_students(_exclude_home_students(
+            Student.objects.filter(school=school, class_name=class_name)))
     # «Дар давлати дигар таҳсил мекунад» exemptions: blue indicators in
     # the student column + removal from the norm denominator (one query).
     exemption_map = active_exemption_map(s.id for s in students)
+    # In the таҳсил дар хона journal the home status is not an exemption —
+    # these students ARE this journal's roster.
+    if teacher_group is not None and teacher_group.is_home:
+        exemption_map = {
+            sid: ex for sid, ex in exemption_map.items()
+            if ex.reason != 'home'}
     for s in students:
         s.exemption = exemption_map.get(s.id)
 
@@ -4228,7 +4375,8 @@ def monthly_journal(request, school_id, class_name, subject):
 
     # On grouped subjects a regular teacher sees only their own group's
     # lesson columns plus legacy group=NULL slots.
-    grouped = class_subject is not None and is_regular and has_groups
+    grouped = class_subject is not None and is_regular and (
+        has_groups or teacher_group is not None)
 
     lessons_by_date = defaultdict(list)
     if class_subject is not None:
@@ -4240,6 +4388,10 @@ def monthly_journal(request, school_id, class_name, subject):
             lesson_qs = lesson_qs.filter(
                 _visible_lessons_q(request.user, class_subject,
                                    group=teacher_group))
+        elif is_regular:
+            # No own group: home-education lessons belong to the home
+            # journal, never to the regular class journal.
+            lesson_qs = lesson_qs.exclude(group__is_home=True)
         for l in lesson_qs.order_by('date', 'lesson_number'):
             lessons_by_date[l.date].append(l)
 
@@ -4406,12 +4558,12 @@ def monthly_journal(request, school_id, class_name, subject):
 
     journal = _journal_norm_status(
         class_name, subject, class_subject, students,
-        today, exempt_ids=set(exemption_map))
+        today, exempt_ids=set(exemption_map), group=teacher_group)
     from .norm_pace import norm_pace_context
     pace = norm_pace_context(
         class_name, subject, class_subject, students,
         today, exemption_map, journal['per_student'],
-        journal['absences'])
+        journal['absences'], group=teacher_group)
     for s in students:
         s.pace = pace['by_id'].get(s.id)
 
@@ -4430,6 +4582,7 @@ def monthly_journal(request, school_id, class_name, subject):
         'month_label': month_start.strftime('%m.%Y'),
         'can_edit': can_edit,
         'class_subject_id': class_subject.id if class_subject else '',
+        'teacher_group': teacher_group,
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — distinct metrics, one aggregate query.
         'journal': journal,
@@ -5789,8 +5942,11 @@ def assessment_save(request):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
         is_regular = _is_regular_teacher(request.user)
-        cs_grouped = cs.groups.filter(is_active=True).exists()
         own_group = teacher_group_for(request.user, cs) if is_regular else None
+        # A таҳсил дар хона group does not switch the class into group
+        # mode — but a teacher who owns ONLY the home group is scoped to it.
+        cs_grouped = cs.groups.filter(_canonical_group_q()).exists() or (
+            own_group is not None and own_group.is_home)
 
         try:
             date = datetime.date.fromisoformat(date_str) if date_str else (
@@ -5956,9 +6112,11 @@ def assessment_delete(request):
         cs = assessment.class_subject
         if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
-        if _is_regular_teacher(request.user) and cs.groups.filter(is_active=True).exists():
+        if _is_regular_teacher(request.user):
             own_group = teacher_group_for(request.user, cs)
-            if (own_group is None or assessment.lesson_id is None
+            cs_grouped = cs.groups.filter(_canonical_group_q()).exists() or (
+                own_group is not None and own_group.is_home)
+            if cs_grouped and (own_group is None or assessment.lesson_id is None
                     or assessment.lesson.group_id != own_group.id):
                 return JsonResponse({'success': False, 'message': 'Санҷиш ба гурӯҳи шумо тааллуқ надорад.'}, status=200)
         if is_quarter_locked(
@@ -6050,8 +6208,11 @@ def assessment_toggle(request):
                 return JsonResponse({'success': False, 'message': 'Дарс ба ин сана ё фан тааллуқ надорад.'}, status=200)
 
         is_regular = _is_regular_teacher(request.user)
-        cs_grouped = cs.groups.filter(is_active=True).exists()
         own_group = teacher_group_for(request.user, cs) if is_regular else None
+        # таҳсил дар хона group alone does not group-scope the CS, but a
+        # teacher owning ONLY the home group works inside it.
+        cs_grouped = cs.groups.filter(_canonical_group_q()).exists() or (
+            own_group is not None and own_group.is_home)
         if cs_grouped and is_regular and (
                 own_group is None or lesson is None
                 or lesson.group_id != own_group.id):
@@ -6201,11 +6362,15 @@ def lesson_save(request):
         # teacher's new lessons always belong to their own active group —
         # a client-supplied group_id is never trusted. Admin/Zavuch may
         # explicitly target a group, or leave the lesson shared (NULL).
+        # A таҳсил дар хона group alone does NOT force group scoping: the
+        # class teacher keeps creating shared (group=NULL) lessons, while
+        # a regular teacher who owns ONLY the home group still gets it
+        # attached — their journal is the home journal.
         group = None
         if cs.groups.filter(is_active=True).exists():
             if _is_regular_teacher(request.user):
                 group = teacher_group_for(request.user, cs)
-                if group is None:
+                if group is None and cs.groups.filter(_canonical_group_q()).exists():
                     return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
             else:
                 gid = request.POST.get('group_id', '').strip()
@@ -7214,8 +7379,10 @@ def class_groups(request, cs_id):
         return redirect('dashboard')
 
     school = cs.school
-    students = sort_students(
-        Student.objects.filter(school=school, class_name=cs.class_name))
+    # Home-education students are managed in the «Таҳсил дар хона» tab —
+    # they are never part of the two-group split.
+    students = sort_students(_exclude_home_students(
+        Student.objects.filter(school=school, class_name=cs.class_name)))
     students_json = [
         {'id': s.id, 'name': s.full_name, 'gender': s.gender or ''}
         for s in students
@@ -7224,7 +7391,8 @@ def class_groups(request, cs_id):
         school=school, is_archived=False).order_by('full_name')
 
     groups = sorted(
-        (g for g in cs.groups.filter(is_active=True).prefetch_related('memberships')),
+        (g for g in cs.groups.filter(_canonical_group_q())
+            .prefetch_related('memberships')),
         key=lambda g: GROUP_LABELS.index(g.label) if g.label in GROUP_LABELS else len(GROUP_LABELS),
     )
     existing_json = {
@@ -7306,9 +7474,12 @@ def save_class_groups(request, cs_id):
             return redirect('class_groups', cs_id=cs.id)
         teachers.append(tp)
 
-    student_ids = set(Student.objects.filter(
-        school=school, class_name=cs.class_name
-    ).values_list('id', flat=True))
+    student_ids = set(
+        Student.objects.filter(school=school, class_name=cs.class_name)
+        .values_list('id', flat=True)
+    ) - home_student_ids(
+        Student.objects.filter(school=school, class_name=cs.class_name)
+        .values_list('id', flat=True))
     errors = validate_assignment(student_ids, member_lists[0], member_lists[1])
     if errors:
         messages.error(
@@ -7318,10 +7489,10 @@ def save_class_groups(request, cs_id):
         )
         return redirect('class_groups', cs_id=cs.id)
 
-    # This UI manages exactly the two canonical labels. If unexpected groups
-    # exist (created outside this flow), refuse rather than orphaning their
-    # memberships silently.
-    if cs.groups.exclude(label__in=GROUP_LABELS).exists():
+    # This UI manages exactly the two canonical labels. If unexpected
+    # non-home groups exist (created outside this flow), refuse rather
+    # than orphaning their memberships silently.
+    if cs.groups.filter(is_home=False).exclude(label__in=GROUP_LABELS).exists():
         messages.error(
             request,
             'Ин фан гурӯҳҳои дигар дорад, ки аз ин саҳифа идора намешаванд. Сабт қатъ шуд.'
@@ -7337,7 +7508,10 @@ def save_class_groups(request, cs_id):
                 defaults={'teacher': teachers[i], 'is_active': True},
             )
             group_objs.append(group)
-        SubjectGroupMembership.objects.filter(class_subject=cs).delete()
+        # Only canonical-group memberships are rebuilt here — the
+        # home-education group and its members stay untouched.
+        SubjectGroupMembership.objects.filter(
+            class_subject=cs, group__is_home=False).delete()
         SubjectGroupMembership.objects.bulk_create([
             SubjectGroupMembership(
                 class_subject=cs, group=group_objs[i], student_id=sid)
@@ -7361,7 +7535,9 @@ def delete_class_groups(request, cs_id):
         messages.error(request, 'Дастрасӣ маҳдуд аст.')
         return redirect('dashboard')
 
-    groups = list(cs.groups.all())
+    # Only the canonical two-group split is deleted here — home-education
+    # groups belong to the «Таҳсил дар хона» tab and survive.
+    groups = list(cs.groups.filter(is_home=False))
     if not groups:
         messages.info(request, 'Барои ин фан гурӯҳе вуҷуд надорад.')
         return _allocation_redirect(request, cs)
@@ -7382,6 +7558,298 @@ def delete_class_groups(request, cs_id):
         f'Гурӯҳҳои «{cs.subject}» ({cs.class_name}) нест карда шуданд.'
     )
     return _allocation_redirect(request, cs)
+
+
+# ---------------------------------------------------------------------------
+# Таҳсил дар хона — home-education assignments (Zavuch/Admin)
+#
+# A home-education student stays formally attached to their class but is
+# taught through an is_home TeachingGroup by a dedicated teacher: the
+# student never appears in the class journal (the «Дар хона таҳсил
+# мегирад» exemption hides them from rosters and norms), the home teacher
+# keeps the «Журнали таҳсил дар хона» via the standard group scoping, and
+# the group's explicit «Соат дар як ҳафта» lands in workload/tabel as its
+# own «ФАН — Таҳсил дар хона» line.
+# ---------------------------------------------------------------------------
+
+def _home_education_school(request):
+    """School context: a zavuch's own school; the superuser may inspect or
+    manage any academic school through ?school_id= / POST school_id."""
+    school = get_user_school(request.user)
+    if request.user.is_superuser:
+        school_id = request.GET.get('school_id') or request.POST.get('school_id')
+        if school_id:
+            try:
+                school = School.objects.get(pk=int(school_id))
+            except (ValueError, School.DoesNotExist):
+                school = None
+    return school
+
+
+def _home_education_allowed(user, school):
+    """Zavuch of this school or superuser — same gate as group management."""
+    if not user.is_authenticated or school is None:
+        return False
+    return _can_manage_school(user, school)
+
+
+@login_required
+def home_education(request):
+    """«Таҳсил дар хона» registry page for one school (Admin/Zavuch)."""
+    school = _home_education_school(request)
+    if not _home_education_allowed(request.user, school):
+        messages.error(request, 'Дастрасӣ маҳдуд аст. Таҳсил дар хонаро танҳо маъмурият ё завучи ҳамон муассиса идора мекунад.')
+        return redirect('dashboard')
+
+    groups = (
+        TeachingGroup.objects
+        .filter(is_active=True, is_home=True,
+                class_subject__school=school,
+                class_subject__is_active=True)
+        .select_related('class_subject', 'teacher')
+        .prefetch_related('memberships__student')
+        .order_by('class_subject__class_name', 'class_subject__subject', 'label'))
+    rows = []
+    for g in groups:
+        members = sorted(
+            g.memberships.all(),
+            key=lambda m: m.student.full_name)
+        rows.append({
+            'group': g,
+            'subject': g.class_subject.subject,
+            'class_name': g.class_subject.class_name,
+            'teacher': g.teacher,
+            'hours': disp_hours(g.hours_per_week),
+            'members': members,
+        })
+
+    # Class list: existing classes from students and allocations.
+    class_names = sorted(
+        set(Student.objects.filter(school=school)
+            .values_list('class_name', flat=True))
+        | set(ClassSubject.objects.filter(school=school, is_active=True)
+              .values_list('class_name', flat=True)),
+        key=lambda c: (class_numeric_part(c) or 0, c))
+    # student_id -> {name, class_name} and class_name -> subjects maps
+    # drive the dependent selects in the template.
+    # JSON rendered into inline <script> — escape '<' so a student name
+    # can never break out of the script tag.
+    students_json = json.dumps([
+        {'id': s.id, 'name': s.full_name, 'class_name': s.class_name}
+        for s in Student.objects.filter(school=school).order_by('class_name', 'full_name')
+    ], ensure_ascii=False).replace('<', '\\u003c')
+    subjects_map = {}
+    for cs in ClassSubject.objects.filter(school=school, is_active=True):
+        subjects_map.setdefault(cs.class_name, [])
+        if cs.subject not in subjects_map[cs.class_name]:
+            subjects_map[cs.class_name].append(cs.subject)
+    subjects_json = json.dumps(
+        subjects_map, ensure_ascii=False).replace('<', '\\u003c')
+    teachers = TeacherProfile.objects.filter(
+        school=school, is_archived=False).order_by('full_name')
+    all_schools = ([s for s in School.objects.all().order_by('name')
+                    if is_academic_school(s)]
+                   if request.user.is_superuser else None)
+
+    return render(request, 'portal/home_education.html', {
+        'school': school,
+        'rows': rows,
+        'class_names': class_names,
+        'students_json': students_json,
+        'subjects_json': subjects_json,
+        'teachers': teachers,
+        'all_schools': all_schools,
+        'is_superuser': request.user.is_superuser,
+        'max_weekly_hours': MAX_WEEKLY_HOURS,
+        'home_label': HOME_GROUP_LABEL,
+    })
+
+
+@login_required
+@require_POST
+def home_education_add(request):
+    """Create one home-education assignment: (student, subject) -> a
+    is_home TeachingGroup of this class's ClassSubject + the student's
+    «Дар хона таҳсил мегирад» exemption."""
+    school = _home_education_school(request)
+    if not _home_education_allowed(request.user, school):
+        messages.error(request, 'Дастрасӣ маҳдуд аст.')
+        return redirect('dashboard')
+
+    redirect_url = reverse('home_education')
+    if request.user.is_superuser and school:
+        redirect_url += f'?school_id={school.id}'
+
+    class_name = _validate_class_name(request.POST.get('class_name'))
+    subject = normalize_subject(request.POST.get('subject', ''))
+    document = request.POST.get('document', '').strip()[:255]
+
+    try:
+        teacher_id = int(request.POST.get('teacher_id', ''))
+    except (ValueError, TypeError):
+        teacher_id = None
+    teacher = TeacherProfile.objects.filter(
+        pk=teacher_id, school=school, is_archived=False).first()
+
+    raw_hours = request.POST.get('hours', '').strip()
+    try:
+        hours = Decimal(raw_hours.replace(',', '.'))
+    except InvalidOperation:
+        hours = None
+    hours_ok = (
+        hours is not None
+        and Decimal('0.5') <= hours <= MAX_WEEKLY_HOURS
+        and hours % Decimal('0.5') == 0)
+
+    errors = []
+    if class_name is None:
+        errors.append('Синф нодуруст интихоб шудааст.')
+    if not subject:
+        errors.append('Фан нодуруст интихоб шудааст.')
+    if teacher is None:
+        errors.append('Омӯзгор нодуруст интихоб шудааст.')
+    if not hours_ok:
+        errors.append(f'Соатҳо нодуруст: аз 0,5 то {MAX_WEEKLY_HOURS}, қадами 0,5.')
+
+    # The student: an existing roster pick or a free-text «Ному насаб»
+    # creating a new record formally attached to this class.
+    student = None
+    student_id = request.POST.get('student_id', '').strip()
+    new_name = ' '.join(request.POST.get('new_name', '').split())[:255]
+    if student_id:
+        student = Student.objects.filter(
+            pk=student_id, school=school).first()
+        if student is None:
+            errors.append('Хонанда ёфт нашуд.')
+        elif student.class_name != class_name:
+            errors.append('Хонанда ба интихобшудаи синф тааллуқ надорад.')
+    elif new_name:
+        student = Student.all_objects.filter(
+            school=school, class_name=class_name, full_name=new_name).first()
+        if student is not None and student.is_archived:
+            errors.append('Ин хонанда бойгонӣ шудааст — аввал аз бойгонӣ баргардонед.')
+            student = None
+    else:
+        errors.append('Хонанда интихоб кунед ё номи навро ёзед.')
+
+    if errors:
+        for e in errors:
+            messages.error(request, e)
+        return redirect(redirect_url)
+
+    cs = _class_subject_for(school, class_name, subject)
+    if cs is None:
+        cs = ClassSubject.objects.create(
+            school=school, class_name=class_name, subject=subject,
+            is_default=False, is_active=True)
+    # One membership per (class, subject) is DB-enforced — check both
+    # sides before the insert: a canonical group, or another home group
+    # (a different teacher for the same subject).
+    if student is not None:
+        existing = SubjectGroupMembership.objects.filter(
+            class_subject=cs, student=student).select_related('group').first()
+        if existing is not None and not existing.group.is_home:
+            messages.error(
+                request,
+                f'{student.full_name} аллакай дар гурӯҳи оддии «{subject}» аст — '
+                'аввал уро аз он гурӯҳ хориҷ кунед.')
+            return redirect(redirect_url)
+        if existing is not None and existing.group.is_home:
+            other = existing.group.teacher
+            messages.warning(
+                request,
+                f'{student.full_name} аллакай таҳсил дар хонада сабт шудааст '
+                f'({other.full_name if other else "—"}).')
+            return redirect(redirect_url)
+
+    with transaction.atomic():
+        if student is None:
+            student = Student.objects.create(
+                school=school, class_name=class_name, full_name=new_name)
+        group = cs.groups.filter(
+            is_active=True, is_home=True, teacher=teacher).first()
+        if group is None:
+            label = HOME_GROUP_LABEL
+            i = 2
+            while cs.groups.filter(label=label).exists():
+                label = f'{HOME_GROUP_LABEL} {i}'
+                i += 1
+            group = TeachingGroup.objects.create(
+                class_subject=cs, label=label, teacher=teacher,
+                is_home=True, hours_per_week=hours)
+        elif group.hours_per_week != hours:
+            group.hours_per_week = hours
+            group.save(update_fields=['hours_per_week'])
+        membership, created = SubjectGroupMembership.objects.get_or_create(
+            class_subject=cs, group=group, student=student)
+        if not created:
+            messages.warning(
+                request,
+                f'{student.full_name} аллакай дар ин гурӯҳи таҳсил дар хона аст.')
+            return redirect(redirect_url)
+        # One active «Дар хона таҳсил мегирад» exemption per student —
+        # created once, it hides them from the class journal and norms
+        # while their marks keep flowing to the class's quarter documents.
+        today = timezone.localdate()
+        if not student.exemptions.filter(
+                reason='home', cancelled_at__isnull=True,
+                start_date__lte=today).exclude(end_date__lt=today).exists():
+            StudentExemption.objects.create(
+                student=student, reason='home', document=document,
+                start_date=today, created_by=request.user)
+
+    messages.success(
+        request,
+        f'{student.full_name} — {subject} — таҳсил дар хона сабт шуд '
+        f'({teacher.full_name}, {disp_hours(hours)} соат дар як ҳафта).')
+    return redirect(redirect_url)
+
+
+@login_required
+@require_POST
+def home_education_remove(request):
+    """Remove one student from a home group; when no home memberships
+    remain anywhere, their «Дар хона таҳсил мегирад» exemption ends."""
+    school = _home_education_school(request)
+    if not _home_education_allowed(request.user, school):
+        messages.error(request, 'Дастрасӣ маҳдуд аст.')
+        return redirect('dashboard')
+
+    redirect_url = reverse('home_education')
+    if request.user.is_superuser and school:
+        redirect_url += f'?school_id={school.id}'
+
+    try:
+        membership = SubjectGroupMembership.objects.select_related(
+            'group', 'student', 'class_subject').get(
+            pk=int(request.POST.get('membership_id', '')),
+            class_subject__school=school,
+            group__is_home=True)
+    except (ValueError, TypeError, SubjectGroupMembership.DoesNotExist):
+        messages.error(request, 'Сабт ёфт нашуд.')
+        return redirect(redirect_url)
+
+    student = membership.student
+    group = membership.group
+    with transaction.atomic():
+        membership.delete()
+        if not group.memberships.exists():
+            group.is_active = False
+            group.save(update_fields=['is_active'])
+        still_home = SubjectGroupMembership.objects.filter(
+            student=student,
+            group__is_active=True, group__is_home=True).exists()
+        if not still_home:
+            for ex in student.exemptions.filter(
+                    reason='home', cancelled_at__isnull=True):
+                ex.cancelled_at = timezone.now()
+                ex.cancelled_by = request.user
+                ex.save(update_fields=['cancelled_at', 'cancelled_by'])
+
+    messages.success(
+        request,
+        f'{student.full_name} аз таҳсил дар хона хориҷ карда шуд.')
+    return redirect(redirect_url)
 
 
 @login_required
@@ -7782,8 +8250,16 @@ def _compute_school_readiness_payload(schools, gpa_map):
     groups_by_cs = defaultdict(list)
     for g in all_groups:
         groups_by_cs[g.class_subject_id].append(g)
+    # Staffing uses canonical groups only: a CS carrying only a
+    # home-education group is still staffed through its legacy fields —
+    # the home group supplements, it never replaces the class teacher.
+    canonical_by_cs = defaultdict(list)
+    for g in all_groups:
+        if not g.is_home:
+            canonical_by_cs[g.class_subject_id].append(g)
     unstaffed_grouped_ids = {
-        g.class_subject_id for g in all_groups if g.teacher_id is None
+        g.class_subject_id for g in all_groups
+        if not g.is_home and g.teacher_id is None
     }
 
     totals = dict(
@@ -7795,13 +8271,13 @@ def _compute_school_readiness_payload(schools, gpa_map):
     # fields alone do not staff a grouped subject.
     assigned = dict(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
-        .exclude(pk__in=set(groups_by_cs))
+        .exclude(pk__in=set(canonical_by_cs))
         .filter(Q(teacher__isnull=False) | Q(allocated_teacher__isnull=False))
         .values_list('school_id').annotate(n=Count('id'))
     )
     assigned_grouped = defaultdict(int)
     grouped_cs_school = {g.class_subject_id: g.class_subject.school_id for g in all_groups}
-    for cs_id in set(groups_by_cs) - unstaffed_grouped_ids:
+    for cs_id in set(canonical_by_cs) - unstaffed_grouped_ids:
         assigned_grouped[grouped_cs_school[cs_id]] += 1
 
     zavuch_users = {
@@ -7861,6 +8337,14 @@ def _compute_school_readiness_payload(schools, gpa_map):
             class_name__regex=NON_GRADED_RE).values(
             'school_id', 'class_name', 'id'):
         class_student_ids[(r['school_id'], r['class_name'])].add(r['id'])
+    # «Дар хона таҳсил мегирад» students are taught in the separate home
+    # journal — they leave every class-level norm denominator and grade
+    # count below (their own marks still land in the official quarter
+    # documents of their formal class).
+    home_ids = home_student_ids(
+        sid for ids in class_student_ids.values() for sid in ids)
+    for key in list(class_student_ids):
+        class_student_ids[key] -= home_ids
     class_student_counts = {
         key: len(ids) for key, ids in class_student_ids.items()
     }
@@ -7905,12 +8389,15 @@ def _compute_school_readiness_payload(schools, gpa_map):
             'lesson__class_subject_id', 'lesson__group_id',
             'lesson__group__is_active').iterator()):
         key = (r['student__school_id'], r['student__class_name'], r['subject'])
-        pair_grade_counts[key] += 1
         scored = r['score'] is not None
-        if scored:
-            pair_scored_counts[key] += 1
-            sid = r['student_id']
-            pair_student_scored[key][sid] = pair_student_scored[key].get(sid, 0) + 1
+        if r['student_id'] not in home_ids:
+            # Home-education marks never enter the class-level norm totals —
+            # they are attributed to the home group via lesson.group below.
+            pair_grade_counts[key] += 1
+            if scored:
+                pair_scored_counts[key] += 1
+                sid = r['student_id']
+                pair_student_scored[key][sid] = pair_student_scored[key].get(sid, 0) + 1
         if r['lesson__group__is_active']:
             # Concrete teaching event: the grade belongs to the lesson's
             # own group regardless of current membership.
@@ -7960,7 +8447,7 @@ def _compute_school_readiness_payload(schools, gpa_map):
             if min_norm:
                 expected_min += min_norm * n_students
                 norm_grades_done += pair_scored_counts.get((school.id, cs.class_name, cs.subject), 0)
-            cs_groups = groups_by_cs.get(cs.id)
+            cs_groups = canonical_by_cs.get(cs.id)
             if cs_groups:
                 # Grouped CS: one workload entry per actual group teacher.
                 # CS-level fields never attribute a grouped subject.
@@ -7971,6 +8458,11 @@ def _compute_school_readiness_payload(schools, gpa_map):
                 profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
                 if profile:
                     teacher_pairs[profile].append((cs, None))
+            # Home-education groups always attribute separately — the class
+            # teacher keeps the regular load above either way.
+            for g in groups_by_cs.get(cs.id, ()):
+                if g.is_home and g.teacher_id:
+                    teacher_pairs[g.teacher].append((cs, g))
 
         teachers = []
         for profile, pairs in teacher_pairs.items():
@@ -7999,10 +8491,14 @@ def _compute_school_readiness_payload(schools, gpa_map):
                         (school.id, cs.class_name, cs.subject), {})
                     entered = pair_grade_counts.get(
                         (school.id, cs.class_name, cs.subject), 0)
-                hours += weekly_hours(cs.class_name, cs.subject, cs)
+                hours += (
+                    group_weekly_hours(group, cs) if group is not None
+                    else weekly_hours(cs.class_name, cs.subject, cs))
                 grades_done += entered
                 # Exclude un-graded subjects (norm == 0) from required minimum.
-                min_norm = quarter_min_norm(cs.class_name, cs.subject, cs)
+                min_norm = (
+                    group_min_norm(group, cs) if group is not None
+                    else quarter_min_norm(cs.class_name, cs.subject, cs))
                 if min_norm:
                     # Academic rows only: attendance-only marks, conduct-only
                     # and sticker-only rows never satisfy the grading norm.
@@ -8110,28 +8606,38 @@ def school_documents(request):
             if cs.hours_per_week is not None
         }
 
-        # teacher -> {display_subject: [(base_subject, class_name)]}
+        # teacher -> {display_subject: [(base_subject, class_name, group)]}
         grouped = {}
         for cs in class_subjects:
             cs_groups = [g for g in cs.groups.all() if g.is_active]
-            if cs_groups:
+            canonical_groups = [g for g in cs_groups if not g.is_home]
+            home_groups = [g for g in cs_groups if g.is_home]
+            if canonical_groups:
                 # Grouped CS: one workload item per actual group teacher,
                 # labeled "ФАН — Гурӯҳи N". Each group teacher is credited
                 # with the subject's full weekly load for their group.
-                for g in cs_groups:
+                for g in canonical_groups:
                     if not g.teacher_id:
                         continue
                     subj_map = grouped.setdefault(g.teacher, {})
                     subj_map.setdefault(
                         f"{cs.subject} — {g.label}", []
-                    ).append((cs.subject, cs.class_name))
+                    ).append((cs.subject, cs.class_name, g))
             else:
                 profile = cs.allocated_teacher or user_to_profile.get(cs.teacher_id)
-                if not profile:
+                if profile:
+                    subj_map = grouped.setdefault(profile, {})
+                    subj_map.setdefault(cs.subject, []).append(
+                        (cs.subject, cs.class_name, None))
+            # Home-education groups always add their own load on top —
+            # "Таҳсил дар хона — ФАН" with the group's explicit hours.
+            for g in home_groups:
+                if not g.teacher_id:
                     continue
-                subj_map = grouped.setdefault(profile, {})
-                subj_map.setdefault(cs.subject, []).append(
-                    (cs.subject, cs.class_name))
+                subj_map = grouped.setdefault(g.teacher, {})
+                subj_map.setdefault(
+                    f"{HOME_GROUP_LABEL} — {cs.subject}", []
+                ).append((cs.subject, cs.class_name, g))
 
         def class_sort(cn):
             return (class_numeric_part(cn) or 0, cn)
@@ -8142,19 +8648,16 @@ def school_documents(request):
             homeroom_hours = 0
             for subject, entries in sorted(subj_map.items(), key=lambda kv: kv[0]):
                 base_subject = entries[0][0]
-                classes_sorted = sorted({cn for _, cn in entries}, key=class_sort)
+                classes_sorted = sorted({cn for _, cn, _ in entries}, key=class_sort)
                 items.append({'subject': subject, 'classes': classes_sorted})
                 norm = normalize_subject(base_subject)
-                overrides = [explicit_hours.get((base_subject, cn)) for cn in classes_sorted]
-                if any(h is not None for h in overrides):
-                    # Per-allocation resolution: saved hours where set, the
-                    # existing map/default recommendation otherwise.
-                    rate = hours_map.get(norm, default_hours)
-                    hours = sum(h if h is not None else rate for h in overrides)
-                elif norm in hours_map:
-                    hours = hours_map[norm] * len(classes_sorted)
-                else:
-                    hours = default_hours
+                overrides = [
+                    (g.hours_per_week if g is not None and g.is_home else None)
+                    or explicit_hours.get((base_subject, cn))
+                    for _, cn, g in entries
+                ]
+                rate = hours_map.get(norm, default_hours)
+                hours = sum(h if h is not None else rate for h in overrides)
                 if norm in UNGRADED_SUBJECTS:
                     homeroom_hours += hours
                 else:
@@ -9485,7 +9988,7 @@ def news_detail(request, pk):
         'is_preview': news.status != News.STATUS_PUBLISHED,
         'show_video': (video_enabled()
                        and news.media_type == News.MEDIA_VIDEO
-                       and bool(news.video_code)),
+                       and bool(news.video_code or news.video_file)),
     })
 
 
@@ -9530,7 +10033,8 @@ def _validate_news_post(request, news=None):
     """Collect + validate form fields. Returns (data, files, errors)."""
     from .models import News
     from .news import (
-        canonical_video_url, extract_video_code, video_enabled,
+        canonical_video_url, extract_video_code, validate_video_file,
+        video_enabled,
     )
 
     data = {
@@ -9577,14 +10081,27 @@ def _validate_news_post(request, news=None):
 
     data['video_url'] = (request.POST.get('video_url') or '').strip()
     data['video_code'] = ''
+    data['video_file'] = request.FILES.get('video_file')
     if data['media_type'] == News.MEDIA_VIDEO:
-        code = extract_video_code(data['video_url'])
-        if code is None:
-            errors.append('Ҳаволаи нодуруст — танҳо ҳаволаи расмии '
-                          'Instagram Reels қабул мешавад.')
-        else:
-            data['video_code'] = code
-            data['video_url'] = canonical_video_url(code)
+        if data['video_file'] is not None:
+            # Local file wins over the Instagram link when both are sent.
+            try:
+                validate_video_file(data['video_file'])
+            except ValueError as e:
+                errors.append(str(e))
+            else:
+                data['video_url'] = ''
+        elif data['video_url']:
+            code = extract_video_code(data['video_url'])
+            if code is None:
+                errors.append('Ҳаволаи нодуруст — танҳо ҳаволаи расмии '
+                              'Instagram Reels қабул мешавад.')
+            else:
+                data['video_code'] = code
+                data['video_url'] = canonical_video_url(code)
+        elif news is None or not (news.video_file or news.video_code):
+            errors.append('Видео файлини бор кунед ё ҳаволаи '
+                          'Instagram Reels-ро ворид кунед.')
 
     files = request.FILES.getlist('photos')
     existing = news.photos.count() if news else 0
@@ -9615,7 +10132,10 @@ def news_create(request):
                 video_url=(data['video_url']
                            if data['media_type'] == News.MEDIA_VIDEO
                            else ''),
-                video_code=data['video_code'])
+                video_code=data['video_code'],
+                video_file=(data['video_file']
+                            if data['media_type'] == News.MEDIA_VIDEO
+                            else None))
             try:
                 for i, f in enumerate(files):
                     save_photo(news, f, order=i, is_main=(i == 0))
@@ -9659,13 +10179,29 @@ def news_edit(request, pk):
             news.summary = data['summary']
             news.media_type = data['media_type']
             if data['media_type'] == News.MEDIA_VIDEO:
-                news.video_url = data['video_url']
-                news.video_code = data['video_code']
+                if data['video_file'] is not None:
+                    # Replacing with a local file drops the Instagram
+                    # link and frees the old file from storage.
+                    if news.video_file:
+                        news.video_file.delete(save=False)
+                    news.video_file = data['video_file']
+                    news.video_url = ''
+                    news.video_code = ''
+                elif data['video_code']:
+                    # Switching to an Instagram link drops a stored file.
+                    if news.video_file:
+                        news.video_file.delete(save=False)
+                        news.video_file = ''
+                    news.video_url = data['video_url']
+                    news.video_code = data['video_code']
             else:
                 news.video_url = ''
                 news.video_code = ''
                 if news.video_thumb:
                     news.video_thumb.delete(save=False)
+                if news.video_file:
+                    news.video_file.delete(save=False)
+                    news.video_file = ''
             news.save()
             try:
                 start = news.photos.count()
@@ -9721,7 +10257,7 @@ def news_action(request, pk):
         has_media = news.photos.exists() or (
             video_enabled()
             and news.media_type == News.MEDIA_VIDEO
-            and bool(news.video_code))
+            and bool(news.video_code or news.video_file))
         if not has_media:
             messages.error(request, 'Бе акс ё видео нашр кардан мумкин нест.')
         else:
@@ -9760,7 +10296,8 @@ def news_photo_action(request, photo_id):
         if photo.news.photos.count() <= 1 \
                 and photo.news.status == 'published' \
                 and not (photo.news.media_type == 'video'
-                         and photo.news.video_code):
+                         and (photo.news.video_code
+                              or photo.news.video_file)):
             messages.error(
                 request,
                 'Хабари нашршуда бояд ҳадди ақал як акс дошта бошад.')

@@ -20,7 +20,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.worksheet.page import PageMargins
 
-from .curriculum_hours import disp_hours, weekly_hours
+from .curriculum_hours import disp_hours, group_weekly_hours, weekly_hours
 from .models import ClassSubject, TeacherProfile
 from .utils import class_numeric_part
 
@@ -135,16 +135,18 @@ def teacher_workload(school):
     user_to_profile = _user_to_profile_map(
         TeacherProfile.objects.filter(school=school, is_archived=False))
 
-    # teacher -> {display_subject: [(base_subject, class_name, cs)]}
+    # teacher -> {display_subject: [(base_subject, class_name, cs, group)]}
     grouped = {}
     unassigned = []
     unbanded = []
     for cs in class_subjects:
         cs_groups = [g for g in cs.groups.all() if g.is_active]
-        if cs_groups:
+        canonical_groups = [g for g in cs_groups if not g.is_home]
+        home_groups = [g for g in cs_groups if g.is_home]
+        if canonical_groups:
             # Grouped CS: each group teacher is credited with the subject's
             # full weekly load for their group.
-            for g in cs_groups:
+            for g in canonical_groups:
                 label = f"{cs.subject} — {g.label}"
                 if not g.teacher_id:
                     unassigned.append(_unassigned_entry(cs, label))
@@ -154,7 +156,7 @@ def teacher_workload(school):
                 else:
                     subj_map = grouped.setdefault(g.teacher, {})
                     subj_map.setdefault(label, []).append(
-                        (cs.subject, cs.class_name, cs))
+                        (cs.subject, cs.class_name, cs, g))
         else:
             profile = cs.allocated_teacher
             if profile and profile.school_id != school.id:
@@ -166,9 +168,22 @@ def teacher_workload(school):
                 if profile:
                     subj_map = grouped.setdefault(profile, {})
                     subj_map.setdefault(cs.subject, []).append(
-                        (cs.subject, cs.class_name, cs))
+                        (cs.subject, cs.class_name, cs, None))
                 else:
                     unassigned.append(_unassigned_entry(cs, cs.subject))
+        # Home-education groups always add their own load on top —
+        # "Таҳсил дар хона — ФАН" with the group's explicit hours.
+        for g in home_groups:
+            label = f"Таҳсил дар хона — {cs.subject}"
+            if not g.teacher_id:
+                unassigned.append(_unassigned_entry(cs, label))
+            elif g.teacher.school_id != school.id:
+                unassigned.append(_unassigned_entry(
+                    cs, label, note='таъиншуда ба омӯзгори мактаби дигар'))
+            else:
+                subj_map = grouped.setdefault(g.teacher, {})
+                subj_map.setdefault(label, []).append(
+                    (cs.subject, cs.class_name, cs, g))
 
     rows = []
     for profile, subj_map in grouped.items():
@@ -177,11 +192,13 @@ def teacher_workload(school):
         subjects = []
         for subject, entries in sorted(subj_map.items(), key=lambda kv: kv[0]):
             classes_sorted = sorted(
-                {cn for _, cn, _ in entries}, key=_class_sort_key)
+                {cn for _, cn, _, _ in entries}, key=_class_sort_key)
             items.append({'subject': subject, 'classes': classes_sorted})
             subjects.append(subject)
-            for base_subject, class_name, cs in entries:
-                week_hours = weekly_hours(class_name, base_subject, cs)
+            for base_subject, class_name, cs, group in entries:
+                week_hours = (
+                    group_weekly_hours(group, cs) if group is not None
+                    else weekly_hours(class_name, base_subject, cs))
                 band = band_key_for_class(class_name)
                 if band is None:
                     unbanded.append({

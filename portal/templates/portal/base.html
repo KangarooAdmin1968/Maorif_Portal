@@ -51,6 +51,29 @@
             font-size: 0.9rem;
             opacity: 0.8;
         }
+        .footer-social {
+            text-align: center;
+            margin-top: 1.5rem;
+        }
+        .footer-ig {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95rem;
+            padding: 0.5rem 1.3rem;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,0.45);
+            background: linear-gradient(45deg, #833ab4, #fd1d1d, #fcb045);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .footer-ig:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+            color: #fff;
+        }
         @media (max-width: 768px) {
             .footer-columns {
                 grid-template-columns: 1fr;
@@ -175,6 +198,9 @@
                     {% elif is_zavuch and user.userprofile.school %}
                         <a href="{% url 'lesson_allocation' %}">Тақсимоти дарсҳо</a>
                     {% endif %}
+                    {% if user.is_superuser or is_zavuch %}
+                        <a href="{% url 'home_education' %}">🏠 Таҳсил дар хона</a>
+                    {% endif %}
                     {% if not user.is_superuser %}
                         <span class="user">{{ user.username }}</span>
                     {% endif %}
@@ -246,6 +272,12 @@
                     <strong>Дастгирии техникӣ (Муаллифи сомона): Ӯсар Дӯсарович Зокиров</strong>
                     <p>Телефонҳо: +992 93 900 0049 (WhatsApp/Telegram), +992 90 041 4777</p>
                 </div>
+            </div>
+            <div class="footer-social">
+                <a class="footer-ig" href="https://www.instagram.com/maorif_zafarobod/"
+                   target="_blank" rel="noopener noreferrer">
+                    <span>📷</span> <span>Мо дар Instagram</span>
+                </a>
             </div>
             <div class="footer-bottom">
                 <p>© {% now 'Y' %} Шуъбаи маорифи ноҳияи Зафаробод</p>

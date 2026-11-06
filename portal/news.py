@@ -36,6 +36,13 @@ NEWS_PER_CATEGORY = 5                    # spec: max 5 latest per category
 MAX_VIDEOS = 4                           # newest video items in the dashboard queue
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024      # 15 MB per file
 MAX_PHOTOS = 5
+# Local video upload limit must stay under nginx client_max_body_size
+# (50M) so the request body is never cut off before validation runs.
+MAX_VIDEO_BYTES = 45 * 1024 * 1024       # 45 MB per video file
+VIDEO_CONTENT_TYPES = {
+    'video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v',
+}
+VIDEO_EXTENSIONS = ('.mp4', '.m4v', '.webm', '.mov')
 
 SLIDER_SIZE = (1200, 675)
 GALLERY_MAX = 1600
@@ -91,13 +98,17 @@ def _slider_data():
         .order_by('-published_at', '-created_at')
     )
     for n in items:
-        if (len(videos) < MAX_VIDEOS and n.video_code
-                and n.media_type == News.MEDIA_VIDEO):
+        if (len(videos) < MAX_VIDEOS
+                and n.media_type == News.MEDIA_VIDEO
+                and (n.video_code or n.video_file)):
             # Newest published video items — played via the dashboard
-            # "Видео" toggle button, outside the photo rotation.
+            # "Видео" toggle button, outside the photo rotation. A local
+            # file plays through <video>; an Instagram code keeps the
+            # on-click iframe path.
             videos.append(dict(
                 _base_slide(n), type='video',
                 embed=n.video_embed_url,
+                file=n.video_file.url if n.video_file else '',
                 video_url=n.video_url,
                 thumb=n.video_thumb.url if n.video_thumb else ''))
         photos = [p for p in n.photos.all() if p.slider_image]
@@ -245,6 +256,30 @@ VIDEO_URL_RE = re.compile(
 VIDEO_OEMBED_URL = 'https://www.instagram.com/api/v1/oembed/'
 VIDEO_FETCH_TIMEOUT = 8                      # seconds per outbound request
 VIDEO_THUMB_MAX_BYTES = 6 * 1024 * 1024
+
+
+def validate_video_file(django_file):
+    """Validate an uploaded video file. Returns the file unchanged.
+
+    Raises ValueError with a user-facing Tajik message on wrong type or
+    oversize. The stored file is served straight from /media/ by Nginx —
+    no transcoding, so the format the browser must play is whatever was
+    uploaded. MP4 (H.264) is the safe universal choice.
+    """
+    name = (django_file.name or '').lower()
+    ctype = (getattr(django_file, 'content_type', '') or '').lower()
+    if not name.endswith(VIDEO_EXTENSIONS):
+        raise ValueError(
+            'Формати видео дастгирӣ намешавад — MP4 ё WebM файл интихоб '
+            'кунед.')
+    if ctype and not ctype.startswith('video/') \
+            and ctype != 'application/octet-stream':
+        raise ValueError(
+            'Формати видео дастгирӣ намешавад — MP4 ё WebM файл интихоб '
+            'кунед.')
+    if django_file.size > MAX_VIDEO_BYTES:
+        raise ValueError('Видео аз 45 МБ калон аст — ҳаҷмашро кам кунед.')
+    return django_file
 
 
 def extract_video_code(url):

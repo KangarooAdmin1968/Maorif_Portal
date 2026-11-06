@@ -76,6 +76,11 @@
     left: 50%; transform: translateX(-50%);
     width: min(100%, 430px); height: 100%; border: 0;
 }
+.ns-video-pane video {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain; background: #000;
+}
 .ns-video-pane.playing .ns-vthumb,
 .ns-video-pane.playing .ns-vplay { display: none; }
 /* While a reel plays the stage grows to portrait height so Instagram's
@@ -356,10 +361,10 @@
         {% endfor %}
         {% if news_videos %}{% with v=news_videos.0 %}
         <div class="ns-video-pane{% if not news_slides %} ns-static{% endif %}"
-             data-embed="{{ v.embed }}">
+             data-embed="{{ v.embed }}" data-file="{{ v.file }}">
             {% if v.thumb %}<img class="ns-vthumb" src="{{ v.thumb }}" alt="{{ v.title }}" loading="lazy">{% endif %}
             <button class="ns-vplay" type="button">▶ Видеоро тамошо кардан</button>
-            <a class="ns-vlink" href="{{ v.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>
+            {% if v.video_url %}<a class="ns-vlink" href="{{ v.video_url }}" target="_blank" rel="noopener noreferrer">Instagram ↗</a>{% endif %}
         </div>
         {% endwith %}{% endif %}
         {% if news_slides|length > 1 %}
@@ -951,8 +956,16 @@
     function setVideo(idx) {
         var v = videos[idx];
         if (!v) return;
-        pane.setAttribute('data-embed', v.embed);
-        if (vlink) vlink.href = v.video_url;
+        pane.setAttribute('data-embed', v.embed || '');
+        pane.setAttribute('data-file', v.file || '');
+        if (vlink) {
+            if (v.video_url) {
+                vlink.href = v.video_url;
+                vlink.style.display = '';
+            } else {
+                vlink.style.display = 'none';
+            }
+        }
         if (vinfo) {
             var t = vinfo.querySelector('.ns-title');
             if (t) { t.textContent = v.title; t.href = v.url; }
@@ -967,7 +980,7 @@
 
     function closeVideo() {
         if (videoTimer) { clearTimeout(videoTimer); videoTimer = null; }
-        var f = pane && pane.querySelector('iframe');
+        var f = pane && pane.querySelector('iframe, video');
         if (f) f.remove();
         if (pane) pane.classList.remove('playing');
         root.classList.remove('ns-playing');
@@ -975,28 +988,41 @@
         setToggle(false);
     }
 
-    // "Видео" toggle / play button: the Instagram iframe is only
-    // created now; each play always builds a fresh iframe.
+    // "Видео" toggle / play button: the Instagram iframe or local
+    // <video> element is only created now; each play starts fresh.
     function playVideo(idx) {
         if (!pane) return;
         if (idx !== undefined) vIdx = idx;
-        var f = pane.querySelector('iframe');
+        var f = pane.querySelector('iframe, video');
         if (f) f.remove();
         if (videos.length) setVideo(vIdx);
-        var src = pane.getAttribute('data-embed');
-        if (!src) return;
-        f = document.createElement('iframe');
-        f.src = src;
-        f.setAttribute('allow', 'encrypted-media');
-        f.setAttribute('allowtransparency', 'true');
-        pane.appendChild(f);
+        var file = pane.getAttribute('data-file');
+        if (file) {
+            // Local file: browser <video> reports "ended" itself, so no
+            // watch-timer fallback is needed.
+            var v = document.createElement('video');
+            v.src = file;
+            v.controls = true;
+            v.autoplay = true;
+            v.playsInline = true;
+            v.addEventListener('ended', videoEnded);
+            pane.appendChild(v);
+        } else {
+            var src = pane.getAttribute('data-embed');
+            if (!src) return;
+            f = document.createElement('iframe');
+            f.src = src;
+            f.setAttribute('allow', 'encrypted-media');
+            f.setAttribute('allowtransparency', 'true');
+            pane.appendChild(f);
+            if (videoTimer) clearTimeout(videoTimer);
+            videoTimer = setTimeout(videoEnded, VIDEO_WATCH_MS);
+        }
         pane.classList.add('playing');
         root.classList.add('ns-playing');
         playing = true;
         setToggle(true);
         stop();
-        if (videoTimer) clearTimeout(videoTimer);
-        videoTimer = setTimeout(videoEnded, VIDEO_WATCH_MS);
     }
 
     // A video's time is up: chain to the next video when several are

@@ -1,8 +1,8 @@
 {% extends 'portal/base.html' %}
 {% load portal_extras %}
-{% block title %}Ҷурнали моҳона — {{ class_name }} — {{ subject }}{% endblock %}
+{% block title %}{% if teacher_group.is_home %}Журнали таҳсил дар хона{% else %}Ҷурнали моҳона{% endif %} — {{ class_name }} — {{ subject }}{% endblock %}
 {% block content %}
-<h1>Ҷурнали моҳона — {{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}</h1>
+<h1>{% if teacher_group.is_home %}Журнали таҳсил дар хона{% else %}Ҷурнали моҳона{% endif %} — {{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}{% if teacher_group %} — {{ teacher_group.label }}{% endif %}</h1>
 
 <a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
 <a href="{% url 'grade_entry' school.id class_name subject %}" class="btn btn-secondary" style="margin-bottom:1rem;">📝 Ҷурнали ҳаррӯза</a>

@@ -29,3 +29,20 @@ def active_exemption_map(student_ids, today=None):
 def exempt_student_ids(student_ids, today=None):
     """set(student_id) — the cheap form when only the flag is needed."""
     return set(active_exemption_map(student_ids, today=today))
+
+
+def home_student_ids(student_ids, today=None):
+    """set(student_id) with an active «Дар хона таҳсил мегирад» exemption.
+
+    Home-education students stay formally attached to their class (their
+    quarter marks land in the class's official documents) but are taught
+    in the separate home journal — rosters exclude them via this map.
+    """
+    today = today or timezone.localdate()
+    return set(
+        StudentExemption.objects
+        .filter(student_id__in=list(student_ids), reason='home',
+                cancelled_at__isnull=True, start_date__lte=today)
+        .exclude(end_date__lt=today)
+        .values_list('student_id', flat=True)
+    )

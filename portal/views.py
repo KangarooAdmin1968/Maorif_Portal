@@ -7712,7 +7712,10 @@ def home_education_add(request):
         redirect_url += f'?school_id={school.id}'
 
     class_name = _validate_class_name(request.POST.get('class_name'))
-    subject = normalize_subject(request.POST.get('subject', ''))
+    subject_raw = request.POST.get('subject', '')
+    if subject_raw == '__other__':
+        subject_raw = request.POST.get('subject_new', '')
+    subject = normalize_subject(subject_raw)
     document = request.POST.get('document', '').strip()[:255]
 
     try:

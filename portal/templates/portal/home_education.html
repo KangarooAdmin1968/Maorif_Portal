@@ -72,7 +72,7 @@
         <div class="fld">
             <label for="he-student">Хонанда (аз рӯйхат)</label>
             <select id="he-student" name="student_id">
-                <option value="">— Рӯйхатда нест —</option>
+                <option value="">— Дар рӯйхат нест —</option>
             </select>
         </div>
         <div class="fld">
@@ -85,6 +85,9 @@
             <select id="he-subject" name="subject" required>
                 <option value="">Интихоб кунед...</option>
             </select>
+            <input type="text" id="he-subject-new" name="subject_new"
+                   maxlength="100" placeholder="Номи фанро нависед"
+                   autocomplete="off" style="display:none; margin-top:.35rem;">
         </div>
         <div class="fld">
             <label for="he-teacher">Омӯзгор</label>
@@ -162,7 +165,7 @@ const subjectSel = document.getElementById('he-subject');
 
 function refreshClassDependents() {
     const cn = classSel.value;
-    studentSel.innerHTML = '<option value="">— Рӯйхатда нест —</option>';
+    studentSel.innerHTML = '<option value="">— Дар рӯйхат нест —</option>';
     STUDENTS.filter(s => s.class_name === cn).forEach(s => {
         const o = document.createElement('option');
         o.value = s.id; o.textContent = s.name;
@@ -174,7 +177,20 @@ function refreshClassDependents() {
         o.value = subj; o.textContent = subj;
         subjectSel.appendChild(o);
     });
+    const other = document.createElement('option');
+    other.value = '__other__';
+    other.textContent = 'Фани дигар — нависед…';
+    subjectSel.appendChild(other);
+    toggleSubjectNew();
 }
+
+const subjectNew = document.getElementById('he-subject-new');
+function toggleSubjectNew() {
+    const manual = subjectSel.value === '__other__';
+    subjectNew.style.display = manual ? '' : 'none';
+    if (!manual) subjectNew.value = '';
+}
+subjectSel.addEventListener('change', toggleSubjectNew);
 classSel.addEventListener('change', refreshClassDependents);
 studentSel.addEventListener('change', () => {
     if (studentSel.value) document.getElementById('he-newname').value = '';

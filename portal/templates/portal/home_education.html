@@ -181,6 +181,7 @@ function refreshClassDependents() {
     other.value = '__other__';
     other.textContent = 'Фани дигар — нависед…';
     subjectSel.appendChild(other);
+    if (!(SUBJECTS[cn] || []).length) subjectSel.value = '__other__';
     toggleSubjectNew();
 }
 

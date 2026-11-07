@@ -36,6 +36,7 @@ from portal.views import (
     all_student_gpas,
     calculate_class_rankings, calculate_school_rankings,
     calculate_subject_rankings, calculate_top_students,
+    rankings_read_only,
 )
 
 
@@ -391,9 +392,11 @@ class RankingCacheTests(GoldenBase):
     # --- H3: dashboard while a cold refresh runs in another worker -------
 
     def test_dashboard_renders_empty_block_when_refresh_busy(self):
-        # Cold school ranking, OS lock held elsewhere past the wait: the
-        # dashboard renders that block with its {% empty %} row; it never
-        # computes without the lock, and the other rankings still render.
+        # Cold school ranking while a refresh holds its lock elsewhere:
+        # the dashboard renders that block with its {% empty %} row; the
+        # other rankings still render from their warmed entries.
+        calculate_subject_rankings()
+        calculate_top_students()
         handle = _ranking_flock_try('rank:v1:school')
         self.assertIsInstance(handle, int)
         try:
@@ -631,17 +634,33 @@ class SharedRankingScanTests(GoldenBase):
         self.assertEqual(spy.call_count, 1)
         self.assertEqual(shared, standalone)
 
-    def test_dashboard_cold_load_scans_grades_once(self):
+    def test_dashboard_cold_load_never_scans_grades(self):
+        # Read-only requests: a cold dashboard renders empty blocks and
+        # performs NO district-wide Grade scan — refreshes run in the
+        # refresh_rankings cron command (504/OOM fix).
         from portal import views
         with mock.patch('portal.views.canonical_grade_values',
                         wraps=views.canonical_grade_values) as spy:
             resp = self.client.get(reverse('dashboard'))
         self.assertEqual(resp.status_code, 200)
-        # Formerly one full scan per ranking key (4).
-        self.assertEqual(spy.call_count, 1)
-        for key in RANKING_CACHE_KEYS[:4]:
-            self.assertIsNotNone(cache.get(key))
+        self.assertEqual(spy.call_count, 0)
+        self.assertEqual(resp.context['school_ranking'], [])
+        self.assertEqual(resp.context['subject_ranking'], [])
+        self.assertEqual(resp.context['top_students'], [])
+
+    def test_dashboard_warm_cache_renders_rankings(self):
+        # Once the cron command has warmed the keys, the same request
+        # serves them with zero scans.
+        from portal import views
         standalone = self._uncached_all()
+        for fn in (calculate_school_rankings, calculate_class_rankings,
+                   calculate_subject_rankings, calculate_top_students):
+            fn()
+        with mock.patch('portal.views.canonical_grade_values',
+                        wraps=views.canonical_grade_values) as spy:
+            resp = self.client.get(reverse('dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(spy.call_count, 0)
         self.assertEqual(resp.context['school_ranking'], standalone[0])
         self.assertEqual(resp.context['subject_ranking'], standalone[2])
         self.assertEqual(resp.context['top_students'],
@@ -723,6 +742,7 @@ class StudentDetailRankPassTests(GoldenBase):
         )
 
     def test_ranks_match_former_implementation(self):
+        all_student_gpas()  # warm as refresh_rankings would
         for student in (self.s1, self.s2, self.s3, self.s4, self.s5):
             with self.subTest(student=student.full_name):
                 resp = self.client.get(
@@ -742,7 +762,7 @@ class StudentDetailRankPassTests(GoldenBase):
         from django.db.models.signals import post_init
         from portal.models import Student
         url = reverse('student_detail', args=[self.s1.id])
-        self.client.get(url)  # warm the GPA cache
+        all_student_gpas()  # warm the GPA cache as refresh_rankings would
 
         def count_instances():
             seen = []
@@ -759,7 +779,7 @@ class StudentDetailRankPassTests(GoldenBase):
         for i in range(15):
             make_student(self.school_a, '7-А', f'Иловагӣ Хонанда {i}')
         _clear_ranking_cache()
-        self.client.get(url)  # re-warm after the population change
+        all_student_gpas()  # re-warm after the population change
         self.assertEqual(count_instances(), before)
 
     def test_gpa_map_covers_every_student(self):
@@ -1142,3 +1162,86 @@ class SharedCacheBackendTests(TestCase):
         _clear_ranking_cache()
         for k in RANKING_ALL_CACHE_KEYS:
             self.assertIsNone(cache.get(k))
+
+
+class RankingsReadOnlyTests(GoldenBase):
+    """Request paths serve rankings read-only: the memory-heavy
+    refreshes run only in the refresh_rankings cron command, never in a
+    gunicorn worker (504/OOM fix)."""
+
+    RO_KEY = 'rank:test-readonly'
+
+    def setUp(self):
+        super().setUp()
+        _clear_ranking_cache()
+
+    def tearDown(self):
+        cache.delete_many([
+            self.RO_KEY,
+            self.RO_KEY + RANKING_STALE_SUFFIX,
+            self.RO_KEY + RANKING_LOCK_SUFFIX,
+        ])
+
+    def _compute(self):
+        calls = []
+
+        def compute():
+            calls.append(1)
+            return 'computed'
+        return compute, calls
+
+    def test_readonly_cold_cache_raises_busy_without_computing(self):
+        compute, calls = self._compute()
+        with rankings_read_only():
+            with self.assertRaises(RankingRefreshBusy):
+                _ranking_cached(self.RO_KEY, compute)
+        self.assertEqual(calls, [])
+
+    def test_readonly_serves_fresh_entry(self):
+        cache.set(self.RO_KEY, (time.time(), 'fresh'), RANKING_CACHE_TTL)
+        compute, calls = self._compute()
+        with rankings_read_only():
+            self.assertEqual(_ranking_cached(self.RO_KEY, compute), 'fresh')
+        self.assertEqual(calls, [])
+
+    def test_readonly_serves_stale_beyond_refresh_interval(self):
+        # In requests the shadow covers the whole RANKING_STALE_TTL, not
+        # just RANKING_REFRESH_INTERVAL — cron refreshes, readers only read.
+        cache.set(self.RO_KEY + RANKING_STALE_SUFFIX,
+                  (time.time() - 100, 'stale'), RANKING_STALE_TTL)
+        compute, calls = self._compute()
+        with rankings_read_only():
+            self.assertEqual(_ranking_cached(self.RO_KEY, compute), 'stale')
+        self.assertEqual(calls, [])
+
+    def test_readonly_does_not_wait_for_or_acquire_locks(self):
+        compute, calls = self._compute()
+        with mock.patch('portal.views._ranking_lock_acquire',
+                        side_effect=AssertionError('lock touched')):
+            with rankings_read_only():
+                with self.assertRaises(RankingRefreshBusy):
+                    _ranking_cached(self.RO_KEY, compute)
+        self.assertEqual(calls, [])
+
+    def test_dashboard_does_not_trigger_ranking_compute(self):
+        from django.test import Client
+        from django.contrib.auth.models import User
+        _clear_ranking_cache()
+        user = User.objects.create_user('ro_viewer', password='x')
+        client = Client()
+        client.force_login(user)
+        with mock.patch(
+                'portal.views._calculate_school_rankings_uncached',
+                side_effect=AssertionError('compute in request')):
+            r = client.get(reverse('dashboard'))
+        self.assertEqual(r.status_code, 200)
+
+    def test_refresh_rankings_command_warms_caches(self):
+        from django.core.management import call_command
+        from io import StringIO
+        _clear_ranking_cache()
+        out = StringIO()
+        call_command('refresh_rankings', stdout=out)
+        for key in RANKING_CACHE_KEYS:
+            self.assertIsNotNone(cache.get(key), f'{key} not warmed')
+        self.assertIn('school', out.getvalue())

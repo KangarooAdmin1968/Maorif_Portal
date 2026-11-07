@@ -108,6 +108,7 @@ class SchoolFilterTests(DashboardBaselineBase):
     """A2/A3: ``selected_school`` / ``?school=`` filter semantics."""
 
     def test_selected_school_defaults_to_user_school(self):
+        self._warm_ranking_caches()
         self.client.force_login(self.teacher_a)
         response = self.client.get(reverse('dashboard'))
         self.assertEqual(response.status_code, 200)
@@ -119,6 +120,7 @@ class SchoolFilterTests(DashboardBaselineBase):
             all(r['school_id'] == self.school_a.id for r in rows))
 
     def test_school_param_restricts_class_ranking(self):
+        self._warm_ranking_caches()
         response = self.client.get(
             reverse('dashboard'), {'school': str(self.school_b.id)})
         self.assertEqual(response.status_code, 200)
@@ -128,6 +130,7 @@ class SchoolFilterTests(DashboardBaselineBase):
             {(self.school_b.id, '7-Б')})
 
     def test_school_zero_shows_district_wide_class_ranking(self):
+        self._warm_ranking_caches()
         response = self.client.get(
             reverse('dashboard'), {'school': '0'})
         self.assertEqual(response.status_code, 200)
@@ -151,6 +154,7 @@ class AjaxRankingContractTests(DashboardBaselineBase):
     }
 
     def test_top_students_endpoint_returns_engine_output(self):
+        self._warm_ranking_caches()
         response = self.client.get(
             reverse('top_students_ajax'), {'school': '0'})
         self.assertEqual(response.status_code, 200)
@@ -166,6 +170,7 @@ class AjaxRankingContractTests(DashboardBaselineBase):
             self.assertTrue(self.TOP_STUDENT_FIELDS.issubset(item))
 
     def test_class_rankings_endpoint_filters_by_school(self):
+        self._warm_ranking_caches()
         response = self.client.get(
             reverse('class_rankings_ajax'),
             {'school': str(self.school_a.id)})

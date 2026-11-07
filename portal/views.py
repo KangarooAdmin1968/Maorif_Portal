@@ -2106,6 +2106,14 @@ def _ranking_cached(key, compute):
     hit, data, stale = _ranking_lookup(key)
     if hit:
         return data
+    if _ranking_read_only.get():
+        # Read-only scope (requests): never take the refresh locks or
+        # wait — the shadow entry covers up to RANKING_STALE_TTL, then
+        # the caller's busy fallback renders an empty block.
+        if isinstance(stale, tuple):
+            return stale[1]
+        raise RankingRefreshBusy(
+            f'Ranking refresh of {key} deferred to background job')
     locks = _ranking_lock_acquire(key)
     if locks is not None:
         return _ranking_refresh(key, compute, locks, stale)
@@ -2134,6 +2142,26 @@ def _ranking_cached(key, compute):
 # only the data source is shared. Outside the scope nothing changes.
 _shared_ranking_scan = contextvars.ContextVar(
     'shared_ranking_scan', default=None)
+
+
+# Request paths never compute rankings: refreshes are memory-heavy (the
+# full current-year Grade scan is materialised for canonical dedup), so
+# they belong to the refresh_rankings command run from cron. Inside this
+# scope _ranking_cached serves fresh/shadow entries and raises
+# RankingRefreshBusy on a cold cache — the same fallback requests already
+# had for a slow refresh, minus the memory spike and lock pile-up that
+# OOM-killed workers (504 storm fix).
+_ranking_read_only = contextvars.ContextVar(
+    'ranking_read_only', default=False)
+
+
+@contextlib.contextmanager
+def rankings_read_only():
+    token = _ranking_read_only.set(True)
+    try:
+        yield
+    finally:
+        _ranking_read_only.reset(token)
 
 
 @contextlib.contextmanager
@@ -2566,9 +2594,9 @@ def dashboard(request):
     role = get_user_role(request.user)
     user_school = get_user_school(request.user)
 
-    # Live rankings from Grade and QuarterGrade records. Refreshes in
-    # this request share one current-year Grade scan.
-    with sharing_ranking_grade_scan():
+    # Live rankings from Grade and QuarterGrade records. Requests are
+    # read-only here — refreshes run in the refresh_rankings cron job.
+    with rankings_read_only():
         all_school_ranking = _ranking_or_empty(calculate_school_rankings)
         all_subject_ranking = _ranking_or_empty(calculate_subject_rankings)
         class_ranking = _ranking_or_empty(calculate_class_rankings)
@@ -2660,14 +2688,16 @@ def _clean_school_param(school):
 def top_students_ajax(request):
     """Return top students for the honor roll, optionally filtered by school."""
     school = _clean_school_param(request.GET.get('school'))
-    data = _ranking_or_empty(lambda: calculate_top_students(school))
+    with rankings_read_only():
+        data = _ranking_or_empty(lambda: calculate_top_students(school))
     return JsonResponse(data, safe=False)
 
 
 def class_rankings_ajax(request):
     """Return class rankings, optionally filtered by school."""
     school = _clean_school_param(request.GET.get('school'))
-    data = _ranking_or_empty(lambda: calculate_class_rankings(school))
+    with rankings_read_only():
+        data = _ranking_or_empty(lambda: calculate_class_rankings(school))
     return JsonResponse(data, safe=False)
 
 
@@ -6596,10 +6626,11 @@ def student_detail(request, student_id):
     conduct_advice = _conduct_advice(conduct_map)
 
     try:
-        all_gpas = None if non_graded else all_student_gpas()
+        with rankings_read_only():
+            all_gpas = None if non_graded else all_student_gpas()
     except RankingRefreshBusy:
-        # Cold GPA map still being refreshed by another worker: show
-        # placeholders instead of failing or computing without the lock.
+        # Cold GPA map: refresh_rankings has not filled it yet — show
+        # placeholders instead of scanning the district per request.
         all_gpas = None
     gpa_pending = not non_graded and all_gpas is None
     if non_graded:

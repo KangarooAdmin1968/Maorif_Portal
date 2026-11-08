@@ -89,6 +89,50 @@ class DistrictReportTests(GoldenBase):
         self.assertIn('7-А', top)
         self.assertIn('7-Б', weak)
 
+    def test_district_counts_cold_then_warm(self):
+        from portal.reports import report_counts_cache_key
+        from portal.views import (
+            RANKING_STALE_SUFFIX, _ranking_cache_delete,
+            academic_year_start,
+        )
+        quarter = resolve_period('q2')[4]
+        key = report_counts_cache_key(quarter, academic_year_start())
+        # The file cache persists between test runs — clear both
+        # entries so the cold path is what it is in production before
+        # the first cron warm.
+        _ranking_cache_delete(key)
+        _ranking_cache_delete(key + RANKING_STALE_SUFFIX)
+        # Cold cache → '—' cells (None), never a heavy request-side scan.
+        data = collect_district_report('q2')
+        for r in data['school_rows']:
+            self.assertIsNone(r['excellent'])
+            self.assertIsNone(r['ungraded'])
+        # Warm the per-quarter key like refresh_rankings does.
+        from portal.models import School
+        from portal.reports import excellent_ungraded_counts
+        from portal.utils import is_academic_school
+        from portal.views import _ranking_cached
+        schools = [s for s in School.objects.all()
+                   if is_academic_school(s)]
+        _ranking_cached(
+            key, lambda: excellent_ungraded_counts(schools, quarter))
+        data = collect_district_report('q2')
+        # The batched counts must equal the official per-school
+        # collectors the Ҳуҷҷатнигорӣ lists use.
+        from portal.excellent import collect_excellent_students
+        from portal.ungraded import collect_ungraded_students
+        for r in data['school_rows']:
+            self.assertIsInstance(r['excellent'], int)
+            self.assertIsInstance(r['ungraded'], int)
+            self.assertEqual(
+                r['excellent'],
+                len(collect_excellent_students(r['school'], quarter)
+                    ['students']))
+            self.assertEqual(
+                r['ungraded'],
+                collect_ungraded_students(r['school'], quarter)
+                ['students'])
+
 
 class ReportViewScopeTests(GoldenBase):
     def setUp(self):

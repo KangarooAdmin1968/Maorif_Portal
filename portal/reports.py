@@ -24,7 +24,8 @@ from django.db.models import Count
 
 from .excellent import collect_excellent_students
 from .models import (
-    School, StudentMovement, SubjectGroupMembership,
+    ClassSubject, School, Student, StudentMovement,
+    SubjectGroupMembership,
 )
 from .nazorat import _period_bounds, attendance_period_options
 from .ungraded import collect_ungraded_students
@@ -183,6 +184,115 @@ def _teacher_summary(teachers):
 
 
 # ---------------------------------------------------------------------------
+# District Аълохон/Бебаҳо counts — one merged scan, cron-warmed cache
+# ---------------------------------------------------------------------------
+
+REPORT_COUNTS_CACHE_PREFIX = 'rank:v1:report_counts'
+
+
+def report_counts_cache_key(quarter, academic_year):
+    """Cache key for the district Аълохон/Бебаҳо counts — one entry per
+    quarter of an academic year. refresh_rankings warms the current
+    quarter; a colder quarter's cells render '—' like other cold
+    ranking blocks."""
+    return f'{REPORT_COUNTS_CACHE_PREFIX}:q{quarter}:{academic_year}'
+
+
+def excellent_ungraded_counts(schools, quarter, today=None):
+    """{school_id: {'excellent': n, 'ungraded': n}} — the same rules as
+    collect_excellent_students / collect_ungraded_students, computed in
+    ONE district-wide merged-mark scan.
+
+    The district report used to call both collectors per school — about
+    2 × number-of-schools full mark scans inside one request, which
+    timed the page out (504). This computes the identical counts once
+    for the whole district."""
+    from .class_report import merged_quarter_marks
+    from .curriculum_hours import UNGRADED_SUBJECTS
+    from .excellent import EXCELLENT_MARKS
+    from .exemptions import active_exemption_map
+    from .maorif_report import LEVELS
+    from .utils import (class_numeric_part, is_non_graded,
+                        normalize_class_name, normalize_subject)
+    from .views import academic_year_start
+
+    today = today or datetime.date.today()
+    ay = academic_year_start(today)
+    school_ids = [s.id for s in schools]
+
+    # expected[sid][norm_class] = set(norm_subject) — every active
+    # graded class-subject (Аълохон scope). graded_cs keeps the raw
+    # class_name rows limited to LEVELS (Бебаҳо scope, same as
+    # quarter_close._graded_class_subjects).
+    expected = {}
+    graded_cs = []
+    for cs in ClassSubject.objects.filter(
+            school_id__in=school_ids, is_active=True):
+        norm_subject = normalize_subject(cs.subject)
+        if norm_subject in UNGRADED_SUBJECTS:
+            continue
+        (expected.setdefault(cs.school_id, defaultdict(set))
+                 [normalize_class_name(cs.class_name)].add(norm_subject))
+        if class_numeric_part(cs.class_name) in LEVELS:
+            graded_cs.append((cs.school_id, cs.class_name, norm_subject))
+
+    students = list(Student.objects.filter(school_id__in=school_ids)
+                    .exclude(class_name=''))
+    all_subjects = {subj for exp in expected.values()
+                    for subs in exp.values() for subj in subs}
+    marks = (merged_quarter_marks(students, all_subjects, quarter, ay,
+                                  class_scoped=True)
+             if all_subjects else {})
+    exempt = set(active_exemption_map((s.id for s in students), today))
+
+    by_school_class = defaultdict(lambda: defaultdict(list))
+    for st in students:
+        by_school_class[st.school_id][st.class_name].append(st)
+
+    counts = {sid: {'excellent': 0, 'ungraded': 0} for sid in school_ids}
+    for st in students:
+        cn = normalize_class_name(st.class_name)
+        if is_non_graded(cn):
+            continue
+        subjects = (expected.get(st.school_id) or {}).get(cn)
+        grades = marks.get(st.id, {})
+        if not subjects or not grades:
+            continue
+        if all(subj in grades and grades[subj] in EXCELLENT_MARKS
+               for subj in subjects):
+            counts[st.school_id]['excellent'] += 1
+
+    ungraded = defaultdict(set)
+    for sid, class_name, norm_subject in graded_cs:
+        for st in by_school_class[sid].get(class_name, ()):
+            if st.id in exempt:
+                continue
+            if marks.get(st.id, {}).get(norm_subject) is None:
+                ungraded[sid].add(st.id)
+    for sid, ids in ungraded.items():
+        counts[sid]['ungraded'] = len(ids)
+    return counts
+
+
+def _report_counts(schools, quarter, today):
+    """Cached excellent_ungraded_counts — requests are read-only; the
+    refresh_rankings cron keeps the current quarter warm. Returns None
+    on a cold/busy cache (cells render '—', the page never stalls)."""
+    from .views import (
+        RankingRefreshBusy, _ranking_cached, academic_year_start,
+        rankings_read_only,
+    )
+    key = report_counts_cache_key(quarter, academic_year_start(today))
+    with rankings_read_only():
+        try:
+            return _ranking_cached(
+                key, lambda: excellent_ungraded_counts(
+                    schools, quarter, today))
+        except RankingRefreshBusy:
+            return None
+
+
+# ---------------------------------------------------------------------------
 # District report (director / staff)
 # ---------------------------------------------------------------------------
 
@@ -203,21 +313,17 @@ def collect_district_report(period, today=None):
     movements = _movements_per_school(school_ids, start, end)
     home_counts = _home_students_per_school(school_ids)
 
-    # Аълохон / Бебаҳо per school for the resolved quarter — the same
-    # merged-mark collectors the Ҳуҷҷатнигорӣ lists use.
-    excellent_counts = {}
-    ungraded_counts = {}
-    for s in schools:
-        exc = collect_excellent_students(s, quarter, today)
-        ung = collect_ungraded_students(s, quarter, today)
-        excellent_counts[s.id] = len(exc['students'])
-        ungraded_counts[s.id] = ung['students']
+    # Аълохон / Бебаҳо per school for the resolved quarter — one
+    # district-wide merged scan served from the cron-warmed cache
+    # (None on a cold cache; cells render '—').
+    counts = _report_counts(schools, quarter, today)
 
     school_rows = []
     for s in schools:
         a = activity_by_school.get(s.id, {})
         teachers = a.get('teachers', [])
         t_n, no_grades, met, not_met = _teacher_summary(teachers)
+        c = (counts or {}).get(s.id) or {}
         school_rows.append({
             'school': s,
             'students': a.get('students', 0),
@@ -232,8 +338,8 @@ def collect_district_report(period, today=None):
             'arrivals': movements[s.id]['arrival'],
             'departures': movements[s.id]['departure'],
             'home_students': home_counts.get(s.id, 0),
-            'excellent': excellent_counts[s.id],
-            'ungraded': ungraded_counts[s.id],
+            'excellent': c.get('excellent'),
+            'ungraded': c.get('ungraded'),
         })
 
     classes = rankings['classes']
@@ -449,7 +555,8 @@ def build_report_workbook(data, today=None):
                'Аълохон ва бебаҳо — мактабҳо кесимида',
                f"{sub} · Чоряки {data['quarter']}",
                ('№', 'Мактаб', 'Аълохон', 'Бебаҳо'),
-               [(i, r['school'].name, r['excellent'], r['ungraded'])
+               [(i, r['school'].name, fnum(r['excellent']),
+                 fnum(r['ungraded']))
                 for i, r in enumerate(data['school_rows'], 1)],
                (5, 44, 12, 12))
 

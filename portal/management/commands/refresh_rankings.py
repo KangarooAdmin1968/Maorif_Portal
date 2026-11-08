@@ -16,6 +16,7 @@ single-flight locks, so an overlap with a leftover request-side or
 previous-run refresh is handled by the existing machinery.
 """
 
+import datetime
 import logging
 
 from django.core.management.base import BaseCommand
@@ -75,6 +76,26 @@ class Command(BaseCommand):
         except Exception as exc:  # noqa: BLE001
             skipped.append(f'readiness: {exc}')
             logger.exception('refresh_rankings: readiness failed')
+
+        # District Аълохон/Бебаҳо counts for the Ҳисоботҳо page — one
+        # district-wide merged scan, same bounded-refresh cache the
+        # reports view serves read-only (per-quarter key).
+        try:
+            from portal.reports import (
+                excellent_ungraded_counts, report_counts_cache_key)
+            from portal.views import academic_year_start, get_date_quarter
+            today = datetime.date.today()
+            quarter = get_date_quarter(today) or 1
+            _ranking_cached(
+                report_counts_cache_key(
+                    quarter, academic_year_start(today)),
+                lambda: excellent_ungraded_counts(schools, quarter, today))
+            refreshed.append('report_counts')
+        except RankingRefreshBusy:
+            skipped.append('report_counts: busy')
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f'report_counts: {exc}')
+            logger.exception('refresh_rankings: report_counts failed')
 
         self.stdout.write(
             'refreshed: %s%s' % (

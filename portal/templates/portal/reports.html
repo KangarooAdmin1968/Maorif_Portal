@@ -97,8 +97,8 @@
             <td class="c">{% if r.not_met %}<span class="rp-warn">{{ r.not_met }}</span>{% else %}0{% endif %}</td>
             <td class="c">{{ r.fulfillment }}%</td>
             <td class="c">{{ r.gpa|default:'—' }}</td>
-            <td class="c">{{ r.excellent }}</td>
-            <td class="c">{{ r.ungraded }}</td>
+            <td class="c">{{ r.excellent|default_if_none:'—' }}</td>
+            <td class="c">{{ r.ungraded|default_if_none:'—' }}</td>
         </tr>
         {% endfor %}
         </tbody>

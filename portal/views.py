@@ -10384,3 +10384,82 @@ def news_photo_action(request, photo_id):
         replace_main_photo(photo)
     return redirect('news_edit', pk=news_id)
 
+
+# ---------------------------------------------------------------------------
+# Ҳисоботлар — live role-scoped reports (director district / zavuch school)
+# ---------------------------------------------------------------------------
+
+def _collect_report(request):
+    """Shared scope resolution for the reports page and its export.
+
+    Returns (data, period, can_district, school, options); `school` is
+    set only for the per-school view (zavuch/principal always, director
+    after picking a school). None when the user may not see reports.
+    """
+    role = get_user_role(request.user)
+    is_zavuch = _is_zavuch(request.user, role)
+    can_district = (request.user.is_superuser or request.user.is_staff
+                    or role == settings.ROLE_DIRECTOR)
+    if not (can_district or is_zavuch
+            or role == settings.ROLE_PRINCIPAL):
+        return None
+
+    from . import reports as reports_mod  # lazy — avoids import cycles
+    options = reports_mod.report_period_options()
+    valid = {v for v, _ in options}
+    period = request.GET.get('period', '')
+    if period not in valid:
+        period = f'q{get_date_quarter(datetime.date.today()) or 1}'
+
+    school = None
+    if can_district:
+        sid = request.GET.get('school', '').strip()
+        if sid.isdigit():
+            cand = School.objects.filter(pk=int(sid)).first()
+            if cand is not None and is_academic_school(cand):
+                school = cand
+    else:
+        school = get_user_school(request.user)
+        if school is None:
+            return None
+
+    data = (reports_mod.collect_school_report(school, period)
+            if school is not None
+            else reports_mod.collect_district_report(period))
+    return data, period, can_district, school, options
+
+
+@login_required
+def reports_view(request):
+    resolved = _collect_report(request)
+    if resolved is None:
+        return redirect('dashboard')
+    data, period, can_district, school, options = resolved
+    return render(request, 'portal/reports.html', {
+        'data': data,
+        'period_options': options,
+        'selected_period': period,
+        'selected_school': school,
+        'can_district': can_district,
+    })
+
+
+@login_required
+def reports_export(request):
+    resolved = _collect_report(request)
+    if resolved is None:
+        return redirect('dashboard')
+    data, _period, _cd, _s, _o = resolved
+    from . import reports as reports_mod
+    output = reports_mod.build_report_workbook(data)
+    label = (data['school'].name if data['kind'] == 'school'
+             else 'Ҳудуд')
+    filename = f"Ҳисобот_{label}_{data['period_label']}.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
+    response = HttpResponse(
+        output.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
+    return response
+

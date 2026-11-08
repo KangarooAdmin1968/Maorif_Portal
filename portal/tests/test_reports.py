@@ -55,7 +55,19 @@ class SchoolReportTests(GoldenBase):
         names = {t['name'] for t in data['teacher_rows']}
         self.assertIn('Омӯзгор Якка', names)
         for t in data['teacher_rows']:
-            self.assertIn(t['status'], ('Иҷро шуд', 'Қафо монд', 'Баҳо нест'))
+            self.assertIn(t['status'], ('Иҷро шуд', 'Қафо монд',
+                                        'Баҳо нест', 'Бебаҳо бор'))
+
+    def test_teacher_flagged_when_student_has_no_marks(self):
+        """Aggregate quota is not enough — a teacher whose students
+        include bebaho (no mark at all in the current quarter) must
+        not read «Иҷро шуд», and the row must name where the gap is."""
+        # s2 (7-А) has no marks anywhere; teacher_a teaches her МАТЕМАТИКА.
+        data = collect_school_report(self.school_a, 'q2')
+        row = next(t for t in data['teacher_rows']
+                   if t['name'] == 'Омӯзгор Якка')
+        self.assertIn('7-А МАТЕМАТИКА', row['missing_detail'])
+        self.assertNotEqual(row['status'], 'Иҷро шуд')
 
 
 class DistrictReportTests(GoldenBase):

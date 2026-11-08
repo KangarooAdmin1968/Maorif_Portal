@@ -239,7 +239,7 @@
             <td class="c">{{ t.min_grades }}</td>
             <td class="c">{{ t.grades_done }}</td>
             <td class="c">{{ t.fulfillment }}%</td>
-            <td class="c">{% if t.status == 'Иҷро шуд' %}<span class="rp-ok">✅ {{ t.status }}</span>{% elif t.status == 'Баҳо нест' %}<span class="rp-bad">❌ {{ t.status }}</span>{% else %}<span class="rp-warn">⚠️ {{ t.status }}</span>{% endif %}</td>
+            <td class="c">{% if t.status == 'Иҷро шуд' %}<span class="rp-ok">✅ {{ t.status }}</span>{% elif t.status == 'Баҳо нест' %}<span class="rp-bad">❌ {{ t.status }}</span>{% else %}<span class="rp-warn">⚠️ {{ t.status }}</span>{% endif %}{% if t.missing_detail %}<div style="font-size:.72rem; color:#b45309; margin-top:.15rem;">{{ t.missing_detail }}</div>{% endif %}</td>
         </tr>
         {% empty %}<tr><td colspan="8" class="c">Маълумот нест.</td></tr>{% endfor %}
         </tbody>

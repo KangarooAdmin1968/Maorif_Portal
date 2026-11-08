@@ -413,7 +413,7 @@ def collect_school_report(school, period, today=None):
         elif t['fulfillment'] < 100:
             status = 'Қафо монд'
         elif missing:
-            status = 'Бебаҳо бор'
+            status = 'Бебаҳо дорад'
         else:
             status = 'Иҷро шуд'
         detail = ''

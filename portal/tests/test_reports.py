@@ -3,6 +3,7 @@
 Covers: scope (district vs own school), section completeness for both
 report kinds, teacher-norm bucketing, and the multi-sheet Excel export.
 """
+import datetime
 import io
 
 from django.test import Client
@@ -72,6 +73,87 @@ class SchoolReportTests(GoldenBase):
         self.assertNotEqual(row['status'], 'Иҷро шуд')
 
 
+class QuarterScopedReportTests(GoldenBase):
+    """The period selector's quarter now drives the teacher/journal
+    status tables too — a finished quarter reads its final verdict."""
+
+    def setUp(self):
+        super().setUp()
+        make_teacher_profile(
+            self.teacher_a, self.school_a, 'Омӯзгор Якка')
+        make_grade(self.s1, subject=MATH, score=8, date=D_Q1)
+
+    def test_school_teacher_status_follows_selected_quarter(self):
+        # s1 has one Q1 mark and nothing in Q2: the two periods must
+        # give different readings, not today's live quarter both times.
+        q1_res = resolve_period('q1')[4]
+        q2_res = resolve_period('q2')[4]
+        if q1_res == q2_res:
+            self.skipTest(
+                'both periods resolve to the same quarter (early year)')
+        row1 = next(
+            t for t in collect_school_report(self.school_a, 'q1')
+            ['teacher_rows'] if t['name'] == 'Омӯзгор Якка')
+        row2 = next(
+            t for t in collect_school_report(self.school_a, 'q2')
+            ['teacher_rows'] if t['name'] == 'Омӯзгор Якка')
+        self.assertGreater(row1['grades_done'], 0)
+        self.assertEqual(row2['grades_done'], 0)
+        self.assertEqual(row2['status'], 'Баҳо нест')
+
+    def test_district_past_quarter_marks_wanted(self):
+        """A non-current quarter must not touch the shared readiness
+        key — the view marks it so the cron warms its own key."""
+        from portal.reports import wanted_report_quarters
+        from portal.views import (
+            _current_quarter_bounds, academic_year_quarter_windows,
+            academic_year_start)
+        ay = academic_year_start()
+        today = datetime.date.today()
+        cur = _current_quarter_bounds(today)
+        past = [q for q, (s, e)
+                in academic_year_quarter_windows(ay).items()
+                if e < today and (s, e) != cur]
+        if not past:
+            self.skipTest('no finished quarter yet this year')
+        collect_district_report(f'q{past[0]}')
+        self.assertIn((past[0], ay), wanted_report_quarters())
+
+    def test_refresh_rankings_warms_wanted_quarter(self):
+        # Mark an already-started quarter directly — during the
+        # inter-quarter vacation the just-ended quarter still counts
+        # as "current", so the report path can't mark it; the marker
+        # itself only guards future quarters, which is what matters.
+        from django.core.management import call_command
+        from portal.reports import (
+            mark_report_quarter_wanted, wanted_report_quarters)
+        from portal.views import (
+            _ranking_cache_get, academic_year_quarter_windows,
+            academic_year_start, readiness_quarter_cache_key)
+        ay = academic_year_start()
+        today = datetime.date.today()
+        started = [q for q, (s, _e)
+                   in academic_year_quarter_windows(ay).items()
+                   if s <= today]
+        if not started:
+            self.skipTest('no started quarter yet this year')
+        mark_report_quarter_wanted(started[0], ay)
+        self.assertIn((started[0], ay), wanted_report_quarters())
+        call_command('refresh_rankings')
+        entry = _ranking_cache_get(
+            readiness_quarter_cache_key(started[0], ay))
+        self.assertIsNotNone(entry)
+
+
+def _current_report_period():
+    """The period the reports view defaults to — the quarter today's
+    grading writes land in (a vacation day attributes to the quarter
+    that just ended). Only it is served from the shared readiness key.
+    """
+    from portal.views import get_date_quarter
+    return f'q{get_date_quarter(datetime.date.today()) or 1}'
+
+
 class DistrictReportTests(GoldenBase):
     def setUp(self):
         super().setUp()
@@ -85,7 +167,7 @@ class DistrictReportTests(GoldenBase):
         # cron-warmed cache — warm it like production does.
         from django.core.management import call_command
         call_command('refresh_rankings')
-        data = collect_district_report('q2')
+        data = collect_district_report(_current_report_period())
         self.assertEqual(data['kind'], 'district')
         self.assertEqual(len(data['school_rows']), 2)
         row = {r['school'].id: r for r in data['school_rows']}
@@ -101,7 +183,7 @@ class DistrictReportTests(GoldenBase):
         # warms them first, like production.
         from django.core.management import call_command
         call_command('refresh_rankings')
-        data = collect_district_report('q2')
+        data = collect_district_report(_current_report_period())
         top = {c['class_name'] for c in data['top_classes']}
         weak = {c['class_name'] for c in data['weak_classes']}
         self.assertIn('7-А', top)

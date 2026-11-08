@@ -97,6 +97,34 @@ class Command(BaseCommand):
             skipped.append(f'report_counts: {exc}')
             logger.exception('refresh_rankings: report_counts failed')
 
+        # Reports' per-quarter readiness — the Ҳисоботҳо district view
+        # marks past quarters it was asked for; warm exactly those under
+        # the same single-flight machinery (never inside a request).
+        try:
+            from portal.reports import wanted_report_quarters
+            from portal.views import (
+                academic_year_quarter_windows,
+                readiness_quarter_cache_key)
+            for q, ay in sorted(wanted_report_quarters()):
+                window = academic_year_quarter_windows(ay).get(q)
+                if window is None:
+                    continue
+                key = readiness_quarter_cache_key(q, ay)
+                try:
+                    _ranking_cached(
+                        key,
+                        lambda w=window: _compute_school_readiness_payload(
+                            schools, gpa_map, quarter_window=w))
+                    refreshed.append(f'readiness:q{q}')
+                except RankingRefreshBusy:
+                    skipped.append(f'readiness:q{q}: busy')
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append(f'readiness:q{q}: {exc}')
+                    logger.exception(
+                        'refresh_rankings: readiness q%s failed', q)
+        except Exception:  # noqa: BLE001 — optional feature, keep running
+            logger.exception('refresh_rankings: quarter readiness failed')
+
         # Due-quarter closeout rides the same schedule: the day after a
         # grading window ends (e.g. 09.11 for Q1), every unfinished
         # quarter is locked and archived as if each завуч pressed

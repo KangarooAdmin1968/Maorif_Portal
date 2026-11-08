@@ -13,8 +13,10 @@ nothing is recomputed differently here:
 * Таҳсил дар хона — active home TeachingGroup memberships.
 
 The period selector (month / quarter / semester / year) reuses the
-Назорат period machinery; quarter-scoped sections use the quarter whose
-window contains the period's end date.
+Назорат period machinery; quarter-scoped sections — Аълохон, Бебаҳо
+and the teacher/journal status tables — use the quarter whose window
+contains the period's end date: a finished quarter reads its final
+verdict against the full norm, not the live elapsed pace.
 """
 import datetime
 import io
@@ -93,19 +95,71 @@ def _rankings_block():
         }
 
 
-def _readiness_payload(schools, gpa_map):
+# Past quarters the district report was asked to display. In-request
+# district scans are forbidden (the OOM/504 rule), so a non-current
+# quarter is marked here and refresh_rankings warms its readiness key —
+# the first cold view renders '—' until the next cron tick fills it.
+REPORT_WANTED_READINESS_KEY = 'rank:v1:report_wanted_readiness'
+_REPORT_WANTED_TTL = 24 * 3600
+
+
+def mark_report_quarter_wanted(quarter, academic_year):
+    """Record a quarter the reports view needs warmed by the cron."""
+    from django.core.cache import cache
+    from .academic_calendar import quarter_windows
+    if quarter_windows(academic_year)[quarter][0] > datetime.date.today():
+        return  # future quarter — nothing to warm
+    try:
+        wanted = set(cache.get(REPORT_WANTED_READINESS_KEY) or ())
+        wanted.add((quarter, academic_year))
+        cache.set(REPORT_WANTED_READINESS_KEY, wanted,
+                  _REPORT_WANTED_TTL)
+    except Exception:
+        pass
+
+
+def wanted_report_quarters():
+    """{(quarter, academic_year)} the reports view asked for."""
+    from django.core.cache import cache
+    try:
+        return cache.get(REPORT_WANTED_READINESS_KEY) or set()
+    except Exception:
+        return set()
+
+
+def _readiness_payload(schools, gpa_map, quarter=None):
     """(stats, activity) — the shared school-readiness computation.
 
     District calls go through the readiness cache (same key the
     monitoring page uses); a single school is cheap enough to compute
     directly so a zavuch never waits on district data.
+
+    ``quarter`` pins the scan to that quarter's official window — the
+    reports period selector. A finished quarter reads its final verdict
+    against the full norm (progress 1.0), not the live elapsed pace.
+    The shared cache key only ever holds the current quarter; a past
+    quarter gets its own key, warmed by refresh_rankings on demand.
     """
     from .views import (
         READINESS_CACHE_KEY, RankingRefreshBusy, _ranking_cached,
-        _compute_school_readiness_payload, rankings_read_only,
+        _compute_school_readiness_payload, _current_quarter_bounds,
+        academic_year_quarter_windows, academic_year_start,
+        readiness_quarter_cache_key, rankings_read_only,
     )
+    window = None
+    key = READINESS_CACHE_KEY
+    if quarter is not None:
+        ay = academic_year_start()
+        window = academic_year_quarter_windows(ay)[quarter]
+        if window == _current_quarter_bounds(datetime.date.today()):
+            window = None
+        else:
+            key = readiness_quarter_cache_key(quarter, ay)
     if len(schools) == 1:
-        return _compute_school_readiness_payload(schools, gpa_map)
+        return _compute_school_readiness_payload(
+            schools, gpa_map, quarter_window=window)
+    if quarter is not None and window is not None:
+        mark_report_quarter_wanted(quarter, ay)
     try:
         # Read-only like every request path: a cold cache must never
         # trigger the district-wide readiness scan inside a request —
@@ -113,8 +167,9 @@ def _readiness_payload(schools, gpa_map):
         # built to prevent. Fresh/shadow entry, else an empty block.
         with rankings_read_only():
             return _ranking_cached(
-                READINESS_CACHE_KEY,
-                lambda: _compute_school_readiness_payload(schools, gpa_map))
+                key,
+                lambda: _compute_school_readiness_payload(
+                    schools, gpa_map, quarter_window=window))
     except RankingRefreshBusy:
         return [], []
 
@@ -312,7 +367,7 @@ def collect_district_report(period, today=None):
 
     rankings = _rankings_block()
     gpa_map = {d['school'].id: d['gpa'] for d in rankings['schools']} or None
-    _, activity = _readiness_payload(schools, gpa_map)
+    _, activity = _readiness_payload(schools, gpa_map, quarter=quarter)
     activity_by_school = {a['school'].id: a for a in activity}
 
     movements = _movements_per_school(school_ids, start, end)
@@ -380,7 +435,7 @@ def collect_school_report(school, period, today=None):
 
     rankings = _rankings_block()
     gpa_map = {d['school'].id: d['gpa'] for d in rankings['schools']} or None
-    _, activity = _readiness_payload([school], gpa_map)
+    _, activity = _readiness_payload([school], gpa_map, quarter=quarter)
     act = activity[0] if activity else {
         'students': 0, 'total_grades': 0, 'fulfillment': 0.0,
         'gpa': None, 'teachers': []}

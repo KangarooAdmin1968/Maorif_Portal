@@ -1930,6 +1930,17 @@ RANKING_DIRTY_TTL = RANKING_STALE_TTL
 # bookkeeping is untouched; the dirty stamp still bounds its freshness
 # and signals delete it alongside the others.
 READINESS_CACHE_KEY = 'rank:v1:readiness'
+
+
+def readiness_quarter_cache_key(quarter, academic_year):
+    """Per-quarter readiness key — the Ҳисоботҳо period selector can pin
+    the teacher/journal status scan to a past quarter. The shared
+    READINESS_CACHE_KEY always holds the current quarter; past-quarter
+    keys are warmed by refresh_rankings on demand (the view marks the
+    quarters it asks for)."""
+    return f'{READINESS_CACHE_KEY}:q{quarter}:{academic_year}'
+
+
 # Every cache key the ranking cache can touch (used to fully reset it).
 RANKING_ALL_CACHE_KEYS = (
     RANKING_CACHE_KEYS
@@ -8311,7 +8322,8 @@ def school_readiness_rating(request):
     })
 
 
-def _compute_school_readiness_payload(schools, gpa_map):
+def _compute_school_readiness_payload(schools, gpa_map,
+                                      quarter_window=None):
     """Build (stats, activity) for the readiness leaderboard.
 
     stats — tab 1, lesson-allocation readiness per school.
@@ -8321,6 +8333,11 @@ def _compute_school_readiness_payload(schools, gpa_map):
     single-school call is cheap enough to compute per request.
     gpa_map — {school_id: gpa} from calculate_school_rankings, or None
     (the GPA column is then left blank). is_mine is stamped by the view.
+
+    quarter_window — optional (start, end) pinning the activity scan to
+    one quarter's official window (the Ҳисоботҳо period selector). A
+    finished quarter resolves progress to 1.0: the report then reads
+    the FINAL verdict against the full norm, not the live pace.
     """
     school_ids = [s.id for s in schools]
 
@@ -8405,8 +8422,17 @@ def _compute_school_readiness_payload(schools, gpa_map):
     # of the quarterly minimum is expected. The 100% cap is display-only —
     # it never limits further grade entry.
     today = datetime.date.today()
-    q_start, q_end = _current_quarter_bounds(today)
-    q_progress = _quarter_progress(today)
+    if quarter_window is not None:
+        q_start, q_end = quarter_window
+        # Same elapsed-share rule as _quarter_progress, resolved against
+        # the chosen window: a past quarter gives progress 1.0 — the
+        # report reads its final state against the full-quarter norm.
+        total = (q_end - q_start).days + 1
+        elapsed = min(max((today - q_start).days + 1, 1), total)
+        q_progress = elapsed / total
+    else:
+        q_start, q_end = _current_quarter_bounds(today)
+        q_progress = _quarter_progress(today)
     student_counts = dict(
         Student.objects.filter(school_id__in=school_ids)
         .exclude(class_name__regex=NON_GRADED_RE)

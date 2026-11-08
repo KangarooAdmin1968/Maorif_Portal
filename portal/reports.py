@@ -394,20 +394,27 @@ def collect_school_report(school, period, today=None):
     # they teach have a mark at all? The aggregate quota alone hides
     # the second — a teacher can over-enter for most classes (100%)
     # while leaving some students completely ungraded (the Бебаҳо
-    # list). Flag those teachers with the concrete reason instead of a
-    # misleading «Иҷро шуд».
-    from .views import get_date_quarter
-    current_quarter = get_date_quarter(today) or quarter
-    ung_now = (ungraded if current_quarter == quarter
-               else collect_ungraded_students(
-                   school, current_quarter, today))
+    # list on this very page). Flag those teachers and give every
+    # non-green row a clickable reason: which class+subject students
+    # are ungraded, and which journals are not complete yet.
     missing_by_teacher = defaultdict(lambda: defaultdict(int))
-    for r in ung_now['rows']:
+    for r in ungraded['rows']:
         missing_by_teacher[r['teacher']][(r['class_name'], r['subject'])] += 1
 
     teacher_rows = []
     for t in teachers:
         missing = missing_by_teacher.get(t['name'])
+        reasons = []
+        if missing:
+            reasons += [
+                f"{cn} {sj} — бебаҳо: {n}"
+                for (cn, sj), n in sorted(missing.items())]
+        reasons += [
+            (f"{j['class_name']} {j['subject']}"
+             + (f" ({j['group']})" if j['group'] else '')
+             + (" — Қисман" if j['status'] == 'partial' else " — Холӣ")
+             + f" ({j['students_met']}/{j['students_total']})")
+            for j in t['journal'] if j['status'] != 'complete']
         if t['grades_done'] == 0:
             status = 'Баҳо нест'
         elif t['fulfillment'] < 100:
@@ -416,13 +423,7 @@ def collect_school_report(school, period, today=None):
             status = 'Баҳогузорӣ нашудааст'
         else:
             status = 'Иҷро шуд'
-        detail = ''
-        if missing:
-            detail = '; '.join(
-                f"{cn} {sj}: {n}"
-                for (cn, sj), n in sorted(missing.items()))
-        teacher_rows.append({**t, 'status': status,
-                             'missing_detail': detail})
+        teacher_rows.append({**t, 'status': status, 'reasons': reasons})
 
     movements = list(
         StudentMovement.objects.filter(
@@ -624,8 +625,9 @@ def build_report_workbook(data, today=None):
                [(i, t['name'], '; '.join(t['subjects']), t['hours'],
                  t['min_grades'], t['grades_done'],
                  f"{t['fulfillment']}%",
-                 t['status'] + (f" ({t['missing_detail']})"
-                                if t.get('missing_detail') else ''))
+                 t['status'] + (f" ({'; '.join(t['reasons'][:3])}"
+                                + (' …' if len(t['reasons']) > 3 else '')
+                                + ')' if t['reasons'] else ''))
                 for i, t in enumerate(data['teacher_rows'], 1)],
                (5, 24, 36, 8, 9, 11, 8, 11))
 

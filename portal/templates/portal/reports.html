@@ -25,6 +25,11 @@
   details.rp-details > summary { cursor: pointer; font-weight: 600; color: #003366; padding: .35rem .6rem; border: 1px solid #e5e7eb; border-radius: .5rem; background: #f8fafc; margin-bottom: .5rem; }
   details.rp-details > summary::-webkit-details-marker { display: none; }
   .rp-note { font-size: .82rem; color: #6b7280; font-weight: 400; }
+  details.rp-reason > summary { cursor: pointer; list-style: none; }
+  details.rp-reason > summary::-webkit-details-marker { display: none; }
+  details.rp-reason > summary::after { content: ' ▾'; font-size: .7rem; color: #6b7280; }
+  details.rp-reason[open] > summary::after { content: ' ▴'; }
+  ul.rp-reason-list { margin: .4rem 0 0; padding-left: 1.1rem; text-align: left; font-size: .76rem; color: #92400e; line-height: 1.5; }
 </style>
 {% endblock %}
 {% block content %}
@@ -54,9 +59,9 @@
     <a class="btn btn-primary" href="{% url 'reports_export' %}?period={{ selected_period }}{% if selected_school %}&amp;school={{ selected_school.id }}{% endif %}">⬇️ Excel</a>
 </div>
 
+{% if data.kind == 'school' %}
 <div class="rp-card no-print">
     <h2>📑 Ҳуҷҷатҳо</h2>
-    {% if data.kind == 'school' %}
     <div style="display:flex; flex-wrap:wrap; gap:.4rem;">
         <a href="{% url 'workload_tabel' %}?school_id={{ data.school.id }}" class="btn">📋 Табели сарборӣ</a>
         <a href="{% url 'class_reports' %}?school_id={{ data.school.id }}" class="btn">📊 Ҳисоботи синфҳо</a>
@@ -67,10 +72,8 @@
         <a href="{% url 'ungraded_students' %}?school_id={{ data.school.id }}" class="btn">⚠️ Бебаҳогон</a>
         <a href="{% url 'academic_years' %}?school_id={{ data.school.id }}" class="btn">🔒 Якуни чоряк</a>
     </div>
-    {% else %}
-    <a href="{% url 'school_documents' %}" class="btn">📑 Ҳуҷҷатнигорӣ — муассисаро интихоб кунед</a>
-    {% endif %}
 </div>
+{% endif %}
 
 {% if data.kind == 'district' %}
 <!-- ======================= ҲУДУД (мудир) ======================= -->
@@ -239,7 +242,7 @@
             <td class="c">{{ t.min_grades }}</td>
             <td class="c">{{ t.grades_done }}</td>
             <td class="c">{{ t.fulfillment }}%</td>
-            <td class="c">{% if t.status == 'Иҷро шуд' %}<span class="rp-ok">✅ {{ t.status }}</span>{% elif t.status == 'Баҳо нест' %}<span class="rp-bad">❌ {{ t.status }}</span>{% else %}<span class="rp-warn">⚠️ {{ t.status }}</span>{% endif %}{% if t.missing_detail %}<div style="font-size:.72rem; color:#b45309; margin-top:.15rem;">{{ t.missing_detail }}</div>{% endif %}</td>
+            <td class="c">{% if t.status == 'Иҷро шуд' %}<span class="rp-ok">✅ {{ t.status }}</span>{% elif t.reasons %}<details class="rp-reason"><summary>{% if t.status == 'Баҳо нест' %}<span class="rp-bad">❌ {{ t.status }}</span>{% else %}<span class="rp-warn">⚠️ {{ t.status }}</span>{% endif %}</summary><ul class="rp-reason-list">{% for r in t.reasons %}<li>{{ r }}</li>{% endfor %}</ul></details>{% elif t.status == 'Баҳо нест' %}<span class="rp-bad">❌ {{ t.status }}</span>{% else %}<span class="rp-warn">⚠️ {{ t.status }}</span>{% endif %}</td>
         </tr>
         {% empty %}<tr><td colspan="8" class="c">Маълумот нест.</td></tr>{% endfor %}
         </tbody>

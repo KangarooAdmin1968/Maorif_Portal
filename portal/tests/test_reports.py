@@ -67,7 +67,8 @@ class SchoolReportTests(GoldenBase):
         data = collect_school_report(self.school_a, 'q2')
         row = next(t for t in data['teacher_rows']
                    if t['name'] == 'Омӯзгор Якка')
-        self.assertIn('7-А МАТЕМАТИКА', row['missing_detail'])
+        self.assertTrue(
+            any('7-А МАТЕМАТИКА' in r for r in row['reasons']))
         self.assertNotEqual(row['status'], 'Иҷро шуд')
 
 

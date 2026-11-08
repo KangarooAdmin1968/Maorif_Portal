@@ -55,7 +55,7 @@ class SchoolReportTests(GoldenBase):
         names = {t['name'] for t in data['teacher_rows']}
         self.assertIn('Омӯзгор Якка', names)
         for t in data['teacher_rows']:
-            self.assertIn(t['status'], ('Баҷарди', 'Кам', 'Баҳо йўқ'))
+            self.assertIn(t['status'], ('Иҷро шуд', 'Қафо монд', 'Баҳо нест'))
 
 
 class DistrictReportTests(GoldenBase):

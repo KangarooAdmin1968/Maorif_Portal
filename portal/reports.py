@@ -279,11 +279,11 @@ def collect_school_report(school, period, today=None):
     teacher_rows = []
     for t in teachers:
         if t['grades_done'] == 0:
-            status = 'Баҳо йўқ'
+            status = 'Баҳо нест'
         elif t['fulfillment'] >= 100:
-            status = 'Баҷарди'
+            status = 'Иҷро шуд'
         else:
-            status = 'Кам'
+            status = 'Қафо монд'
         teacher_rows.append({**t, 'status': status})
 
     excellent = collect_excellent_students(school, quarter, today)
@@ -400,10 +400,10 @@ def build_report_workbook(data, today=None):
         sub = (f"{data['period_label']} · Соли таҳсили "
                f"{data['academic_year']}–{data['academic_year'] + 1}")
         _sheet(wb, 'Умумий ҳолат',
-               'Ҳолати умумии ҳудуд — мактаблар кесимида', sub,
-               ('№', 'Мактаб', 'Хонандагон', 'Ўқитувчилар',
-                'Баҳо қўймаган', 'Меъёрни баҷарган', 'Бажармаган',
-                'Меъёр %', 'GPA'),
+               'Ҳолати умумии ноҳия — мактабҳо кесимида', sub,
+               ('№', 'Мактаб', 'Хонандагон', 'Омӯзгорон',
+                'Баҳо нагузоштаанд', 'Меъёрро иҷро кардаанд',
+                'Қафо мондаанд', 'Иҷрои меъёр %', 'Холи миёна'),
                [(i, r['school'].name, r['students'], r['teachers'],
                  r['no_grades'], r['met'], r['not_met'],
                  f"{r['fulfillment']}%", fnum(r['gpa']))
@@ -411,42 +411,42 @@ def build_report_workbook(data, today=None):
                (5, 34, 11, 11, 11, 12, 11, 9, 8))
 
         _sheet(wb, 'Рейтинги мактабҳо', 'Рейтинги муассисаҳо', sub,
-               ('№', 'Мактаб', 'GPA'),
+               ('№', 'Мактаб', 'Холи миёна'),
                [(d.get('rank', i), d['school'].name, d['gpa'])
                 for i, d in enumerate(data['school_ranking'], 1)],
                (6, 46, 10))
 
         _sheet(wb, 'Синфҳои пешқадам',
                '20 синфи пешқадам', sub,
-               ('№', 'Мактаб', 'Синф', 'GPA'),
+               ('№', 'Мактаб', 'Синф', 'Холи миёна'),
                [(i, c['school_name'], c['class_name'], c['gpa'])
                 for i, c in enumerate(data['top_classes'], 1)],
                (6, 40, 10, 10))
 
         _sheet(wb, 'Синфҳои заиф',
                '20 синфи заиф', sub,
-               ('№', 'Мактаб', 'Синф', 'GPA'),
+               ('№', 'Мактаб', 'Синф', 'Холи миёна'),
                [(i, c['school_name'], c['class_name'], c['gpa'])
                 for i, c in enumerate(data['weak_classes'], 1)],
                (6, 40, 10, 10))
 
         _sheet(wb, 'Рейтинги фанҳо', 'Рейтинги фанҳо', sub,
-               ('№', 'Фан', 'GPA'),
+               ('№', 'Фан', 'Холи миёна'),
                [(d.get('rank', i), d['subject'], d['gpa'])
                 for i, d in enumerate(data['subject_ranking'], 1)],
                (6, 46, 10))
 
         _sheet(wb, 'Хонандагони беҳтарин',
                '100 хонандаи беҳтарин', sub,
-               ('№', 'Ному насаб', 'Синф', 'Мактаб', 'GPA',
-                'Ҷой дар ҳудуд', 'Ҷой дар мактаб'),
+               ('№', 'Ному насаб', 'Синф', 'Мактаб', 'Холи миёна',
+                'Ҷойи ноҳиявӣ', 'Ҷойи муассисавӣ'),
                [(i, s['full_name'], s['class_name'], s['school_name'],
                  s['gpa'], s['district_rank'], s['school_rank'])
                 for i, s in enumerate(data['top_students'], 1)],
                (6, 30, 9, 30, 8, 10, 10))
 
         _sheet(wb, 'Аълохон ва Бебаҳо',
-               'Аълохон ва бебаҳо — мактаблар кесимида',
+               'Аълохон ва бебаҳо — мактабҳо кесимида',
                f"{sub} · Чоряки {data['quarter']}",
                ('№', 'Мактаб', 'Аълохон', 'Бебаҳо'),
                [(i, r['school'].name, r['excellent'], r['ungraded'])
@@ -454,7 +454,7 @@ def build_report_workbook(data, today=None):
                (5, 44, 12, 12))
 
         _sheet(wb, 'Ҳолати журналҳо',
-               'Ҳолати журналҳо — мактаблар кесимида', sub,
+               'Ҳолати журналҳо — мактабҳо кесимида', sub,
                ('№', 'Мактаб', 'Пурра', 'Қисман', 'Холӣ', 'Пурра %'),
                [(i, r['school'].name, r['journal']['complete'],
                  r['journal']['partial'], r['journal']['empty'],
@@ -463,14 +463,14 @@ def build_report_workbook(data, today=None):
                (5, 40, 10, 10, 10, 10))
 
         _sheet(wb, 'Ҳаракати хонандагон',
-               'Ҳаракати хонандагон — мактаблар кесимида', sub,
+               'Ҳаракати хонандагон — мактабҳо кесимида', sub,
                ('№', 'Мактаб', 'Омад', 'Рафт'),
                [(i, r['school'].name, r['arrivals'], r['departures'])
                 for i, r in enumerate(data['school_rows'], 1)],
                (5, 44, 12, 12))
 
         _sheet(wb, 'Таҳсил дар хона',
-               'Таҳсил дар хона — мактаблар кесимида', sub,
+               'Таҳсил дар хона — мактабҳо кесимида', sub,
                ('№', 'Мактаб', 'Хонандагон'),
                [(i, r['school'].name, r['home_students'])
                 for i, r in enumerate(data['school_rows'], 1)],
@@ -480,9 +480,9 @@ def build_report_workbook(data, today=None):
         sub = (f"{school.name} · {data['period_label']} · Соли таҳсили "
                f"{data['academic_year']}–{data['academic_year'] + 1}")
         _sheet(wb, 'Меъёри омӯзгорон',
-               'Баҷарди меъёр — омӯзгорон кесимида', sub,
+               'Иҷрои меъёр — омӯзгорон кесимида', sub,
                ('№', 'Омӯзгор', 'Фан ва синфҳо', 'Соат', 'Меъёр',
-                'Киритилган', '%', 'Ҳолат'),
+                'Сабтшуда', '%', 'Ҳолат'),
                [(i, t['name'], '; '.join(t['subjects']), t['hours'],
                  t['min_grades'], t['grades_done'],
                  f"{t['fulfillment']}%", t['status'])
@@ -492,7 +492,7 @@ def build_report_workbook(data, today=None):
         _sheet(wb, 'Ҳолати журналҳо',
                'Ҳолати журналҳо — синф × фан кесимида', sub,
                ('№', 'Омӯзгор', 'Синф', 'Фан', 'Гурӯҳ',
-                'Меъёрга етган', 'Ҳолат'),
+                'Меъёрро иҷро кардаанд', 'Ҳолат'),
                [(i, t['name'], j['class_name'], j['subject'],
                  j['group'] or '—',
                  f"{j['students_met']}/{j['students_total']}",
@@ -540,14 +540,15 @@ def build_report_workbook(data, today=None):
 
         _sheet(wb, 'Рейтинги синфҳо',
                'Рейтинги синфҳо', sub,
-               ('№', 'Синф', 'GPA'),
+               ('№', 'Синф', 'Холи миёна'),
                [(i, c['class_name'], c['gpa'])
                 for i, c in enumerate(data['class_ranking'], 1)],
                (6, 12, 10))
 
         _sheet(wb, 'Хонандагони беҳтарин',
                'Хонандагони беҳтарин — мактаб', sub,
-               ('№', 'Ному насаб', 'Синф', 'GPA', 'Ҷой дар мактаб'),
+               ('№', 'Ному насаб', 'Синф', 'Холи миёна',
+                'Ҷойи муассисавӣ'),
                [(i, s['full_name'], s['class_name'], s['gpa'],
                  s['school_rank'])
                 for i, s in enumerate(data['school_students'], 1)],

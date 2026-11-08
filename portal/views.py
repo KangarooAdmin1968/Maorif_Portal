@@ -10453,7 +10453,7 @@ def reports_export(request):
     from . import reports as reports_mod
     output = reports_mod.build_report_workbook(data)
     label = (data['school'].name if data['kind'] == 'school'
-             else 'Ҳудуд')
+             else 'Ноҳия')
     filename = f"Ҳисобот_{label}_{data['period_label']}.xlsx"
     encoded_filename = urllib.parse.quote(filename)
     response = HttpResponse(

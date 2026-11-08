@@ -42,7 +42,7 @@
         {% if can_district and data.schools %}
         <label>Муассиса
             <select name="school" onchange="this.form.submit()">
-                <option value="">— Умумии ҳудуд —</option>
+                <option value="">— Умумии ноҳия —</option>
                 {% for s in data.schools %}
                 <option value="{{ s.id }}"{% if selected_school and s.id == selected_school.id %} selected{% endif %}>{{ s.name }}</option>
                 {% endfor %}
@@ -51,7 +51,7 @@
         {% endif %}
         <noscript><button type="submit" class="btn">Намоиш</button></noscript>
     </form>
-    <a class="btn btn-primary" href="{% url 'reports_export' %}?period={{ selected_period }}{% if selected_school %}&amp;school={{ selected_school.id }}{% endif %}">📄 Excel юклаш</a>
+    <a class="btn btn-primary" href="{% url 'reports_export' %}?period={{ selected_period }}{% if selected_school %}&amp;school={{ selected_school.id }}{% endif %}">⬇️ Excel</a>
 </div>
 
 <div class="rp-card no-print">
@@ -68,7 +68,7 @@
         <a href="{% url 'academic_years' %}?school_id={{ data.school.id }}" class="btn">🔒 Якуни чоряк</a>
     </div>
     {% else %}
-    <a href="{% url 'school_documents' %}" class="btn">📑 Ҳуҷҷатнигорӣ — мактаб танлаб ҳуҷҷат рост кунед</a>
+    <a href="{% url 'school_documents' %}" class="btn">📑 Ҳуҷҷатнигорӣ — муассисаро интихоб кунед</a>
     {% endif %}
 </div>
 
@@ -76,13 +76,13 @@
 <!-- ======================= ҲУДУД (мудир) ======================= -->
 
 <div class="rp-card">
-    <h2>Ҳолати умумии ҳудуд — мактаблар кесимида <span class="rp-note">(меъёр — чоряки ҷорӣ)</span></h2>
+    <h2>Ҳолати умумии ноҳия — мактабҳо кесимида <span class="rp-note">(меъёр — чоряки ҷорӣ)</span></h2>
     <table class="rp-table">
         <thead><tr>
             <th class="c">№</th><th>Мактаб</th>
-            <th class="c">Хонандагон</th><th class="c">Ўқитувчилар</th>
-            <th class="c">Баҳо қўймаган</th><th class="c">Меъёрни баҷарган</th>
-            <th class="c">Бажармаган</th><th class="c">Меъёр %</th><th class="c">GPA</th>
+            <th class="c">Хонандагон</th><th class="c">Омӯзгорон</th>
+            <th class="c">Баҳо нагузоштаанд</th><th class="c">Меъёрро иҷро кардаанд</th>
+            <th class="c">Қафо мондаанд</th><th class="c">Иҷрои меъёр %</th><th class="c">Холи миёна</th>
             <th class="c">Аълохон</th><th class="c">Бебаҳо</th>
         </tr></thead>
         <tbody>
@@ -109,7 +109,7 @@
 <div class="rp-card">
     <h2>🏆 Рейтинги муассисаҳо</h2>
     <table class="rp-table">
-        <thead><tr><th class="c">Ҷой</th><th>Мактаб</th><th class="c">GPA</th></tr></thead>
+        <thead><tr><th class="c">Ҷой</th><th>Мактаб</th><th class="c">Холи миёна</th></tr></thead>
         <tbody>
         {% for d in data.school_ranking %}
         <tr><td class="c">{{ d.rank }}</td><td>{{ d.school.name }}</td><td class="c">{{ d.gpa }}</td></tr>
@@ -120,7 +120,7 @@
 <div class="rp-card">
     <h2>📚 Рейтинги фанҳо</h2>
     <table class="rp-table">
-        <thead><tr><th class="c">Ҷой</th><th>Фан</th><th class="c">GPA</th></tr></thead>
+        <thead><tr><th class="c">Ҷой</th><th>Фан</th><th class="c">Холи миёна</th></tr></thead>
         <tbody>
         {% for d in data.subject_ranking %}
         <tr><td class="c">{{ d.rank }}</td><td>{{ d.subject }}</td><td class="c">{{ d.gpa }}</td></tr>
@@ -134,7 +134,7 @@
 <div class="rp-card">
     <h2>✅ 20 синфи пешқадам</h2>
     <table class="rp-table">
-        <thead><tr><th class="c">№</th><th>Мактаб</th><th class="c">Синф</th><th class="c">GPA</th></tr></thead>
+        <thead><tr><th class="c">№</th><th>Мактаб</th><th class="c">Синф</th><th class="c">Холи миёна</th></tr></thead>
         <tbody>
         {% for c in data.top_classes %}
         <tr><td class="c">{{ forloop.counter }}</td><td>{{ c.school_name }}</td><td class="c">{{ c.class_name }}</td><td class="c">{{ c.gpa }}</td></tr>
@@ -145,7 +145,7 @@
 <div class="rp-card">
     <h2>⚠️ 20 синфи заиф</h2>
     <table class="rp-table">
-        <thead><tr><th class="c">№</th><th>Мактаб</th><th class="c">Синф</th><th class="c">GPA</th></tr></thead>
+        <thead><tr><th class="c">№</th><th>Мактаб</th><th class="c">Синф</th><th class="c">Холи миёна</th></tr></thead>
         <tbody>
         {% for c in data.weak_classes %}
         <tr><td class="c">{{ forloop.counter }}</td><td>{{ c.school_name }}</td><td class="c">{{ c.class_name }}</td><td class="c">{{ c.gpa }}</td></tr>
@@ -159,7 +159,7 @@
     <details class="rp-details" open>
         <summary>🎓 100 хонандаи беҳтарин</summary>
         <table class="rp-table">
-            <thead><tr><th class="c">№</th><th>Ному насаб</th><th class="c">Синф</th><th>Мактаб</th><th class="c">GPA</th><th class="c">Ҷой дар ҳудуд</th><th class="c">Ҷой дар мактаб</th></tr></thead>
+            <thead><tr><th class="c">№</th><th>Ному насаб</th><th class="c">Синф</th><th>Мактаб</th><th class="c">Холи миёна</th><th class="c">Ҷойи ноҳиявӣ</th><th class="c">Ҷойи муассисавӣ</th></tr></thead>
             <tbody>
             {% for s in data.top_students %}
             <tr><td class="c">{{ forloop.counter }}</td><td>{{ s.full_name }}</td><td class="c">{{ s.class_name }}</td><td>{{ s.school_name }}</td><td class="c">{{ s.gpa }}</td><td class="c">{{ s.district_rank }}</td><td class="c">{{ s.school_rank }}</td></tr>
@@ -214,7 +214,7 @@
     <div class="rp-stat"><div class="n">{{ data.students }}</div><div class="t">Хонандагон</div></div>
     <div class="rp-stat"><div class="n">{{ data.total_grades }}</div><div class="t">Сабтшуда (чоряки ҷорӣ)</div></div>
     <div class="rp-stat ok"><div class="n">{{ data.fulfillment }}%</div><div class="t">Иҷрои меъёр</div></div>
-    <div class="rp-stat"><div class="n">{{ data.gpa|default:'—' }}</div><div class="t">GPA</div></div>
+    <div class="rp-stat"><div class="n">{{ data.gpa|default:'—' }}</div><div class="t">Холи миёна</div></div>
     <div class="rp-stat ok"><div class="n">{{ data.journal.complete }}</div><div class="t">Журнали пурра</div></div>
     <div class="rp-stat warn"><div class="n">{{ data.journal.incomplete }}</div><div class="t">Нопурра / холӣ</div></div>
     <div class="rp-stat"><div class="n">{{ data.excellent.students|length }}</div><div class="t">Аълохон (Ч{{ data.quarter }})</div></div>
@@ -222,12 +222,12 @@
 </div>
 
 <div class="rp-card">
-    <h2>👩‍🏫 Иҷрои меъёр — омӯзгорон кесимида <span class="rp-note">(чоряки ҷорӣ, вақти гузашта ҳисобга олинад)</span></h2>
+    <h2>👩‍🏫 Иҷрои меъёр — омӯзгорон кесимида <span class="rp-note">(чоряки ҷорӣ, вақти гузашта ҳисоб гирифта мешавад)</span></h2>
     <table class="rp-table">
         <thead><tr>
             <th class="c">№</th><th>Омӯзгор</th><th>Фан ва синфҳо</th>
             <th class="c">Соат</th><th class="c">Меъёр</th>
-            <th class="c">Киритилган</th><th class="c">%</th><th class="c">Ҳолат</th>
+            <th class="c">Сабтшуда</th><th class="c">%</th><th class="c">Ҳолат</th>
         </tr></thead>
         <tbody>
         {% for t in data.teacher_rows %}
@@ -239,7 +239,7 @@
             <td class="c">{{ t.min_grades }}</td>
             <td class="c">{{ t.grades_done }}</td>
             <td class="c">{{ t.fulfillment }}%</td>
-            <td class="c">{% if t.status == 'Баҷарди' %}<span class="rp-ok">✅ {{ t.status }}</span>{% elif t.status == 'Баҳо йўқ' %}<span class="rp-bad">❌ {{ t.status }}</span>{% else %}<span class="rp-warn">⚠️ {{ t.status }}</span>{% endif %}</td>
+            <td class="c">{% if t.status == 'Иҷро шуд' %}<span class="rp-ok">✅ {{ t.status }}</span>{% elif t.status == 'Баҳо нест' %}<span class="rp-bad">❌ {{ t.status }}</span>{% else %}<span class="rp-warn">⚠️ {{ t.status }}</span>{% endif %}</td>
         </tr>
         {% empty %}<tr><td colspan="8" class="c">Маълумот нест.</td></tr>{% endfor %}
         </tbody>
@@ -250,7 +250,7 @@
     <details class="rp-details">
         <summary>📖 Ҳолати журналҳо — синф × фан кесимида (Пурра {{ data.journal.complete }} · Қисман {{ data.journal.partial }} · Холӣ {{ data.journal.empty }})</summary>
         <table class="rp-table">
-            <thead><tr><th>Омӯзгор</th><th class="c">Синф</th><th>Фан</th><th class="c">Гурӯҳ</th><th class="c">Меъёрга етган</th><th class="c">Ҳолат</th></tr></thead>
+            <thead><tr><th>Омӯзгор</th><th class="c">Синф</th><th>Фан</th><th class="c">Гурӯҳ</th><th class="c">Меъёрро иҷро кардаанд</th><th class="c">Ҳолат</th></tr></thead>
             <tbody>
             {% for t in data.teacher_rows %}{% for j in t.journal %}
             <tr><td>{{ t.name }}</td><td class="c">{{ j.class_name }}</td><td>{{ j.subject }}</td><td class="c">{{ j.group|default:'—' }}</td><td class="c">{{ j.students_met }}/{{ j.students_total }}</td>
@@ -273,7 +273,7 @@
         </tbody>
     </table>
     {% if data.excellent.blocked %}
-    <p class="rp-note" style="margin-top:.6rem;">Баҳолар пурра набошад (фан камбуд):</p>
+    <p class="rp-note" style="margin-top:.6rem;">Баҳолар пурра нестанд — фани камбуд:</p>
     <table class="rp-table">
         <tbody>
         {% for st, missing in data.excellent.blocked %}
@@ -300,7 +300,7 @@
 <div class="rp-card">
     <h2>📈 Рейтинги синфҳо — мактаб</h2>
     <table class="rp-table">
-        <thead><tr><th class="c">№</th><th class="c">Синф</th><th class="c">GPA</th></tr></thead>
+        <thead><tr><th class="c">№</th><th class="c">Синф</th><th class="c">Холи миёна</th></tr></thead>
         <tbody>
         {% for c in data.class_ranking %}
         <tr><td class="c">{{ forloop.counter }}</td><td class="c">{{ c.class_name }}</td><td class="c">{{ c.gpa }}</td></tr>
@@ -310,9 +310,9 @@
 </div>
 <div class="rp-card">
     <details class="rp-details">
-        <summary>🎓 Хонандагони беҳтарин — мактаб (50 нафари аввал)</summary>
+        <summary>🎓 Хонандагони беҳтарин — мактаб (50 хонандаи аввал)</summary>
         <table class="rp-table">
-            <thead><tr><th class="c">№</th><th>Ному насаб</th><th class="c">Синф</th><th class="c">GPA</th><th class="c">Ҷой дар мактаб</th></tr></thead>
+            <thead><tr><th class="c">№</th><th>Ному насаб</th><th class="c">Синф</th><th class="c">Холи миёна</th><th class="c">Ҷойи муассисавӣ</th></tr></thead>
             <tbody>
             {% for s in data.school_students %}
             <tr><td class="c">{{ forloop.counter }}</td><td>{{ s.full_name }}</td><td class="c">{{ s.class_name }}</td><td class="c">{{ s.gpa }}</td><td class="c">{{ s.school_rank }}</td></tr>

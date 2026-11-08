@@ -56,7 +56,8 @@ class SchoolReportTests(GoldenBase):
         self.assertIn('Омӯзгор Якка', names)
         for t in data['teacher_rows']:
             self.assertIn(t['status'], ('Иҷро шуд', 'Қафо монд',
-                                        'Баҳо нест', 'Бебаҳо дорад'))
+                                        'Баҳо нест',
+                                        'Баҳогузорӣ нашудааст'))
 
     def test_teacher_flagged_when_student_has_no_marks(self):
         """Aggregate quota is not enough — a teacher whose students

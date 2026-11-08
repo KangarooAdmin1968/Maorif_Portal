@@ -1,5 +1,5 @@
 {% extends 'portal/base.html' %}
-{% block title %}Ҳисоботлар{% endblock %}
+{% block title %}Ҳисоботҳо{% endblock %}
 {% block extra_head %}
 <style>
   .rp-toolbar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: flex-end; margin: .75rem 0 1.25rem; }
@@ -28,7 +28,7 @@
 </style>
 {% endblock %}
 {% block content %}
-<h1>📋 Ҳисоботлар{% if data.kind == 'school' %} — {{ data.school.name }}{% endif %}</h1>
+<h1>📋 Ҳисоботҳо{% if data.kind == 'school' %} — {{ data.school.name }}{% endif %}</h1>
 
 <div class="rp-toolbar no-print">
     <form method="get" action="{% url 'reports' %}" style="display:flex; gap:.6rem; flex-wrap:wrap; align-items:flex-end;">
@@ -52,6 +52,24 @@
         <noscript><button type="submit" class="btn">Намоиш</button></noscript>
     </form>
     <a class="btn btn-primary" href="{% url 'reports_export' %}?period={{ selected_period }}{% if selected_school %}&amp;school={{ selected_school.id }}{% endif %}">📄 Excel юклаш</a>
+</div>
+
+<div class="rp-card no-print">
+    <h2>📑 Ҳуҷҷатлар</h2>
+    {% if data.kind == 'school' %}
+    <div style="display:flex; flex-wrap:wrap; gap:.4rem;">
+        <a href="{% url 'workload_tabel' %}?school_id={{ data.school.id }}" class="btn">📋 Табели сарборӣ</a>
+        <a href="{% url 'class_reports' %}?school_id={{ data.school.id }}" class="btn">📊 Ҳисоботи синфҳо</a>
+        <a href="{% url 'student_movements' %}?school_id={{ data.school.id }}" class="btn">🔁 Омад-рафт</a>
+        <a href="{% url 'zavuch_report_export' %}?school_id={{ data.school.id }}" class="btn">📈 Ҳисоботи завуч</a>
+        <a href="{% url 'zavuch_grades_export' %}?school_id={{ data.school.id }}" class="btn">📑 АЧЧ — ҷамъбастии чоряк</a>
+        <a href="{% url 'excellent_students' %}?school_id={{ data.school.id }}" class="btn">⭐ Аълохон</a>
+        <a href="{% url 'ungraded_students' %}?school_id={{ data.school.id }}" class="btn">⚠️ Бебаҳогон</a>
+        <a href="{% url 'academic_years' %}?school_id={{ data.school.id }}" class="btn">🔒 Якуни чоряк</a>
+    </div>
+    {% else %}
+    <a href="{% url 'school_documents' %}" class="btn">📑 Ҳуҷҷатнигорӣ — мактаб танлаб ҳуҷҷат рост кунед</a>
+    {% endif %}
 </div>
 
 {% if data.kind == 'district' %}

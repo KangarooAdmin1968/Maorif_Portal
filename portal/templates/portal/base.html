@@ -216,7 +216,7 @@
                     {% endif %}
                     {% if user.is_superuser or user.is_staff or is_zavuch or user_role == 'director' or user_role == 'principal' %}
                         <a href="{% url 'nazorat' %}">🔎 Назорат</a>
-                        <a href="{% url 'reports' %}">📋 Ҳисоботлар</a>
+                        <a href="{% url 'reports' %}">📋 Ҳисоботҳо</a>
                         <a href="{% url 'academic_years' %}">📁 Солҳои таҳсил</a>
                     {% endif %}
                     {% if can_monitor %}

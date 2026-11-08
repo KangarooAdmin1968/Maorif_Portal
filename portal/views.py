@@ -44,7 +44,7 @@ from .utils import (
 from .curriculum_hours import (
     MIN_GRADES_BANDS, MAX_WEEKLY_HOURS, UNGRADED_SUBJECTS,
     weekly_hours, quarter_min_norm, disp_hours,
-    group_weekly_hours, group_min_norm,
+    group_weekly_hours, group_min_norm, is_graded_subject,
 )
 from .tabel import (
     BAND_KEYS, MONTH_NAMES_TJ,
@@ -2192,12 +2192,13 @@ def _shared_ranking_grade_rows():
     if (memo.get('bounds') == bounds
             and now - memo['at'] < RANKING_REFRESH_INTERVAL):
         return memo['rows']
-    rows = canonical_grade_values(Grade.objects.filter(
+    rows = [r for r in canonical_grade_values(Grade.objects.filter(
         score__isnull=False, student__is_archived=False,
         date__range=bounds).order_by().values(
         'pk', 'student_id', 'subject', 'period', 'date',
         'assessment_id', 'lesson_id', 'score',
         'student__school_id', 'student__class_name').iterator())
+        if is_graded_subject(r['subject'])]
     memo.update(at=now, bounds=bounds, rows=rows)
     return rows
 
@@ -2227,6 +2228,8 @@ def _calculate_school_rankings_uncached():
     for r in rows:
         if is_non_graded(r['student__class_name']):
             continue
+        if not is_graded_subject(r['subject']):
+            continue
         _add_score(totals, r['student__school_id'], r['score'], 1)
 
     # One scan for both stored pools: the quarter predicates are
@@ -2235,12 +2238,14 @@ def _calculate_school_rankings_uncached():
     # where both aggregates are NULL is dropped by _add_score.
     for row in QuarterGrade.objects.filter(
             academic_year=ay, student__is_archived=False).values(
-            'student__school_id', 'class_name').annotate(
+            'student__school_id', 'class_name', 'subject').annotate(
             total=Sum('grade', filter=Q(quarter__in=(1, 2, 3, 4))),
             count=Count('grade', filter=Q(quarter__in=(1, 2, 3, 4))),
             att_total=Sum('att_grade', filter=Q(quarter=0)),
             att_count=Count('att_grade', filter=Q(quarter=0))):
         if is_non_graded(row['class_name']):
+            continue
+        if not is_graded_subject(row['subject']):
             continue
         _add_score(totals, row['student__school_id'], row['total'], row['count'])
         _add_score(totals, row['student__school_id'], row['att_total'], row['att_count'])
@@ -2321,6 +2326,8 @@ def _calculate_class_rankings_uncached():
         cname = normalize_class_name(info[1])
         if is_non_graded(cname):
             continue
+        if not is_graded_subject(r['subject']):
+            continue
         key = (info[0], cname)
         if key not in entries:
             entries[key] = {'school_id': info[0], 'school_name': '', 'class_name': cname, 'total': 0.0, 'count': 0}
@@ -2328,12 +2335,14 @@ def _calculate_class_rankings_uncached():
         entries[key]['count'] += 1
 
     # Quarterly grades
-    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values('student', 'class_name').annotate(total=Sum('grade'), count=Count('grade')):
+    for row in QuarterGrade.objects.filter(quarter__in=(1, 2, 3, 4), grade__isnull=False, academic_year=ay).values('student', 'class_name', 'subject').annotate(total=Sum('grade'), count=Count('grade')):
         info = students.get(row['student'])
         if info is None or info[0] not in academic_school_ids:
             continue
         cname = normalize_class_name(row['class_name'])
         if is_non_graded(cname):
+            continue
+        if not is_graded_subject(row['subject']):
             continue
         key = (info[0], cname)
         if key not in entries:
@@ -2342,12 +2351,14 @@ def _calculate_class_rankings_uncached():
         entries[key]['count'] += int(row['count'])
 
     # Attestation grades
-    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False, academic_year=ay).values('student', 'class_name').annotate(total=Sum('att_grade'), count=Count('att_grade')):
+    for row in QuarterGrade.objects.filter(quarter=0, att_grade__isnull=False, academic_year=ay).values('student', 'class_name', 'subject').annotate(total=Sum('att_grade'), count=Count('att_grade')):
         info = students.get(row['student'])
         if info is None or info[0] not in academic_school_ids:
             continue
         cname = normalize_class_name(row['class_name'])
         if is_non_graded(cname):
+            continue
+        if not is_graded_subject(row['subject']):
             continue
         key = (info[0], cname)
         if key not in entries:
@@ -2449,15 +2460,19 @@ def _calculate_top_students_uncached():
             if r['student__school_id'] in academic_school_ids
             and not r['student__class_name'].startswith(('0-', '1-')))
     for r in grade_rows:
+        if not is_graded_subject(r['subject']):
+            continue
         totals[r['student_id']][0] += float(r['score'] or 0)
         totals[r['student_id']][1] += 1
 
     quarter_qs = QuarterGrade.objects.filter(
         student_filter, quarter__in=(1, 2, 3, 4), grade__isnull=False,
         academic_year=ay
-    ).values('student').annotate(
+    ).values('student', 'subject').annotate(
         total=Sum('grade'), count=Count('grade'))
     for row in quarter_qs:
+        if not is_graded_subject(row['subject']):
+            continue
         sid = row['student']
         totals[sid][0] += float(row['total'] or 0)
         totals[sid][1] += int(row['count'])
@@ -2465,9 +2480,11 @@ def _calculate_top_students_uncached():
     att_qs = QuarterGrade.objects.filter(
         student_filter, quarter=0, att_grade__isnull=False,
         academic_year=ay
-    ).values('student').annotate(
+    ).values('student', 'subject').annotate(
         total=Sum('att_grade'), count=Count('att_grade'))
     for row in att_qs:
+        if not is_graded_subject(row['subject']):
+            continue
         sid = row['student']
         totals[sid][0] += float(row['total'] or 0)
         totals[sid][1] += int(row['count'])
@@ -3854,6 +3871,9 @@ def grade_entry(request, school_id, class_name, subject):
             daily_is_control = control_q.filter(lesson__isnull=True).exists()
 
         from .signals import defer_quarter_recalc  # local import avoids cycles
+        # Un-graded curriculum subjects (СОАТИ ТАРБИЯВӢ, ҚОИДАИ ҲАРАКАТ
+        # ДАР РОҲ) never take scores — attendance/conduct stays editable.
+        subject_scored = is_graded_subject(subject)
         deferred = set()
         try:
             with defer_quarter_recalc() as deferred:
@@ -3872,22 +3892,22 @@ def grade_entry(request, school_id, class_name, subject):
                             lesson=post_lesson,
                             defaults={'score': None, 'attendance': None, 'behavior_score': None}
                         )
-    
-                        key = f"score_{student.id}"
-                        val = request.POST.get(key, '').strip()
-                        if val:
-                            try:
-                                score = float(val)
-                                if not score.is_integer():
-                                    score = None
-                                else:
-                                    score = int(score)
-                                    if not (1 <= score <= 10):
+
+                        score = None
+                        if subject_scored:
+                            key = f"score_{student.id}"
+                            val = request.POST.get(key, '').strip()
+                            if val:
+                                try:
+                                    score = float(val)
+                                    if not score.is_integer():
                                         score = None
-                            except ValueError:
-                                score = None
-                        else:
-                            score = None
+                                    else:
+                                        score = int(score)
+                                        if not (1 <= score <= 10):
+                                            score = None
+                                except ValueError:
+                                    score = None
                         grade.score = score
     
                         att = request.POST.get(f"attendance_{student.id}", '').strip()
@@ -3923,7 +3943,8 @@ def grade_entry(request, school_id, class_name, subject):
                     # prior-year attestation under the same class label is a
                     # different record.
                     att_year = academic_year_start()
-                    if not is_quarter_locked(school, class_name, subject, 0, att_year):
+                    if subject_scored and not is_quarter_locked(
+                            school, class_name, subject, 0, att_year):
                         qval = request.POST.get(f"att_{student.id}", '').strip()
                         if qval:
                             try:
@@ -4294,6 +4315,7 @@ def grade_entry(request, school_id, class_name, subject):
         'live_quarter_flags': live_quarter_flags,
         'calculated': calculated,
         'non_graded': non_graded,
+        'subject_ungraded': not is_graded_subject(subject),
         'qualitative_choices': QUALITATIVE_CHOICES,
         'quarter_numbers': [1, 2, 3, 4],
         'locked_quarters': locked_quarters,
@@ -4613,6 +4635,7 @@ def monthly_journal(request, school_id, class_name, subject):
         'can_edit': can_edit,
         'class_subject_id': class_subject.id if class_subject else '',
         'teacher_group': teacher_group,
+        'subject_ungraded': not is_graded_subject(subject),
         # Quarter-level journal completion (Пурра/Қисман/Холӣ) + the
         # time-aware norm percentage — distinct metrics, one aggregate query.
         'journal': journal,
@@ -4870,6 +4893,8 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
             for k in ('score', 'attendance', 'behavior_score', 'sticker')
             if k in item
         }
+        if not is_graded_subject(subject):
+            values.pop('score', None)
         kept = _apply_grade_fields(grade, values)
         if kept and assessment is not None and 'score' in values:
             # A grid cell is always a plain single score — stale slash
@@ -5665,6 +5690,10 @@ def save_grade_ajax(request):
 
         class_name = normalize_class_name(student.class_name)
 
+        # Un-graded curriculum subjects keep attendance/conduct marks but
+        # never accept scores or attestation writes.
+        subject_graded = is_graded_subject(subject)
+
         if not can_edit_grade_journal(request.user, student.school, class_name, subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
@@ -5765,14 +5794,14 @@ def save_grade_ajax(request):
                 defaults={'score': None, 'attendance': None, 'behavior_score': None, 'sticker': None}
             )
 
-            if assessment is not None and ('score' in request.POST or points_p is not None):
+            if subject_graded and assessment is not None and ('score' in request.POST or points_p is not None):
                 grade.score = parsed_score
                 grade.components = parsed_components
                 grade.points_achieved = points_a
                 grade.points_possible = points_p
 
             values = {}
-            if assessment is None and 'score' in request.POST:
+            if subject_graded and assessment is None and 'score' in request.POST:
                 values['score'] = request.POST.get('score', '')
             for k in ('attendance', 'behavior_score', 'sticker'):
                 if k in request.POST:
@@ -5821,6 +5850,8 @@ def save_grade_ajax(request):
             return JsonResponse(resp, status=200)
 
         elif grade_type == 'quarterly':
+            if not subject_graded:
+                return JsonResponse({'success': False, 'message': 'Ин фан баҳогузорӣ намешавад.'}, status=200)
             try:
                 quarter = int(quarter_str)
             except ValueError:
@@ -6556,16 +6587,22 @@ def _all_student_gpas():
             date__range=(ay_start, ay_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
             'assessment_id', 'lesson_id', 'score').iterator()):
+        if not is_graded_subject(r['subject']):
+            continue
         _add_score(totals, r['student_id'], r['score'], 1)
     for row in QuarterGrade.objects.filter(
             quarter__in=(1, 2, 3, 4), grade__isnull=False,
-            academic_year=ay).values('student_id').annotate(
+            academic_year=ay).values('student_id', 'subject').annotate(
             total=Sum('grade'), count=Count('grade')):
+        if not is_graded_subject(row['subject']):
+            continue
         _add_score(totals, row['student_id'], row['total'], row['count'])
     for row in QuarterGrade.objects.filter(
             quarter=0, att_grade__isnull=False,
-            academic_year=ay).values('student_id').annotate(
+            academic_year=ay).values('student_id', 'subject').annotate(
             total=Sum('att_grade'), count=Count('att_grade')):
+        if not is_graded_subject(row['subject']):
+            continue
         _add_score(totals, row['student_id'], row['total'], row['count'])
 
     gpas = {}

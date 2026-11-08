@@ -104,7 +104,9 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
 
 <div class="tabs">
   <button type="button" class="tab-btn active" data-tab="daily" onclick="openTab('daily', this)">Холҳои ҳаррӯза</button>
+  {% if not subject_ungraded %}
   <button type="button" class="tab-btn" data-tab="quarterly" onclick="openTab('quarterly', this)">Ҷадвали чорякҳо</button>
+  {% endif %}
 </div>
 
 <div id="daily" class="tab-content active">
@@ -134,7 +136,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
     {% endif %}
   </div>
   {% endif %}
-  {% if not non_graded %}
+  {% if not non_graded and not subject_ungraded %}
   <div class="assessment-bar">
     <span>Навъ:</span>
     <label><input type="radio" name="grade_kind" value="current" checked onchange="setGradeKind('current')"> Ҷорӣ</label>
@@ -179,13 +181,14 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
   <div class="daily-wrap">
   <table class="data-table editable">
     <thead>
-      <tr><th>№</th><th>Ному насаб</th><th>Хол</th><th>Давомат</th><th>Тарбия (Хулқ)</th><th></th></tr>
+      <tr><th>№</th><th>Ному насаб</th>{% if not subject_ungraded %}<th>Хол</th>{% endif %}<th>Давомат</th><th>Тарбия (Хулқ)</th><th></th></tr>
     </thead>
     <tbody>
       {% for s in students %}
       <tr>
         <td>{{ forloop.counter }}</td>
         <td>{% if s.pace.dot %}<span class="pace-dot pace-{{ s.pace.status }}" title="{{ s.pace.tip }}" data-tip="{{ s.pace.tip }}"></span>{% endif %}<a href="{% url 'student_detail' s.id %}" style="color: #0056b3; text-decoration: underline; font-weight: bold;">{{ s.full_name }}</a>{% if s.exemption %}<span title="{{ s.exemption.get_reason_display }}" style="font-size:0.75rem; margin-left:0.3rem; cursor:help;">&#x1F535;</span>{% endif %}</td>
+        {% if not subject_ungraded %}
         <td>
           {% if non_graded %}
           <select name="score_{{ s.id }}" class="daily-input grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="score" {% if daily_quarter_locked or future_date or holiday_date %}disabled{% endif %}>
@@ -200,6 +203,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
                  {% if daily_quarter_locked or future_date or holiday_date %}disabled{% endif %}>
           {% endif %}
         </td>
+        {% endif %}
         <td>
           <select name="attendance_{{ s.id }}" class="daily-att grade-select" data-row-id="{{ forloop.counter }}" data-student-id="{{ s.id }}" data-subject="{{ subject }}" data-field="attendance" {% if daily_quarter_locked or future_date or holiday_date %}disabled{% endif %}>
             <option value="" {% if not daily_attendance|dict_key:s.id %}selected{% endif %}></option>
@@ -218,7 +222,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
         <td><span class="save-status" id="daily-status-{{ forloop.counter }}"></span></td>
       </tr>
       {% empty %}
-      <tr><td colspan="6">Хонанда ёфт нашуд.</td></tr>
+      <tr><td colspan="{% if subject_ungraded %}5{% else %}6{% endif %}">Хонанда ёфт нашуд.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -229,6 +233,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
   </div>
 </div>
 
+{% if not subject_ungraded %}
 <div id="quarterly" class="tab-content">
   <div class="quarter-wrapper">
     <table class="data-table editable">
@@ -312,6 +317,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
     <button type="submit" class="btn btn-secondary" formaction="{% url 'calc_quarter_from_daily' school.id class_name subject %}">🔄 Ҳисобкунӣ аз холҳои ҷорӣ</button>
   </div>
 </div>
+{% endif %}
 
 <div style="margin-top:1rem;">
   <button type="submit" class="btn btn-primary">Сабт кардан</button>

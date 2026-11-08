@@ -114,10 +114,26 @@ DEFAULT_WEEKLY_HOURS = 2
 MAX_WEEKLY_HOURS = 12
 
 # Un-graded subjects: they still carry weekly hours (workload), but no
-# grades are required, so their quarter minimum norm is 0.
+# grades are required, so their quarter minimum norm is 0. Their scores
+# are also dropped by the journal write paths and never feed rankings.
 UNGRADED_SUBJECTS = frozenset({
     'СОАТИ ТАРБИЯВӢ',
+    # Traffic-rules hour — canonical curriculum spelling plus the common
+    # journal variants (all normalize uppercase, suffixes differ).
+    'ҚОИДАҲОИ ҲАРАКАТ ДАР РОҲ',
+    'ҚОИДАИ ҲАРАКАТ ДАР РОҲ',
+    'ҚОИДАИ ҲАРАКАТИ РОҲ',
 })
+
+
+def is_graded_subject(subject):
+    """True when the subject participates in scoring, norms and rankings.
+
+    Un-graded curriculum subjects (СОАТИ ТАРБИЯВӢ, ҚОИДАИ ҲАРАКАТ ДАР РОҲ)
+    keep workload hours and attendance/conduct marks, but a stored score
+    under any spelling must never reach a GPA or norm calculation.
+    """
+    return normalize_subject(subject) not in UNGRADED_SUBJECTS
 
 
 # ---------------------------------------------------------------------------

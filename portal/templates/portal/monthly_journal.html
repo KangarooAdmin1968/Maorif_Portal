@@ -246,6 +246,7 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
 
 {% if can_edit %}
 <div id="grade-picker" class="grade-picker" role="dialog" aria-label="Интихоби баҳо">
+  {% if not subject_ungraded %}
   <div class="gp-grid">
     <button type="button" data-gp="1">1</button><button type="button" data-gp="2">2</button>
     <button type="button" data-gp="3">3</button><button type="button" data-gp="4">4</button>
@@ -254,8 +255,9 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
     <button type="button" data-gp="9">9</button><button type="button" data-gp="10">10</button>
     <button type="button" class="gp-clear" data-gp="" title="Тоза кардан">×</button>
   </div>
+  {% endif %}
   <button type="button" class="gp-extra-toggle" id="gp-extra-toggle">Иловагӣ ▾</button>
-  <div class="gp-extra" id="gp-extra" style="display:none">
+  <div class="gp-extra" id="gp-extra"{% if not subject_ungraded %} style="display:none"{% endif %}>
     <div class="gp-row" id="gp-att-row">
       <span>Давомат:</span>
       <button type="button" data-att="">Ҳозир</button>

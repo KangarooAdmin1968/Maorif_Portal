@@ -54,6 +54,10 @@ jobs:
             test "$QC" = "ok"
             sha256sum "$BK/db.sqlite3" > "$BK/db.sha256"
             echo "Verified backup at $BK/db.sqlite3"
+            # Retention: keep only the newest 5 backups (incl. this one).
+            # Unbounded accumulation filled the disk at deploy #204 —
+            # 193 dirs × ~1.1G -> 100% full -> backup + writes failed.
+            ls -dt /root/maorif_backups_* | tail -n +6 | xargs -r rm -rf
             # Pre-deploy revision for code-only rollback. NOTE: rolling back
             # code never restores the database and never affects the running
             # gunicorn process until a restart. Old-code compatibility with a

@@ -67,6 +67,10 @@ class DistrictReportTests(GoldenBase):
         make_grade(self.s3, subject=MATH, score=6, date=D_Q1)
 
     def test_collect_district_report_shape(self):
+        # The district report serves readiness only from the
+        # cron-warmed cache — warm it like production does.
+        from django.core.management import call_command
+        call_command('refresh_rankings')
         data = collect_district_report('q2')
         self.assertEqual(data['kind'], 'district')
         self.assertEqual(len(data['school_rows']), 2)

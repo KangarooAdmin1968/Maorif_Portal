@@ -102,14 +102,19 @@ def _readiness_payload(schools, gpa_map):
     """
     from .views import (
         READINESS_CACHE_KEY, RankingRefreshBusy, _ranking_cached,
-        _compute_school_readiness_payload,
+        _compute_school_readiness_payload, rankings_read_only,
     )
     if len(schools) == 1:
         return _compute_school_readiness_payload(schools, gpa_map)
     try:
-        return _ranking_cached(
-            READINESS_CACHE_KEY,
-            lambda: _compute_school_readiness_payload(schools, gpa_map))
+        # Read-only like every request path: a cold cache must never
+        # trigger the district-wide readiness scan inside a request —
+        # that is exactly the OOM/504 pattern the ranking cache was
+        # built to prevent. Fresh/shadow entry, else an empty block.
+        with rankings_read_only():
+            return _ranking_cached(
+                READINESS_CACHE_KEY,
+                lambda: _compute_school_readiness_payload(schools, gpa_map))
     except RankingRefreshBusy:
         return [], []
 
@@ -402,8 +407,10 @@ def collect_school_report(school, period, today=None):
 
     class_ranking = [c for c in rankings['classes']
                      if c['school_id'] == school.id]
+    # The school's members of the district-wide top-100 list (the list
+    # itself is capped at 100, so no extra slice is needed here).
     school_students = [s for s in rankings['students']
-                       if s['school_id'] == school.id][:50]
+                       if s['school_id'] == school.id]
 
     return {
         'kind': 'school',
@@ -653,7 +660,8 @@ def build_report_workbook(data, today=None):
                (6, 12, 10))
 
         _sheet(wb, 'Хонандагони беҳтарин',
-               'Хонандагони беҳтарин — мактаб', sub,
+               'Хонандагони беҳтарин — мактаб (аз рӯйхати 100 беҳтарини ноҳия)',
+               sub,
                ('№', 'Ному насаб', 'Синф', 'Холи миёна',
                 'Ҷойи муассисавӣ'),
                [(i, s['full_name'], s['class_name'], s['gpa'],

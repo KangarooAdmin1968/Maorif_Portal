@@ -257,6 +257,21 @@ def _journal_status(done, met, total):
     return 'partial'
 
 
+def _absence_credit(slots):
+    """Missed-lesson credit for one student from pre-grouped slot sets.
+
+    Same rule as norm_pace.absence_counts(): score-less '+/-' attendance
+    marks count once per (date, lesson_id); NULL-lesson marks count once
+    per date not already covered by an explicit slot or a score. Returns
+    0 for no slots.
+    """
+    if not slots:
+        return 0
+    open_slots = slots['e'] - slots['s']
+    covered = {d for d, _ in open_slots} | {d for d, _ in slots['s']}
+    return len(open_slots) + len(slots['n'] - covered)
+
+
 def _journal_norm_status(class_name, subject, class_subject, students, today,
                          exempt_ids=None, group=None):
     """Journal status payload for one School + Class + Subject context.
@@ -8462,19 +8477,28 @@ def _compute_school_readiness_payload(schools, gpa_map):
     pair_grade_counts = defaultdict(int)
     pair_scored_counts = defaultdict(int)
     pair_student_scored = defaultdict(dict)
+    # Absence-credit slots mirror absence_counts() in norm_pace: a
+    # score-less '+/-' attendance mark tops the student's real mark
+    # count up to the norm. The journal page (_journal_norm_status)
+    # applies that credit — the batch must too, or a journal reading
+    # Пурра shows up here as Қисман.
+    _new_slots = lambda: {'s': set(), 'e': set(), 'n': set()}
+    pair_student_slots = defaultdict(lambda: defaultdict(_new_slots))
     group_grade_counts = defaultdict(int)
     group_student_scored = defaultdict(lambda: defaultdict(int))
+    group_student_slots = defaultdict(lambda: defaultdict(_new_slots))
     for r in canonical_grade_values(Grade.objects.filter(
             student__school_id__in=school_ids,
             student__is_archived=False,
             date__range=(q_start, q_end)).order_by().values(
             'pk', 'student_id', 'subject', 'period', 'date',
-            'assessment_id', 'lesson_id', 'score',
+            'assessment_id', 'lesson_id', 'score', 'attendance',
             'student__school_id', 'student__class_name',
             'lesson__class_subject_id', 'lesson__group_id',
             'lesson__group__is_active').iterator()):
         key = (r['student__school_id'], r['student__class_name'], r['subject'])
         scored = r['score'] is not None
+        att = (not scored) and r['attendance'] in ATTENDANCE_MARKS
         if r['student_id'] not in home_ids:
             # Home-education marks never enter the class-level norm totals —
             # they are attributed to the home group via lesson.group below.
@@ -8483,6 +8507,14 @@ def _compute_school_readiness_payload(schools, gpa_map):
                 pair_scored_counts[key] += 1
                 sid = r['student_id']
                 pair_student_scored[key][sid] = pair_student_scored[key].get(sid, 0) + 1
+                pair_student_slots[key][sid]['s'].add(
+                    (r['date'], r['lesson_id']))
+            elif att:
+                slot = pair_student_slots[key][r['student_id']]
+                if r['lesson_id']:
+                    slot['e'].add((r['date'], r['lesson_id']))
+                else:
+                    slot['n'].add(r['date'])
         if r['lesson__group__is_active']:
             # Concrete teaching event: the grade belongs to the lesson's
             # own group regardless of current membership.
@@ -8490,6 +8522,14 @@ def _compute_school_readiness_payload(schools, gpa_map):
             group_grade_counts[gkey] += 1
             if scored:
                 group_student_scored[gkey][r['student_id']] += 1
+                group_student_slots[gkey][r['student_id']]['s'].add(
+                    (r['date'], r['lesson_id']))
+            elif att:
+                slot = group_student_slots[gkey][r['student_id']]
+                if r['lesson_id']:
+                    slot['e'].add((r['date'], r['lesson_id']))
+                else:
+                    slot['n'].add(r['date'])
         else:
             subj_norm = normalize_subject(r['subject'])
             for gkey, cs_subject_norm in student_memberships.get(
@@ -8499,6 +8539,14 @@ def _compute_school_readiness_payload(schools, gpa_map):
                 group_grade_counts[gkey] += 1
                 if scored:
                     group_student_scored[gkey][r['student_id']] += 1
+                    group_student_slots[gkey][r['student_id']]['s'].add(
+                        (r['date'], r['lesson_id']))
+                elif att:
+                    slot = group_student_slots[gkey][r['student_id']]
+                    if r['lesson_id']:
+                        slot['e'].add((r['date'], r['lesson_id']))
+                    else:
+                        slot['n'].add(r['date'])
     class_subjects = list(
         ClassSubject.objects.filter(school_id__in=school_ids, is_active=True)
         .exclude(class_name__regex=NON_GRADED_RE)
@@ -8564,16 +8612,18 @@ def _compute_school_readiness_payload(schools, gpa_map):
                     subj_classes[f"{cs.subject} — {group.label}"].append(cs.class_name)
                     member_ids = group_members.get((cs.id, group.id), ())
                     n_students = len(member_ids)
-                    per_student = group_student_scored.get(
-                        (cs.id, group.id), {})
+                    gkey = (cs.id, group.id)
+                    per_student = group_student_scored.get(gkey, {})
+                    slots_map = group_student_slots.get(gkey, {})
                     entered = group_grade_counts.get((cs.id, group.id), 0)
                 else:
                     subj_classes[cs.subject].append(cs.class_name)
                     member_ids = class_student_ids.get(
                         (school.id, cs.class_name), ())
                     n_students = len(member_ids)
-                    per_student = pair_student_scored.get(
-                        (school.id, cs.class_name, cs.subject), {})
+                    pair_key = (school.id, cs.class_name, cs.subject)
+                    per_student = pair_student_scored.get(pair_key, {})
+                    slots_map = pair_student_slots.get(pair_key, {})
                     entered = pair_grade_counts.get(
                         (school.id, cs.class_name, cs.subject), 0)
                 hours += (
@@ -8588,8 +8638,17 @@ def _compute_school_readiness_payload(schools, gpa_map):
                     # Academic rows only: attendance-only marks, conduct-only
                     # and sticker-only rows never satisfy the grading norm.
                     scored = sum(per_student.values())
+                    # Same effective count as the journal's done_eff:
+                    # real scores plus each student's absence credit
+                    # capped at the norm — keeps the report's fulfillment
+                    # equal to what the journal page shows.
+                    norm_done += sum(
+                        actual + min(
+                            _absence_credit(slots_map.get(sid)),
+                            max(0, min_norm - actual))
+                        for sid, actual in per_student.items()
+                        if actual > 0)
                     min_grades += min_norm * n_students
-                    norm_done += scored
                     # Journal status is per ClassSubject (per group on
                     # grouped subjects): Пурра only when EVERY relevant
                     # student reached the FULL-quarter norm — a raw class
@@ -8597,7 +8656,9 @@ def _compute_school_readiness_payload(schools, gpa_map):
                     # elapsed share is never consulted.
                     met = sum(
                         1 for sid in member_ids
-                        if per_student.get(sid, 0) >= min_norm
+                        if per_student.get(sid, 0) > 0
+                        and per_student[sid]
+                        + _absence_credit(slots_map.get(sid)) >= min_norm
                     )
                     journal.append({
                         'class_name': cs.class_name,

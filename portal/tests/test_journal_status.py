@@ -414,6 +414,27 @@ class ReadinessJournalStatusTests(GoldenBase):
         self.assertEqual(entry['students_met'], 1)
         self.assertEqual(entry['students_total'], 2)
 
+    def test_absence_credit_matches_journal(self):
+        """The batch status must apply the same missed-lesson credit as
+        _journal_norm_status: scored marks + score-less '+/-' rows
+        reaching the norm count the student as met. A journal reading
+        Пурра must not appear here as Қисман."""
+        # norm = 7/student. s1: 4 scores + 3 '-' on distinct dates ->
+        # met via absence credit; s2: 7 scores -> met. Пурра overall.
+        for i in range(4):
+            make_grade(self.s1, subject=MATH, score=8,
+                       date=Q_START + datetime.timedelta(days=i))
+        for i in range(3):
+            make_grade(self.s1, subject=MATH, attendance='-',
+                       date=Q_START + datetime.timedelta(days=10 + i))
+        for i in range(7):
+            make_grade(self.s2, subject=MATH, score=9,
+                       date=Q_START + datetime.timedelta(days=i))
+        _, t = self._teacher()
+        entry = next(j for j in t['journal'] if j['class_name'] == '7-А')
+        self.assertEqual(entry['students_met'], 2)
+        self.assertEqual(entry['status'], 'complete')
+
     def test_absence_only_rows_do_not_satisfy_norm(self):
         # s1: 7 'н' rows, 0 scores; s2: 3 real scores. The norm numerator
         # counts academic rows only — 3, not 10.

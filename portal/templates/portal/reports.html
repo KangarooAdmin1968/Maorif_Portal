@@ -12,6 +12,7 @@
   .rp-stat .n { font-size: 1.5rem; font-weight: 700; color: #003366; }
   .rp-stat .t { font-size: .8rem; color: #4b5563; }
   .rp-stat.warn .n { color: #b91c1c; }
+  .rp-stat.mid .n { color: #b45309; }
   .rp-stat.ok .n { color: #166534; }
   table.rp-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
   table.rp-table th, table.rp-table td { border: 1px solid #d1d5db; padding: .4rem .65rem; text-align: left; vertical-align: top; }
@@ -219,10 +220,12 @@
     <div class="rp-stat ok"><div class="n">{{ data.fulfillment }}%</div><div class="t">Иҷрои меъёр</div></div>
     <div class="rp-stat"><div class="n">{{ data.gpa|default:'—' }}</div><div class="t">Холи миёна</div></div>
     <div class="rp-stat ok"><div class="n">{{ data.journal.complete }}</div><div class="t">Журнали пурра</div></div>
-    <div class="rp-stat warn"><div class="n">{{ data.journal.incomplete }}</div><div class="t">Нопурра / холӣ</div></div>
+    <div class="rp-stat mid"><div class="n">{{ data.journal.partial }}</div><div class="t">Журнали қисман</div></div>
+    <div class="rp-stat warn"><div class="n">{{ data.journal.empty }}</div><div class="t">Журнали холӣ</div></div>
     <div class="rp-stat"><div class="n">{{ data.excellent.students|length }}</div><div class="t">Аълохон (Ч{{ data.quarter }})</div></div>
     <div class="rp-stat warn"><div class="n">{{ data.ungraded.students }}</div><div class="t">Бебаҳо (Ч{{ data.quarter }})</div></div>
 </div>
+<p class="rp-note" style="margin:-.5rem 0 1.25rem;">«Журнал» = синф × фан. «Пурра» — ҳар хонанда меъёри пурраи чорякга етган; «Қисман» — баҳо бор, лекин ҳануз ҳама етмаган (чоряк давомида табиӣ); «Холӣ» — умуман баҳо киритилмаган.</p>
 
 <div class="rp-card">
     <h2>👩‍🏫 Иҷрои меъёр — аз рӯи омӯзгорон <span class="rp-note">(чоряки ҷорӣ, вақти гузашта ҳисоб гирифта мешавад)</span></h2>

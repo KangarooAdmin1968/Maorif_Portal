@@ -53,6 +53,7 @@
     </form>
     {% endif %}
     <button type="button" class="btn btn-success" onclick="window.print()">🖨️ Чоп кардан</button>
+    <a href="{% url 'reports' %}{% if can_pick_school and school %}?school={{ school.id }}{% endif %}" class="btn btn-primary">📋 Ҳисоботҳо</a>
     {% if can_school_docs %}
     <a href="{% url 'workload_tabel' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📋 Табели сарборӣ</a>
     <a href="{% url 'class_reports' %}{% if can_pick_school and school %}?school_id={{ school.id }}{% endif %}" class="btn">📊 Ҳисоботи синфҳо</a>

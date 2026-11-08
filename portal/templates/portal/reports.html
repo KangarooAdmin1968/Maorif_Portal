@@ -55,7 +55,7 @@
 </div>
 
 <div class="rp-card no-print">
-    <h2>📑 Ҳуҷҷатлар</h2>
+    <h2>📑 Ҳуҷҷатҳо</h2>
     {% if data.kind == 'school' %}
     <div style="display:flex; flex-wrap:wrap; gap:.4rem;">
         <a href="{% url 'workload_tabel' %}?school_id={{ data.school.id }}" class="btn">📋 Табели сарборӣ</a>
@@ -76,7 +76,7 @@
 <!-- ======================= ҲУДУД (мудир) ======================= -->
 
 <div class="rp-card">
-    <h2>Ҳолати умумии ноҳия — мактабҳо кесимида <span class="rp-note">(меъёр — чоряки ҷорӣ)</span></h2>
+    <h2>Ҳолати умумии ноҳия — аз рӯи мактабҳо <span class="rp-note">(меъёр — чоряки ҷорӣ)</span></h2>
     <table class="rp-table">
         <thead><tr>
             <th class="c">№</th><th>Мактаб</th>
@@ -222,7 +222,7 @@
 </div>
 
 <div class="rp-card">
-    <h2>👩‍🏫 Иҷрои меъёр — омӯзгорон кесимида <span class="rp-note">(чоряки ҷорӣ, вақти гузашта ҳисоб гирифта мешавад)</span></h2>
+    <h2>👩‍🏫 Иҷрои меъёр — аз рӯи омӯзгорон <span class="rp-note">(чоряки ҷорӣ, вақти гузашта ҳисоб гирифта мешавад)</span></h2>
     <table class="rp-table">
         <thead><tr>
             <th class="c">№</th><th>Омӯзгор</th><th>Фан ва синфҳо</th>
@@ -248,7 +248,7 @@
 
 <div class="rp-card">
     <details class="rp-details">
-        <summary>📖 Ҳолати журналҳо — синф × фан кесимида (Пурра {{ data.journal.complete }} · Қисман {{ data.journal.partial }} · Холӣ {{ data.journal.empty }})</summary>
+        <summary>📖 Ҳолати журналҳо — аз рӯи синф ва фан (Пурра {{ data.journal.complete }} · Қисман {{ data.journal.partial }} · Холӣ {{ data.journal.empty }})</summary>
         <table class="rp-table">
             <thead><tr><th>Омӯзгор</th><th class="c">Синф</th><th>Фан</th><th class="c">Гурӯҳ</th><th class="c">Меъёрро иҷро кардаанд</th><th class="c">Ҳолат</th></tr></thead>
             <tbody>

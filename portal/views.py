@@ -8416,6 +8416,15 @@ def _compute_school_readiness_payload(schools, gpa_map):
         sid for ids in class_student_ids.values() for sid in ids)
     for key in list(class_student_ids):
         class_student_ids[key] -= home_ids
+    # Other active exemptions (дар давлати дигар таҳсил мекунад …) leave
+    # the denominator too — the journal itself drops them via
+    # exempt_ids, so keeping them here would pin those class-subjects
+    # at «Қисман» forever. (home ids are already gone; the set-minus
+    # overlap is harmless.)
+    exempt_ids = set(active_exemption_map(
+        sid for ids in class_student_ids.values() for sid in ids))
+    for key in class_student_ids:
+        class_student_ids[key] -= exempt_ids
     class_student_counts = {
         key: len(ids) for key, ids in class_student_ids.items()
     }
@@ -8439,6 +8448,11 @@ def _compute_school_readiness_payload(schools, gpa_map):
         group_members[gkey].add(m['student_id'])
         student_memberships[m['student_id']].append(
             (gkey, normalize_subject(m['class_subject__subject'])))
+    # Group denominators drop non-home exemptions for the same reason —
+    # home students stay (they ARE the home journal's roster).
+    non_home_exempt = exempt_ids - home_ids
+    for key in group_members:
+        group_members[key] -= non_home_exempt
 
     # Per-student current-quarter rows keyed by the student's own
     # school+class+subject: one canonical pass feeds the raw pair totals,

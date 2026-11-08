@@ -178,7 +178,7 @@ class ReportExportTests(GoldenBase):
         self.assertEqual(resp.status_code, 200)
         wb = load_workbook(io.BytesIO(resp.content))
         names = set(wb.sheetnames)
-        for sheet in ('Умумий ҳолат', 'Рейтинги мактабҳо',
+        for sheet in ('Ҳолати умумӣ', 'Рейтинги мактабҳо',
                       'Синфҳои пешқадам', 'Синфҳои заиф',
                       'Рейтинги фанҳо', 'Хонандагони беҳтарин',
                       'Аълохон ва Бебаҳо', 'Ҳолати журналҳо',

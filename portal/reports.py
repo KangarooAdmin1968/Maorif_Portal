@@ -505,8 +505,8 @@ def build_report_workbook(data, today=None):
     if data['kind'] == 'district':
         sub = (f"{data['period_label']} · Соли таҳсили "
                f"{data['academic_year']}–{data['academic_year'] + 1}")
-        _sheet(wb, 'Умумий ҳолат',
-               'Ҳолати умумии ноҳия — мактабҳо кесимида', sub,
+        _sheet(wb, 'Ҳолати умумӣ',
+               'Ҳолати умумии ноҳия — аз рӯи мактабҳо', sub,
                ('№', 'Мактаб', 'Хонандагон', 'Омӯзгорон',
                 'Баҳо нагузоштаанд', 'Меъёрро иҷро кардаанд',
                 'Қафо мондаанд', 'Иҷрои меъёр %', 'Холи миёна'),
@@ -552,7 +552,7 @@ def build_report_workbook(data, today=None):
                (6, 30, 9, 30, 8, 10, 10))
 
         _sheet(wb, 'Аълохон ва Бебаҳо',
-               'Аълохон ва бебаҳо — мактабҳо кесимида',
+               'Аълохон ва бебаҳо — аз рӯи мактабҳо',
                f"{sub} · Чоряки {data['quarter']}",
                ('№', 'Мактаб', 'Аълохон', 'Бебаҳо'),
                [(i, r['school'].name, fnum(r['excellent']),
@@ -561,7 +561,7 @@ def build_report_workbook(data, today=None):
                (5, 44, 12, 12))
 
         _sheet(wb, 'Ҳолати журналҳо',
-               'Ҳолати журналҳо — мактабҳо кесимида', sub,
+               'Ҳолати журналҳо — аз рӯи мактабҳо', sub,
                ('№', 'Мактаб', 'Пурра', 'Қисман', 'Холӣ', 'Пурра %'),
                [(i, r['school'].name, r['journal']['complete'],
                  r['journal']['partial'], r['journal']['empty'],
@@ -570,14 +570,14 @@ def build_report_workbook(data, today=None):
                (5, 40, 10, 10, 10, 10))
 
         _sheet(wb, 'Ҳаракати хонандагон',
-               'Ҳаракати хонандагон — мактабҳо кесимида', sub,
+               'Ҳаракати хонандагон — аз рӯи мактабҳо', sub,
                ('№', 'Мактаб', 'Омад', 'Рафт'),
                [(i, r['school'].name, r['arrivals'], r['departures'])
                 for i, r in enumerate(data['school_rows'], 1)],
                (5, 44, 12, 12))
 
         _sheet(wb, 'Таҳсил дар хона',
-               'Таҳсил дар хона — мактабҳо кесимида', sub,
+               'Таҳсил дар хона — аз рӯи мактабҳо', sub,
                ('№', 'Мактаб', 'Хонандагон'),
                [(i, r['school'].name, r['home_students'])
                 for i, r in enumerate(data['school_rows'], 1)],
@@ -587,7 +587,7 @@ def build_report_workbook(data, today=None):
         sub = (f"{school.name} · {data['period_label']} · Соли таҳсили "
                f"{data['academic_year']}–{data['academic_year'] + 1}")
         _sheet(wb, 'Меъёри омӯзгорон',
-               'Иҷрои меъёр — омӯзгорон кесимида', sub,
+               'Иҷрои меъёр — аз рӯи омӯзгорон', sub,
                ('№', 'Омӯзгор', 'Фан ва синфҳо', 'Соат', 'Меъёр',
                 'Сабтшуда', '%', 'Ҳолат'),
                [(i, t['name'], '; '.join(t['subjects']), t['hours'],
@@ -597,7 +597,7 @@ def build_report_workbook(data, today=None):
                (5, 24, 36, 8, 9, 11, 8, 11))
 
         _sheet(wb, 'Ҳолати журналҳо',
-               'Ҳолати журналҳо — синф × фан кесимида', sub,
+               'Ҳолати журналҳо — аз рӯи синф ва фан', sub,
                ('№', 'Омӯзгор', 'Синф', 'Фан', 'Гурӯҳ',
                 'Меъёрро иҷро кардаанд', 'Ҳолат'),
                [(i, t['name'], j['class_name'], j['subject'],

@@ -221,6 +221,39 @@ class QuarterCloseTests(GoldenBase):
         self.assertFalse(QuarterLock.objects.filter(
             school=self.school_a, quarter=1, locked=True).exists())
 
+    def test_auto_close_relocks_expired_reopen(self):
+        """Маориф opened with «то <date>»: once that date passes the
+        cron locks the quarter again and refreezes the archive."""
+        self._close_q1()
+        # Маориф reopens for a 10-day window via the view.
+        self.client.force_login(self.director)
+        until = self._q2_start() + datetime.timedelta(days=9)
+        self.client.post(reverse('quarter_reopen'), {
+            'school_id': self.school_a.id, 'quarter': 1,
+            'year': self.ay, 'until': until.isoformat()})
+        qs = collect_quarter_close(self.school_a, 1, self.ay)
+        self.assertFalse(qs['closed'])
+        self.assertEqual(qs['reopened_until'], until)
+
+        # Inside the window: automation leaves it open.
+        closed = auto_close_due(self.school_a, today=until)
+        self.assertEqual(closed, [])
+        self.assertFalse(QuarterLock.objects.filter(
+            school=self.school_a, quarter=1, locked=True).exists())
+
+        # The day after «то»: cron re-locks and refreezes the archive.
+        closed = auto_close_due(
+            self.school_a, today=until + datetime.timedelta(days=1))
+        self.assertEqual(closed, [(1, self.ay)])
+        locks = QuarterLock.objects.filter(
+            school=self.school_a, quarter=1,
+            academic_year=self.ay, locked=True)
+        self.assertTrue(locks.exists())
+        self.assertTrue(locks.filter(reopened_until__isnull=True)
+                        .exists())
+        self.assertTrue(archive_path(self.school_a, 1, self.ay)
+                        .exists())
+
     def test_close_due_quarters_command(self):
         import io as _io
         from django.core.management import call_command

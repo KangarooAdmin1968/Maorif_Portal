@@ -12,7 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from django.conf import settings
-from django.db.models import Count
+from django.db.models import Count, Min
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -65,6 +65,11 @@ def collect_quarter_close(school, quarter, year, today=None):
     grading_until = (windows[quarter + 1][0] - datetime.timedelta(days=1)
                      if quarter < 4 else datetime.date(year + 1, 8, 31))
     locked = _locked_keys(school, quarter, year)
+    # Earliest «Кушодан» expiry among unlocked rows — the card shows
+    # «вақтинчалик кушода: то X»; NULL everywhere = indefinite reopen.
+    reopened_until = QuarterLock.objects.filter(
+        school=school, quarter=quarter, academic_year=year,
+        locked=False).aggregate(m=Min('reopened_until'))['m']
 
     graded_css = _graded_class_subjects(school)
     students = list(Student.objects.filter(school=school)
@@ -114,6 +119,7 @@ def collect_quarter_close(school, quarter, year, today=None):
         'total': len(rows), 'locked_count': locked_count,
         'closed': locked_count == len(rows) and len(rows) > 0,
         'missing_total': missing_total,
+        'reopened_until': reopened_until,
         'rows': rows,
     }
 
@@ -162,33 +168,58 @@ def auto_close_due(school, today=None):
       quarter must never be silently re-locked by automation; the
       zavuch closes it again by hand.
 
+    The due/exists checks stay cheap (calendar math + one EXISTS query)
+    so the refresh_rankings cron can call this every run; the expensive
+    merged scan only happens inside save_quarter_archive when a quarter
+    actually closes.
+
     Returns [(quarter, year)] for the quarters it actually closed
     (each gets its frozen Excel archive, exactly like a manual close).
     """
-    from .views import academic_year_start  # local import avoids cycles
+    from .views import (
+        academic_year_quarter_windows, academic_year_start)
     today = today or datetime.date.today()
     year = academic_year_start(today)
+    windows = academic_year_quarter_windows(year)
     closed = []
     for quarter in (1, 2, 3, 4):
-        status = collect_quarter_close(school, quarter, year, today)
-        if status['closed'] or today <= status['grading_until']:
+        grading_until = (
+            windows[quarter + 1][0] - datetime.timedelta(days=1)
+            if quarter < 4 else datetime.date(year + 1, 8, 31))
+        if today <= grading_until:
             continue
-        if QuarterLock.objects.filter(
-                school=school, quarter=quarter,
-                academic_year=year).exists():
+        locks = QuarterLock.objects.filter(
+            school=school, quarter=quarter, academic_year=year)
+        if not locks.exists():
+            # Never touched: close it as if the завуч pressed Ҷамъбаст.
+            close_quarter(school, quarter, year)
+            save_quarter_archive(school, quarter, year)
+            closed.append((quarter, year))
             continue
-        close_quarter(school, quarter, year)
-        save_quarter_archive(school, quarter, year)
-        closed.append((quarter, year))
+        # A маориф reopen is temporary: once its reopened_until date
+        # passes, the quarter re-locks itself and the archive refreezes
+        # with whatever marks were added while open. A NULL
+        # reopened_until (indefinite reopen) is never auto-relocked.
+        n = locks.filter(
+            locked=False, reopened_until__lt=today).update(
+            locked=True, reopened_until=None)
+        if n:
+            save_quarter_archive(school, quarter, year)
+            closed.append((quarter, year))
     return closed
 
 
-def reopen_quarter(school, quarter, year):
+def reopen_quarter(school, quarter, year, until=None):
     """Маориф/админ undo: keeps the lock rows (locked=False) so the
-    admin history shows who closed the quarter and when."""
+    admin history shows who closed the quarter and when.
+
+    ``until`` is the last day grade entry stays open — once it passes,
+    auto_close_due re-locks the quarter and refreezes its archive.
+    None means an indefinite reopen: the завуч must re-close by hand.
+    """
     return QuarterLock.objects.filter(
         school=school, quarter=quarter, academic_year=year,
-        locked=True).update(locked=False)
+        locked=True).update(locked=False, reopened_until=until)
 
 
 # ---------------------------------------------------------------- archive

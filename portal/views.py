@@ -9779,6 +9779,11 @@ def academic_years(request):
             request.user, school),
         'can_reopen': _maorif_report_access(request.user),
         'current_year': academic_year_start(),
+        # Default «то <date>» for the маориф reopen input — a 10-day
+        # window; the field stays editable for any other date.
+        'reopen_default': (
+            datetime.date.today() + datetime.timedelta(days=10)
+        ).isoformat(),
     })
 
 
@@ -9846,10 +9851,25 @@ def quarter_reopen(request):
     except (TypeError, ValueError):
         return _years_redirect(request, school)
     if quarter in (1, 2, 3, 4):
+        # Optional «то <date>» reopen: after that day the cron's
+        # auto_close_due locks the quarter again on its own.
+        until = None
+        raw = request.POST.get('until', '').strip()
+        if raw:
+            try:
+                until = datetime.date.fromisoformat(raw)
+            except ValueError:
+                messages.error(request, 'Санаи нодуруст.')
+                return _years_redirect(request, school)
         from .quarter_close import reopen_quarter
-        n = reopen_quarter(school, quarter, year)
-        messages.success(
-            request, f'Чоряк кушода шуд — {n} фан озод гардид.')
+        n = reopen_quarter(school, quarter, year, until=until)
+        if until:
+            messages.success(
+                request, f'Чоряк то {until:%d.%m.%Y} кушода шуд — '
+                         f'{n} фан озод гардид.')
+        else:
+            messages.success(
+                request, f'Чоряк кушода шуд — {n} фан озод гардид.')
     return _years_redirect(request, school)
 
 

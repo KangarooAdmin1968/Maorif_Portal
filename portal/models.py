@@ -696,6 +696,11 @@ class QuarterLock(models.Model):
         'Соли таҳсил', blank=True, null=True)
     locked = models.BooleanField('Баста шудааст', default=True)
     locked_at = models.DateTimeField('Санаи бастан', auto_now_add=True)
+    # Last day of a маориф «Кушодан»: unlocked (locked=False) rows are
+    # re-locked by auto_close_due once this date passes. NULL means an
+    # indefinite reopen — the завуч must re-close by hand.
+    reopened_until = models.DateField(
+        'Кушода: то', blank=True, null=True)
 
     class Meta:
         unique_together = [

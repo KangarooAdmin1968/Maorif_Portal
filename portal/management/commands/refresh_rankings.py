@@ -97,6 +97,23 @@ class Command(BaseCommand):
             skipped.append(f'report_counts: {exc}')
             logger.exception('refresh_rankings: report_counts failed')
 
+        # Due-quarter closeout rides the same schedule: the day after a
+        # grading window ends (e.g. 09.11 for Q1), every unfinished
+        # quarter is locked and archived as if each завуч pressed
+        # «Ҷамъбаст» themselves — teachers focus on the new quarter.
+        # auto_close_due stays cheap (calendar gate + one EXISTS query
+        # per quarter) and never re-locks a quarter маориф reopened.
+        from portal.quarter_close import auto_close_due
+        for school in schools:
+            try:
+                closed = auto_close_due(school)
+                for q, y in closed:
+                    refreshed.append(f'quarter_close: {school.name} Ч{q} {y}')
+            except Exception:  # noqa: BLE001 — keep siblings running
+                logger.exception(
+                    'refresh_rankings: auto_close_due failed for %s',
+                    school)
+
         self.stdout.write(
             'refreshed: %s%s' % (
                 ', '.join(refreshed) or 'none',

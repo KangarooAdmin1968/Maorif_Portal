@@ -53,6 +53,8 @@
             <div class="qd">{{ q.start|date:"d.m.Y" }} – {{ q.end|date:"d.m.Y" }}</div>
             {% if q.closed %}
                 <span class="q-badge closed">🔒 Ҷамъбаст шудааст</span>
+            {% elif q.reopened_until %}
+                <span class="q-badge open">⏳ Вақтинчалик кушода — то {{ q.reopened_until|date:"d.m.Y" }}</span>
             {% elif q.locked_count > 0 %}
                 <span class="q-badge partial">Қисман баста ({{ q.locked_count }}/{{ q.total }})</span>
             {% elif q.not_started %}
@@ -79,6 +81,9 @@
                         <input type="hidden" name="school_id" value="{{ school.id }}">
                         <input type="hidden" name="quarter" value="{{ q.quarter }}">
                         <input type="hidden" name="year" value="{{ q.year }}">
+                        <label style="font-size:.75rem; color:#6b7280;">То
+                            <input type="date" name="until" value="{{ reopen_default }}" title="Шу сана тугагач чоряк автоматик ҷамъбаст мешавад">
+                        </label>
                         <button type="submit" class="btn-open-q">Кушодан</button>
                     </form>
                     {% endif %}

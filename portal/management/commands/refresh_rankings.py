@@ -99,9 +99,13 @@ class Command(BaseCommand):
 
         # Reports' per-quarter readiness — the Ҳисоботҳо district view
         # marks past quarters it was asked for; warm exactly those under
-        # the same single-flight machinery (never inside a request).
+        # the same single-flight machinery (never inside a request). The
+        # same marker drives the Аълохон/Бебаҳо counts — otherwise those
+        # cells stay '—' forever on a non-current quarter.
         try:
-            from portal.reports import wanted_report_quarters
+            from portal.reports import (
+                excellent_ungraded_counts, report_counts_cache_key,
+                wanted_report_quarters)
             from portal.views import (
                 academic_year_quarter_windows,
                 readiness_quarter_cache_key)
@@ -122,6 +126,18 @@ class Command(BaseCommand):
                     skipped.append(f'readiness:q{q}: {exc}')
                     logger.exception(
                         'refresh_rankings: readiness q%s failed', q)
+                try:
+                    _ranking_cached(
+                        report_counts_cache_key(q, ay),
+                        lambda qq=q, aa=ay: excellent_ungraded_counts(
+                            schools, qq))
+                    refreshed.append(f'report_counts:q{q}')
+                except RankingRefreshBusy:
+                    skipped.append(f'report_counts:q{q}: busy')
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append(f'report_counts:q{q}: {exc}')
+                    logger.exception(
+                        'refresh_rankings: report_counts q%s failed', q)
         except Exception:  # noqa: BLE001 — optional feature, keep running
             logger.exception('refresh_rankings: quarter readiness failed')
 

@@ -171,6 +171,12 @@ class QuarterScopedReportTests(GoldenBase):
         entry = _ranking_cache_get(
             readiness_quarter_cache_key(started[0], ay))
         self.assertIsNotNone(entry)
+        # Аълохон/Бебаҳо cells need their own per-quarter key warmed on
+        # the same marker — or a non-current quarter shows '—' forever.
+        from portal.reports import report_counts_cache_key
+        counts = _ranking_cache_get(
+            report_counts_cache_key(started[0], ay))
+        self.assertIsNotNone(counts)
 
 
 def _current_report_period():

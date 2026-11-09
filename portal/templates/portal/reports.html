@@ -80,7 +80,7 @@
 <!-- ======================= ҲУДУД (мудир) ======================= -->
 
 <div class="rp-card">
-    <h2>Ҳолати умумии ноҳия — аз рӯи мактабҳо <span class="rp-note">(меъёр — чоряки ҷорӣ)</span></h2>
+    <h2>Ҳолати умумии ноҳия — аз рӯи мактабҳо <span class="rp-note">(меъёр — Ч{{ data.quarter }})</span></h2>
     <table class="rp-table">
         <thead><tr>
             <th class="c">№</th><th>Мактаб</th>
@@ -175,7 +175,7 @@
 
 <div class="rp-grid2">
 <div class="rp-card">
-    <h2>📖 Ҳолати журналҳо <span class="rp-note">(чоряки ҷорӣ)</span></h2>
+    <h2>📖 Ҳолати журналҳо <span class="rp-note">(Ч{{ data.quarter }})</span></h2>
     <table class="rp-table">
         <thead><tr><th>Мактаб</th><th class="c">Пурра</th><th class="c">Қисман</th><th class="c">Холӣ</th><th class="c">Пурра %</th></tr></thead>
         <tbody>
@@ -216,7 +216,7 @@
 
 <div class="rp-cards">
     <div class="rp-stat"><div class="n">{{ data.students }}</div><div class="t">Хонандагон</div></div>
-    <div class="rp-stat"><div class="n">{{ data.total_grades }}</div><div class="t">Сабтшуда (чоряки ҷорӣ)</div></div>
+    <div class="rp-stat"><div class="n">{{ data.total_grades }}</div><div class="t">Сабтшуда (Ч{{ data.quarter }})</div></div>
     <div class="rp-stat ok"><div class="n">{{ data.fulfillment }}%</div><div class="t">Иҷрои меъёр</div></div>
     <div class="rp-stat"><div class="n">{{ data.gpa|default:'—' }}</div><div class="t">Холи миёна</div></div>
     <div class="rp-stat ok"><div class="n">{{ data.journal.complete }}</div><div class="t">Журнали пурра</div></div>
@@ -228,7 +228,7 @@
 <p class="rp-note" style="margin:-.5rem 0 1.25rem;">«Журнал» = синф × фан. «Пурра» — ҳар хонанда меъёри пурраи чорякга етган; «Қисман» — баҳо бор, лекин ҳануз ҳама етмаган (чоряк давомида табиӣ); «Холӣ» — умуман баҳо киритилмаган.</p>
 
 <div class="rp-card">
-    <h2>👩‍🏫 Иҷрои меъёр — аз рӯи омӯзгорон <span class="rp-note">(чоряки ҷорӣ, вақти гузашта ҳисоб гирифта мешавад)</span></h2>
+    <h2>👩‍🏫 Иҷрои меъёр — аз рӯи омӯзгорон <span class="rp-note">(Ч{{ data.quarter }}, вақти гузашта ҳисоб гирифта мешавад)</span></h2>
     <table class="rp-table">
         <thead><tr>
             <th class="c">№</th><th>Омӯзгор</th><th>Фан ва синфҳо</th>

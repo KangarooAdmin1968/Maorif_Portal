@@ -24,6 +24,9 @@ class ZavuchReportExportTests(GoldenBase):
     ROW7 = 10  # FIRST_DATA_ROW(5) + (level 7 - 2)
 
     def _get(self, user, **params):
+        # Fixtures are quarter 1 — pin it so the view's today-quarter
+        # default cannot read an empty quarter after rollover.
+        params.setdefault('quarter', 1)
         self.client.force_login(user)
         return self.client.get(reverse('zavuch_report_export'), params)
 
@@ -117,6 +120,7 @@ class ZavuchGradesExportTests(GoldenBase):
     # marks 10..1 at cols 15..34 (count, %), 35 quality, 36 mastery.
 
     def _get(self, user, **params):
+        params.setdefault('quarter', 1)
         self.client.force_login(user)
         return self.client.get(reverse('zavuch_grades_export'), params)
 

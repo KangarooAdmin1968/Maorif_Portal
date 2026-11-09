@@ -119,6 +119,34 @@ class QuarterScopedReportTests(GoldenBase):
         collect_district_report(f'q{past[0]}')
         self.assertIn((past[0], ay), wanted_report_quarters())
 
+    def test_over_entry_never_covers_ungraded_student(self):
+        """Регрессия: 30 баҳо як хонанда + 0 баҳо дигараш кайҳо 100%
+        медод — ҳар хонанда ҳадди аксар меъёрчаси ҳисоб мешавад."""
+        from portal.views import (
+            _current_quarter_bounds, academic_year_quarter_windows,
+            academic_year_start)
+        ay = academic_year_start()
+        today = datetime.date.today()
+        cur = _current_quarter_bounds(today)
+        finished = [q for q, (s, e)
+                    in academic_year_quarter_windows(ay).items()
+                    if e < today and (s, e) != cur]
+        if not finished:
+            self.skipTest('no finished quarter yet this year')
+        q = finished[0]
+        q_start, _ = academic_year_quarter_windows(ay)[q]
+        # s1 over-enters (30 distinct dated rows — same-cell rows would
+        # canonicalize to one); s2 gets nothing.
+        for i in range(30):
+            make_grade(self.s1, subject=MATH, score=9,
+                       date=q_start + datetime.timedelta(days=i))
+        data = collect_school_report(self.school_a, f'q{q}')
+        self.assertLess(data['fulfillment'], 100)
+        row = next(t for t in data['teacher_rows']
+                   if t['name'] == 'Омӯзгор Якка')
+        self.assertLess(row['fulfillment'], 100)
+        self.assertNotEqual(row['status'], 'Иҷро шуд')
+
     def test_refresh_rankings_warms_wanted_quarter(self):
         # Mark an already-started quarter directly — during the
         # inter-quarter vacation the just-ended quarter still counts

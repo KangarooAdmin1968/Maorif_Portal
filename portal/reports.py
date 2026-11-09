@@ -472,10 +472,10 @@ def collect_school_report(school, period, today=None):
             for j in t['journal'] if j['status'] != 'complete']
         if t['grades_done'] == 0:
             status = 'Баҳо нест'
-        elif t['fulfillment'] < 100:
-            status = 'Қафо монд'
         elif missing:
             status = 'Баҳогузорӣ нашудааст'
+        elif t['fulfillment'] < 100:
+            status = 'Қафо монд'
         else:
             status = 'Иҷро шуд'
         teacher_rows.append({**t, 'status': status, 'reasons': reasons})

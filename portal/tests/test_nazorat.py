@@ -20,7 +20,9 @@ class NazoratTests(GoldenBase):
     def test_zavuch_sees_own_school_only(self):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
         self.client.force_login(self.zavuch_a)
-        resp = self.client.get(reverse('nazorat'))
+        # Fixtures are quarter 1 — pin ?quarter=1: the page otherwise
+        # defaults to today's quarter and reads empty after rollover.
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         self.assertEqual(resp.status_code, 200)
         # s1 graded; s2 ungraded -> listed by name, s3 never leaks in.
         # (The norm-pace tree may still render s1's name with her status —
@@ -36,14 +38,16 @@ class NazoratTests(GoldenBase):
         self.assertNotContains(resp, 'name="school_id"')
         # Even asking for another school_id keeps their own school.
         resp2 = self.client.get(reverse('nazorat'),
-                                {'school_id': self.school_b.id})
+                                {'school_id': self.school_b.id,
+                                 'quarter': 1})
         self.assertNotContains(resp2, 'Ҷаҳонгир Назаров')
 
     def test_director_picks_school_and_sees_low_marks(self):
         make_quarter_grade(self.s3, '7-Б', MATH, 1, grade=3)
         self.client.force_login(self.director)
         resp = self.client.get(
-            reverse('nazorat'), {'school_id': self.school_b.id})
+            reverse('nazorat'),
+            {'school_id': self.school_b.id, 'quarter': 1})
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Ҷаҳонгир Назаров')
         # s3 avg 3 -> counted in the 1-3 card and listed with its mean.
@@ -59,7 +63,7 @@ class NazoratTests(GoldenBase):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=3)
         make_quarter_grade(self.s1, '7-А', TAJIK, 1, grade=4)
         self.client.force_login(self.zavuch_a)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         self.assertContains(resp, 'id="low-grades"')
         self.assertContains(resp, 'Миёнаи хол')
         html = resp.content.decode()
@@ -78,14 +82,14 @@ class NazoratTests(GoldenBase):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=8)
         make_quarter_grade(self.s2, '7-А', MATH, 1, grade=7)
         self.client.force_login(self.zavuch_a)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         self.assertContains(resp, 'Хонандае бо миёнаи 1–3 нест')
 
     def test_all_graded_shows_ok_note(self):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=8)
         make_quarter_grade(self.s2, '7-А', MATH, 1, grade=7)
         self.client.force_login(self.zavuch_a)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         self.assertContains(resp, 'Ҳамаи хонандагон баҳо гирифтаанд')
 
     def test_provisional_only_student_counts_as_graded(self):
@@ -95,7 +99,7 @@ class NazoratTests(GoldenBase):
         make_grade(self.s1, subject=MATH, score=9, date=D_Q1)
         QuarterGrade.objects.filter(student=self.s1).delete()
         self.client.force_login(self.zavuch_a)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         stats = resp.context['stats']
         self.assertEqual(stats['totals']['graded'], 1)
         self.assertEqual(stats['totals']['ungraded'], 1)
@@ -224,7 +228,7 @@ class NazoratTests(GoldenBase):
         # subjects (no teacher assigned) appear as таъйин нашудааст.
         make_grade(self.s1, subject=MATH, score=9, date=D_Q1)
         self.client.force_login(self.zavuch_a)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         teachers = resp.context['teachers']
         math_rows = [r for r in teachers['rows'] if r['subject'] == MATH]
         self.assertEqual(len(math_rows), 1)
@@ -242,7 +246,7 @@ class NazoratTests(GoldenBase):
         # Once s2 has a mark too, the МАТЕМАТИКА gap disappears while
         # still-ungraded subjects remain listed.
         make_grade(self.s2, subject=MATH, score=8, date=D_Q1)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         math_rows = [r for r in resp.context['teachers']['rows']
                      if r['subject'] == MATH]
         self.assertEqual(math_rows, [])
@@ -251,14 +255,15 @@ class NazoratTests(GoldenBase):
         # School directors get the same own-school scope as zavuchs.
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
         self.client.force_login(self.principal_a)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Мадина Каримова')
         self.assertNotContains(resp, 'Ҷаҳонгир Назаров')
         # No school picker; ?school_id= cannot escape the scope.
         self.assertNotContains(resp, 'name="school_id"')
         resp2 = self.client.get(
-            reverse('nazorat'), {'school_id': self.school_b.id})
+            reverse('nazorat'),
+            {'school_id': self.school_b.id, 'quarter': 1})
         self.assertNotContains(resp2, 'Ҷаҳонгир Назаров')
 
     def test_principal_nav_shows_nazorat_and_documents(self):
@@ -273,7 +278,7 @@ class NazoratTests(GoldenBase):
         make_grade(self.s1, subject=MATH, score=9, date=D_Q1)
         make_grade(self.s2, subject=MATH, score=9, date=D_Q1)
         self.client.force_login(self.zavuch_a)
-        resp = self.client.get(reverse('nazorat'))
+        resp = self.client.get(reverse('nazorat'), {'quarter': 1})
         rows = resp.context['teachers']['rows']
         self.assertFalse(any(r['subject'] == MATH for r in rows))
         self.assertFalse(any(r['class_name'] == '7-Б' for r in rows))

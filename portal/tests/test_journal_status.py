@@ -128,7 +128,10 @@ class JournalNormStatusHelperTests(GoldenBase):
     def test_counts_only_current_quarter(self):
         for _ in range(7):
             make_grade(self.s1, subject=MATH, score=8, date=PREV_Q)
-        for d in (Q_START, CUR_DAY):
+        # Two DISTINCT in-quarter dates: on a quarter's first day
+        # CUR_DAY == TODAY == Q_START, and same-date same-cell rows
+        # canonicalize to one — the fixture must not collapse then.
+        for d in (Q_START, Q_START + datetime.timedelta(days=1)):
             make_grade(self.s1, subject=MATH, score=9, date=d)
         j = self._status()
         self.assertEqual(j['done'], 2)

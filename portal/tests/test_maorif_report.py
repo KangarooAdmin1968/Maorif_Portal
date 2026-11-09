@@ -20,6 +20,9 @@ class MaorifReportExportTests(GoldenBase):
     FIRST = 6   # first data row in the generated sheet
 
     def _get(self, user, **params):
+        # Every fixture is quarter 1 — pin it: the view otherwise
+        # defaults to today's quarter and reads empty after rollover.
+        params.setdefault('quarter', 1)
         self.client.force_login(user)
         return self.client.get(reverse('maorif_report_export'), params)
 
@@ -142,7 +145,8 @@ class MaorifReportExportTests(GoldenBase):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
         make_quarter_grade(self.s3, '7-Б', MATH, 1, grade=3)
         self.client.force_login(self.admin)
-        resp = self.client.get(reverse('maorif_report_total_export'))
+        resp = self.client.get(
+            reverse('maorif_report_total_export'), {'quarter': 1})
         self.assertEqual(resp.status_code, 200)
         ws = load_workbook(io.BytesIO(resp.content)).active
         # Single bold Хамагӣ row as the only data row.
@@ -166,7 +170,8 @@ class MaorifReportExportTests(GoldenBase):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=10)
         make_quarter_grade(self.s3, '7-Б', MATH, 1, grade=3)
         self.client.force_login(self.admin)
-        resp = self.client.get(reverse('maorif_report_grades_export'))
+        resp = self.client.get(
+            reverse('maorif_report_grades_export'), {'quarter': 1})
         self.assertEqual(resp.status_code, 200)
         ws = self._ws(resp)
         # Sub-header row carries each mark + % pair, 10 down to 1.
@@ -192,7 +197,8 @@ class MaorifReportExportTests(GoldenBase):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=10)
         self.client.force_login(self.director)
         resp = self.client.get(
-            reverse('maorif_report_grades_district_export'))
+            reverse('maorif_report_grades_district_export'),
+            {'quarter': 1})
         self.assertEqual(resp.status_code, 200)
         ws = self._ws(resp)
         # Official one-row form: «ноҳияи Зафаробод» + Хамагӣ.

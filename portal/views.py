@@ -324,9 +324,12 @@ def _journal_norm_status(class_name, subject, class_subject, students, today,
     # Aggregate credit: each student's missed lessons top their real
     # count up to the norm — never beyond it and never for grade-less
     # students, so every student enters the total exactly once and the
-    # fulfillment percentage (already capped at 100) cannot be inflated.
+    # fulfillment percentage cannot be inflated. The student total is
+    # additionally capped AT the norm: marks beyond it can never cover
+    # a classmate who has none (Иҷрои меъёр counts ungraded students).
     done_eff = sum(
-        actual + min(absences.get(sid, 0), max(0, norm - actual))
+        min(actual + min(absences.get(sid, 0), max(0, norm - actual)),
+            norm)
         for sid, actual in per_student.items() if actual > 0)
     return {
         'done': done,
@@ -8501,7 +8504,6 @@ def _compute_school_readiness_payload(schools, gpa_map,
     # group-attribution paths — previously three separate scans of the
     # same quarter rows, the last one widened by the membership JOIN.
     pair_grade_counts = defaultdict(int)
-    pair_scored_counts = defaultdict(int)
     pair_student_scored = defaultdict(dict)
     # Absence-credit slots mirror absence_counts() in norm_pace: a
     # score-less '+/-' attendance mark tops the student's real mark
@@ -8530,7 +8532,6 @@ def _compute_school_readiness_payload(schools, gpa_map,
             # they are attributed to the home group via lesson.group below.
             pair_grade_counts[key] += 1
             if scored:
-                pair_scored_counts[key] += 1
                 sid = r['student_id']
                 pair_student_scored[key][sid] = pair_student_scored[key].get(sid, 0) + 1
                 pair_student_slots[key][sid]['s'].add(
@@ -8605,7 +8606,19 @@ def _compute_school_readiness_payload(schools, gpa_map,
             min_norm = quarter_min_norm(cs.class_name, cs.subject, cs)
             if min_norm:
                 expected_min += min_norm * n_students
-                norm_grades_done += pair_scored_counts.get((school.id, cs.class_name, cs.subject), 0)
+                # Per-student capped total: a student counts at most
+                # min_norm, so marks beyond the norm can never cover a
+                # classmate left without a single mark (the Бебаҳо list).
+                # Same rule the journal's done_eff applies.
+                pkey = (school.id, cs.class_name, cs.subject)
+                per_student = pair_student_scored.get(pkey, {})
+                slots_map = pair_student_slots.get(pkey, {})
+                norm_grades_done += sum(
+                    min(actual + min(
+                        _absence_credit(slots_map.get(sid)),
+                        max(0, min_norm - actual)), min_norm)
+                    for sid, actual in per_student.items()
+                    if actual > 0)
             cs_groups = canonical_by_cs.get(cs.id)
             if cs_groups:
                 # Grouped CS: one workload entry per actual group teacher.
@@ -8665,13 +8678,15 @@ def _compute_school_readiness_payload(schools, gpa_map,
                     # and sticker-only rows never satisfy the grading norm.
                     scored = sum(per_student.values())
                     # Same effective count as the journal's done_eff:
-                    # real scores plus each student's absence credit
-                    # capped at the norm — keeps the report's fulfillment
-                    # equal to what the journal page shows.
+                    # real scores plus each student's absence credit,
+                    # the total capped AT the norm — keeps the report's
+                    # fulfillment equal to what the journal page shows,
+                    # and ungraded students can never be covered by
+                    # over-entered marks for classmates.
                     norm_done += sum(
-                        actual + min(
+                        min(actual + min(
                             _absence_credit(slots_map.get(sid)),
-                            max(0, min_norm - actual))
+                            max(0, min_norm - actual)), min_norm)
                         for sid, actual in per_student.items()
                         if actual > 0)
                     min_grades += min_norm * n_students

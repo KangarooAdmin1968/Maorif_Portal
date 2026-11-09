@@ -464,12 +464,20 @@ class NazoratTreeTests(GoldenBase):
         self.assertIn('rows', item)
 
     def test_indicators_count_students_not_rows(self):
-        # s1 gets a grade -> behind/met by pace; s2 (no grades) -> ungraded.
+        # s1 gets a grade in the CURRENT quarter -> lands in a pace
+        # bucket (met early in the quarter when planned is tiny,
+        # behind later); s2 (no grades) -> ungraded. The fixture date
+        # must track the quarter today is in — a date from the quarter
+        # that just ended no longer counts after rollover.
         from portal.nazorat import collect_norm_tree
-        make_grade(self.s1, score=9, date=D_Q1)
+        from portal.views import _current_quarter_bounds
+        q_start, q_end = _current_quarter_bounds(datetime.date.today())
+        in_q = min(datetime.date.today(), q_end)
+        make_grade(self.s1, score=9, date=max(in_q, q_start))
         tree = collect_norm_tree(self.school_a)
         self.assertEqual(tree['indicators']['exempt'], 0)
-        self.assertGreaterEqual(tree['indicators']['behind'], 1)
+        self.assertGreaterEqual(
+            tree['indicators']['behind'] + tree['indicators']['met'], 1)
         self.assertGreaterEqual(tree['indicators']['ungraded'], 1)
 
     def test_exempt_counts_separately(self):

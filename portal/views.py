@@ -10562,7 +10562,14 @@ def _collect_report(request):
     data = (reports_mod.collect_school_report(school, period)
             if school is not None
             else reports_mod.collect_district_report(period))
-    return data, period, can_district, school, options
+    # The school selector stays rendered inside a school view too —
+    # the district payload carries its own list, but the per-school
+    # payload does not; without it the period form dropped the school
+    # param and bounced the user back to the district page.
+    school_options = ([s for s in School.objects.all()
+                       if is_academic_school(s)]
+                      if can_district else [])
+    return data, period, can_district, school, options, school_options
 
 
 @login_required
@@ -10570,13 +10577,14 @@ def reports_view(request):
     resolved = _collect_report(request)
     if resolved is None:
         return redirect('dashboard')
-    data, period, can_district, school, options = resolved
+    data, period, can_district, school, options, school_options = resolved
     return render(request, 'portal/reports.html', {
         'data': data,
         'period_options': options,
         'selected_period': period,
         'selected_school': school,
         'can_district': can_district,
+        'school_options': school_options,
     })
 
 
@@ -10585,7 +10593,7 @@ def reports_export(request):
     resolved = _collect_report(request)
     if resolved is None:
         return redirect('dashboard')
-    data, _period, _cd, _s, _o = resolved
+    data, _period, _cd, _s, _o, _so = resolved
     from . import reports as reports_mod
     output = reports_mod.build_report_workbook(data)
     label = (data['school'].name if data['kind'] == 'school'

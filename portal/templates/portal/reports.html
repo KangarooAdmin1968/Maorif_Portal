@@ -45,11 +45,11 @@
                 {% endfor %}
             </select>
         </label>
-        {% if can_district and data.schools %}
+        {% if can_district and school_options %}
         <label>Муассиса
             <select name="school" onchange="this.form.submit()">
                 <option value="">— Умумии ноҳия —</option>
-                {% for s in data.schools %}
+                {% for s in school_options %}
                 <option value="{{ s.id }}"{% if selected_school and s.id == selected_school.id %} selected{% endif %}>{{ s.name }}</option>
                 {% endfor %}
             </select>

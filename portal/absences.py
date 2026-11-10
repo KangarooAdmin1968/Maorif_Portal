@@ -1,4 +1,4 @@
-"""⏰ Ғоибият — «Давомот: соатҳои гузарондашуда».
+"""⏰ Ғоибият — «Давомат: соатҳои гузарондашуда».
 
 The journal's back register: every absence is a Grade row carrying
 attendance '+' (бо сабаб / excused) or '−' (бе сабаб / unexcused) and no
@@ -88,12 +88,54 @@ def collect_class_absences(school, class_name, start, end):
         exc = c.get('excused', 0)
         unc = c.get('unexcused', 0)
         rows.append({
+            'student_id': st.id,
             'student': st.full_name,
             'excused': exc,
             'unexcused': unc,
             'total': exc + unc,
         })
     return rows
+
+
+def retag_absences(school, student, start, end, to_excused=True):
+    """Re-tag one student's absence marks inside [start, end].
+
+    The роҳбари синф uses this when a маълумотнома arrives after the
+    fact: '−' (бе сабаб) flips to '+' (бо сабаб) — or back when a mark
+    was set by mistake. Only the attendance flag changes; student,
+    subject, lesson and date are untouched, and score-bearing rows are
+    skipped entirely (a score means the student was present).
+
+    Rows inside a quarter already ҷамъбаст (QuarterLock for that
+    class/subject/quarter/year) are NOT modified — a closed quarter
+    stays frozen until маориф reopens it. They are counted separately
+    so the caller can explain why some marks did not move.
+
+    Returns {'changed': n, 'locked': n}.
+    """
+    from .views import (academic_year_start, get_date_quarter,
+                        is_quarter_locked)  # local — avoids import cycles
+
+    src, dst = ('-', '+') if to_excused else ('+', '-')
+    lock_cache = {}
+    locked = 0
+    to_save = []
+    for g in Grade.objects.filter(
+            student=student, date__range=(start, end),
+            attendance=src, score__isnull=True):
+        key = (g.subject, get_date_quarter(g.date),
+               academic_year_start(g.date))
+        if key not in lock_cache:
+            lock_cache[key] = is_quarter_locked(
+                school, student.class_name, g.subject, key[1], key[2])
+        if lock_cache[key]:
+            locked += 1
+            continue
+        g.attendance = dst
+        to_save.append(g)
+    if to_save:
+        Grade.objects.bulk_update(to_save, ['attendance'])
+    return {'changed': len(to_save), 'locked': locked}
 
 
 def build_absence_workbook(school, class_name, period_label, rows):

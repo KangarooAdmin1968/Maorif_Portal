@@ -20,10 +20,10 @@ from django.urls import reverse
 
 from portal.absences import (collect_class_absences,
                              led_class_names)
-from portal.models import StudentExemption
+from portal.models import Grade, StudentExemption
 from portal.tests.helpers import (
-    D_Q1, D_Q2, D_Q3, GoldenBase, make_class_subject, make_grade,
-    make_student, make_user)
+    D_Q1, D_Q2, D_Q3, GoldenBase, MATH, lock_quarter,
+    make_class_subject, make_grade, make_student, make_user)
 
 TARBIYAVI = 'СОАТИ ТАРБИЯВӢ'
 
@@ -184,3 +184,116 @@ class ViewAccessTests(AbsenceFixture):
         self.client.force_login(self.teacher_c)
         resp = self.client.get(reverse('absences_export'))
         self.assertEqual(resp.status_code, 302)
+
+
+class RetagTests(AbsenceFixture):
+    """POST on the Ғоибият page — re-tag a student's marks inside a
+    date window (маълумотнома arrived, or a mark set by mistake)."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = Client()
+
+    def _post(self, user, **over):
+        data = {
+            'student_id': str(self.s1.id),
+            'date_from': str(D_Q1 - datetime.timedelta(days=1)),
+            'date_to': str(D_Q1 + datetime.timedelta(days=1)),
+            'action': 'excuse',
+        }
+        data.update(over)
+        self.client.force_login(user)
+        return self.client.post(
+            reverse('absences') + '?class=7-А&period=q1', data)
+
+    def test_excuse_flips_marks(self):
+        g1 = make_grade(self.s1, attendance='-', date=D_Q1)
+        g2 = make_grade(self.s1, attendance='-', date=D_Q1,
+                        subject='ТОҶИКӢ')
+        keep = make_grade(self.s1, attendance='+', date=D_Q1,
+                          subject='ФИЗИКА')
+        resp = self._post(self.teacher_a)
+        self.assertEqual(resp.status_code, 302)
+        for g in (g1, g2, keep):
+            g.refresh_from_db()
+        self.assertEqual(g1.attendance, '+')
+        self.assertEqual(g2.attendance, '+')
+        self.assertEqual(keep.attendance, '+')
+
+    def test_unexcuse_flips_back(self):
+        g = make_grade(self.s1, attendance='+', date=D_Q1)
+        self._post(self.teacher_a, action='unexcuse')
+        g.refresh_from_db()
+        self.assertEqual(g.attendance, '-')
+
+    def test_locked_quarter_stays_frozen(self):
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        locked_g = make_grade(self.s1, attendance='-', date=D_Q1,
+                              subject=MATH)
+        free_g = make_grade(self.s1, attendance='-', date=D_Q1,
+                            subject='ТОҶИКӢ')
+        self._post(self.teacher_a)
+        locked_g.refresh_from_db()
+        free_g.refresh_from_db()
+        self.assertEqual(locked_g.attendance, '-')
+        self.assertEqual(free_g.attendance, '+')
+
+    def test_scored_row_untouched(self):
+        g = make_grade(self.s1, score=8, attendance='-', date=D_Q1)
+        self._post(self.teacher_a)
+        g.refresh_from_db()
+        self.assertEqual(g.attendance, '-')
+        self.assertEqual(g.score, 8)
+
+    def test_outside_window_untouched(self):
+        g = make_grade(self.s1, attendance='-', date=D_Q2)
+        self._post(self.teacher_a)
+        g.refresh_from_db()
+        self.assertEqual(g.attendance, '-')
+
+    def test_swapped_dates_still_work(self):
+        g = make_grade(self.s1, attendance='-', date=D_Q1)
+        self._post(
+            self.teacher_a,
+            date_from=str(D_Q1 + datetime.timedelta(days=1)),
+            date_to=str(D_Q1 - datetime.timedelta(days=1)))
+        g.refresh_from_db()
+        self.assertEqual(g.attendance, '+')
+
+    def test_leader_cannot_retag_other_class(self):
+        other = make_student(self.school_a, '8-А', 'Алӣ Юлдошев')
+        g = make_grade(other, attendance='-', date=D_Q1)
+        self._post(self.teacher_a, student_id=other.id)
+        g.refresh_from_db()
+        self.assertEqual(g.attendance, '-')
+
+    def test_teacher_without_class_cannot_post(self):
+        g = make_grade(self.s1, attendance='-', date=D_Q1)
+        resp = self._post(self.teacher_c)
+        g.refresh_from_db()
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, reverse('dashboard'))
+        self.assertEqual(g.attendance, '-')
+
+    def test_zavuch_can_retag_own_school(self):
+        g = make_grade(self.s1, attendance='-', date=D_Q1)
+        self._post(self.zavuch_a)
+        g.refresh_from_db()
+        self.assertEqual(g.attendance, '+')
+
+    def test_home_student_rejected(self):
+        StudentExemption.objects.create(
+            student=self.s2, reason='home', start_date=D_Q1)
+        g = make_grade(self.s2, attendance='-', date=D_Q1)
+        self._post(self.teacher_a, student_id=self.s2.id)
+        g.refresh_from_db()
+        self.assertEqual(g.attendance, '-')
+
+    def test_other_fields_never_change(self):
+        g = make_grade(self.s1, attendance='-', date=D_Q1)
+        self._post(self.teacher_a)
+        fresh = Grade.objects.get(pk=g.pk)
+        self.assertEqual(fresh.student_id, self.s1.id)
+        self.assertEqual(fresh.subject, g.subject)
+        self.assertEqual(fresh.date, D_Q1)
+        self.assertIsNone(fresh.score)

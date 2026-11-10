@@ -9457,6 +9457,49 @@ def _absence_scope(request):
     }
 
 
+def _absence_retag(request, scope):
+    """Ғоибият POST: роҳбари синф / завуч re-tags a student's absence
+    marks inside a date window — «−»→«+» when a маълумотнома arrives,
+    «+»→«−» to undo a mistake. scope['class_name'] is already
+    authorised (it came out of the user's own class_options)."""
+    student_id = request.POST.get('student_id', '').strip()
+    try:
+        start = datetime.date.fromisoformat(
+            request.POST.get('date_from', ''))
+        end = datetime.date.fromisoformat(
+            request.POST.get('date_to', ''))
+    except (TypeError, ValueError):
+        student_id = ''
+    if not student_id:
+        messages.warning(request, 'Сана ё хонанда нодуруст интихоб шуд.')
+        return
+    if start > end:
+        start, end = end, start
+    student = Student.objects.filter(
+        pk=student_id, school=scope['school'],
+        class_name=scope['class_name']).first()
+    from .exemptions import home_student_ids
+    if (student is None
+            or student.pk in home_student_ids([student_id])):
+        messages.warning(request, 'Хонанда дар ин синф нест.')
+        return
+    from .absences import retag_absences
+    to_excused = request.POST.get('action') != 'unexcuse'
+    res = retag_absences(
+        scope['school'], student, start, end, to_excused=to_excused)
+    word = 'бо сабаб' if to_excused else 'бе сабаб'
+    if res['changed']:
+        messages.success(
+            request, f"{res['changed']} соат {word} қайд шуд.")
+    else:
+        messages.info(request, 'Дар ин фосила қайд ёфта нашуд.')
+    if res['locked']:
+        messages.warning(
+            request,
+            f"{res['locked']} соат дар чоряки ҷамъбастшуда монд — "
+            "тағйир наёфт.")
+
+
 @login_required
 def absences(request):
     """⏰ Ғоибият — the journal's back register: per-student missed
@@ -9465,6 +9508,11 @@ def absences(request):
     scope = _absence_scope(request)
     if scope is None:
         return redirect('dashboard')
+    if request.method == 'POST':
+        if scope['school'] and scope['class_name']:
+            _absence_retag(request, scope)
+        return redirect(
+            f"{request.path}?{request.GET.urlencode()}")
     rows = None
     if scope['school'] and scope['class_name']:
         from .absences import collect_class_absences

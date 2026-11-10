@@ -17,6 +17,11 @@
   table.ex-table td.tot { font-weight: 700; background: #f3f4f6; }
   .abs-bad { color: #b91c1c; font-weight: 600; }
   .quarter-labels { font-size: .78rem; color: #6b7280; margin-top: .6rem; }
+  .retag-box { border-top: 1px dashed #d1d5db; margin-top: .8rem; padding-top: .8rem; }
+  .retag-box h3 { margin: 0 0 .4rem; font-size: .95rem; color: #003366; }
+  .retag-form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin-top: .5rem; }
+  .retag-form label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .retag-form select, .retag-form input { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; }
   .sign-area { display: none; }
   @media print {
     .navbar, .site-footer, .cr-toolbar, .messages, nav, header, footer { display: none !important; }
@@ -128,6 +133,37 @@
         намешавад.
     </p>
 
+    {% if rows %}
+    <div class="retag-box no-print">
+        <h3>Ғоибиятро аз нав қайд кардан</h3>
+        <p class="quarter-labels" style="margin-top:0;">
+            Вақте хонанда маълумотнома меоварад ё нишона иштибоҳан
+            гузошта шуда бошад — соатҳои ин фосиларо аз нав қайд кунед.
+            Чоряки ҷамъбастшуда тағйир намеёбад.
+        </p>
+        <form method="post" class="retag-form">
+            {% csrf_token %}
+            <label>Хонанда
+                <select name="student_id" required>
+                    {% for r in rows %}
+                    <option value="{{ r.student_id }}">{{ r.student }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>Аз санаи
+                <input type="date" name="date_from" required>
+            </label>
+            <label>То санаи
+                <input type="date" name="date_to" required>
+            </label>
+            <button type="submit" name="action" value="excuse"
+                    class="btn btn-success">✔ Бо сабаб қайд кардан</button>
+            <button type="submit" name="action" value="unexcuse"
+                    class="btn">Бе сабаб қайд кардан</button>
+        </form>
+    </div>
+    {% endif %}
+
     <div class="sign-area">
         <div class="sign-line"><span class="lbl">Роҳбари синф:</span><span class="blank"></span></div>
         <div class="sign-line"><span class="lbl">Директори муассиса:</span><span class="blank"></span></div>
@@ -135,7 +171,7 @@
 </div>
 {% else %}
 <div class="doc-card">
-    <p>{% if can_pick_school %}Барои дидани давомот аввал муассисаро интихоб кунед.{% else %}Давомотро дидан мумкин нест — ба шумо ягон синф вобаста карда нашудааст.{% endif %}</p>
+    <p>{% if can_pick_school %}Барои дидани давомат аввал муассисаро интихоб кунед.{% else %}Давоматро дидан мумкин нест — ба шумо ягон синф вобаста карда нашудааст.{% endif %}</p>
 </div>
 {% endif %}
 {% endblock %}

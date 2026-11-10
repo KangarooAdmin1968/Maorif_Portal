@@ -3354,6 +3354,13 @@ def class_detail(request, school_id, class_name):
         and c not in student_classes
         and _validate_class_name(c)
     ]
+    # ⏰ Ғоибият entry: school/district document viewers plus the роҳбари
+    # синф (the teacher allocated to this class's СОАТИ ТАРБИЯВӢ).
+    can_view_absences = _tabel_access(request.user)
+    if not can_view_absences and request.user.is_authenticated:
+        from .absences import led_class_names
+        can_view_absences = class_name in led_class_names(
+            request.user, school)
     return render(request, 'portal/class_detail.html', {
         'school': school,
         'class_name': class_name,
@@ -3367,6 +3374,7 @@ def class_detail(request, school_id, class_name):
         'empty_targets': empty_targets,
         'archived_students': archived_students,
         'teacher_hours': teacher_hours,
+        'can_view_absences': can_view_absences,
     })
 
 
@@ -9407,6 +9415,89 @@ def ungraded_students_export(request):
     return _maorif_xlsx_response(
         output,
         f"Бебаҳо_{get_school_number(school)}_чорак{quarter}.xlsx")
+
+
+def _absence_scope(request):
+    """Ғоибият scope for the current user, or None when the page is off
+    limits — a regular teacher who leads no class (no СОАТИ ТАРБИЯВӢ
+    allocation = not a роҳбари синф).
+
+    Zavuch/principal see every class of their school; district viewers
+    pick a school via ?school_id=; the роҳбари синф sees only the
+    class(es) whose Тарбиявӣ hour is allocated to them.
+    """
+    from .absences import led_class_names
+    district = _maorif_report_access(request.user)
+    school = _class_report_school(request)
+    if district or _tabel_access(request.user):
+        class_options = (
+            [r['class_name'] for r in _class_report_classes(school)]
+            if school else [])
+    else:
+        led = led_class_names(request.user, school)
+        if not led:
+            return None
+        class_options = sorted(
+            led, key=lambda n: (class_numeric_part(n) or 0, n))
+    raw_class = request.GET.get('class') or ''
+    class_name = normalize_class_name(raw_class) if raw_class else ''
+    if class_name not in class_options:
+        class_name = class_options[0] if class_options else ''
+    from . import reports as reports_mod  # lazy — avoids import cycles
+    options = reports_mod.report_period_options()
+    period = request.GET.get('period', '')
+    if period not in {v for v, _ in options}:
+        period = f'q{get_date_quarter(datetime.date.today()) or 1}'
+    start, end, period_label, _v, _q = reports_mod.resolve_period(period)
+    return {
+        'school': school, 'can_pick_school': district,
+        'class_options': class_options, 'class_name': class_name,
+        'period_options': options, 'selected_period': period,
+        'period_label': period_label, 'bounds': (start, end),
+    }
+
+
+@login_required
+def absences(request):
+    """⏰ Ғоибият — the journal's back register: per-student missed
+    lesson hours (бо сабаб / бе сабаб) for one class and a period
+    (month / quarter / semester / year)."""
+    scope = _absence_scope(request)
+    if scope is None:
+        return redirect('dashboard')
+    rows = None
+    if scope['school'] and scope['class_name']:
+        from .absences import collect_class_absences
+        from .class_report import class_teacher_name
+        rows = collect_class_absences(
+            scope['school'], scope['class_name'], *scope['bounds'])
+        scope['class_teacher'] = class_teacher_name(
+            scope['school'], scope['class_name'])
+        scope['totals'] = {
+            'excused': sum(r['excused'] for r in rows),
+            'unexcused': sum(r['unexcused'] for r in rows),
+            'total': sum(r['total'] for r in rows),
+        }
+    schools = (sorted(academic_schools(), key=lambda s: s.name)
+               if scope['can_pick_school'] else [])
+    return render(request, 'portal/absences.html',
+                  {**scope, 'rows': rows, 'schools': schools})
+
+
+@login_required
+def absences_export(request):
+    """Excel of the same register — identical scoping."""
+    scope = _absence_scope(request)
+    if scope is None or not (scope['school'] and scope['class_name']):
+        return redirect('absences')
+    from .absences import build_absence_workbook, collect_class_absences
+    rows = collect_class_absences(
+        scope['school'], scope['class_name'], *scope['bounds'])
+    output = build_absence_workbook(
+        scope['school'], scope['class_name'], scope['period_label'], rows)
+    return _maorif_xlsx_response(
+        output,
+        f"Ғоибият_{scope['class_name']}_{scope['period_label']}.xlsx")
 
 
 def _maorif_report_access(user):

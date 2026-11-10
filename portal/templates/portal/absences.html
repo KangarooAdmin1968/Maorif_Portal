@@ -1,0 +1,141 @@
+{% extends 'portal/base.html' %}
+{% block title %}Ғоибият{% endblock %}
+{% block extra_head %}
+<style>
+  .cr-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-end; margin: .75rem 0 1rem; }
+  .cr-toolbar label { font-size: .85rem; color: #374151; display: flex; flex-direction: column; gap: .15rem; }
+  .cr-toolbar select { padding: .4rem .6rem; border: 1px solid #d1d5db; border-radius: .35rem; min-width: 10rem; }
+  .doc-card {
+    background: #fff; border: 1px solid #e5e7eb; border-radius: .6rem;
+    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  }
+  .doc-card h2 { margin: 0 0 .75rem; font-size: 1.05rem; color: #003366; }
+  table.ex-table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  table.ex-table th, table.ex-table td { border: 1px solid #d1d5db; padding: .45rem .7rem; text-align: left; }
+  table.ex-table thead th { background: #e8eef7; color: #003366; font-weight: 600; }
+  table.ex-table td.center, table.ex-table th.center { text-align: center; }
+  table.ex-table td.tot { font-weight: 700; background: #f3f4f6; }
+  .abs-bad { color: #b91c1c; font-weight: 600; }
+  .quarter-labels { font-size: .78rem; color: #6b7280; margin-top: .6rem; }
+  .sign-area { display: none; }
+  @media print {
+    .navbar, .site-footer, .cr-toolbar, .messages, nav, header, footer { display: none !important; }
+    body { background: #fff; }
+    .container { max-width: 100%; padding: 0; margin: 0; }
+    .doc-card { border: none; padding: 0; }
+    .doc-card h2 { font-size: 12pt; text-align: center; }
+    table.ex-table th, table.ex-table td { border: 1px solid #000; padding: 4px 6px; }
+    .sign-area { display: block; margin-top: 2.5rem; font-size: 10pt; page-break-inside: avoid; }
+    .sign-line { display: flex; justify-content: space-between; align-items: flex-end; margin: 1.4rem 0; }
+    .sign-line .lbl { font-weight: 600; }
+    .sign-line .blank { border-bottom: 1px solid #000; min-width: 200px; height: 1rem; }
+    body, main, .container, .doc-card {
+      width: auto !important; max-width: none !important;
+      margin: 0 !important; padding: 0 !important;
+    }
+    table.ex-table { width: 100% !important; font-size: 10.5pt; }
+    @page { size: A4 portrait; margin: 10mm; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>⏰ Ғоибият</h1>
+
+<div class="cr-toolbar no-print">
+    {% if can_pick_school %}
+    <form method="get" action="{% url 'absences' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        <label>Муассиса
+            <select name="school_id" onchange="this.form.submit()">
+                <option value="">— интихоб кунед —</option>
+                {% for s in schools %}
+                <option value="{{ s.id }}"{% if school and s.id == school.id %} selected{% endif %}>{{ s.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+    {% endif %}
+    {% if school and class_options %}
+    <form method="get" action="{% url 'absences' %}" style="display:flex; gap:.5rem; align-items:flex-end;">
+        {% if can_pick_school %}<input type="hidden" name="school_id" value="{{ school.id }}">{% endif %}
+        {% if class_options|length > 1 %}
+        <label>Синф
+            <select name="class" onchange="this.form.submit()">
+                {% for c in class_options %}
+                <option value="{{ c }}"{% if c == class_name %} selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% else %}
+        <input type="hidden" name="class" value="{{ class_name }}">
+        {% endif %}
+        <label>Давр
+            <select name="period" onchange="this.form.submit()">
+                {% for v, label in period_options %}
+                <option value="{{ v }}"{% if v == selected_period %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn">Нишон додан</button></noscript>
+    </form>
+    <a class="btn btn-success" href="{% url 'absences_export' %}?period={{ selected_period }}&amp;class={{ class_name|urlencode }}{% if can_pick_school %}&amp;school_id={{ school.id }}{% endif %}">⬇️ Excel</a>
+    <button type="button" class="btn" onclick="window.print()">🖨️ Чоп кардан</button>
+    {% endif %}
+    <a href="{% url 'school_documents' %}" class="btn">Ҳуҷҷатнигорӣ</a>
+</div>
+
+{% if rows is not None %}
+<div class="doc-card">
+    <h2>Ғоибияти хонандагони синфи {{ class_name }}{% if school %} — {{ school.name }}{% endif %} <span class="quarter-labels" style="font-weight:400;">({{ period_label }})</span></h2>
+    {% if class_teacher %}<p class="quarter-labels" style="margin-top:-.4rem;">Роҳбари синф: <b>{{ class_teacher }}</b></p>{% endif %}
+    <table class="ex-table">
+        <thead>
+            <tr>
+                <th style="width:40px;" class="center">№</th>
+                <th>Ному насаб</th>
+                <th style="width:110px;" class="center">Бо сабаб</th>
+                <th style="width:110px;" class="center">Бе сабаб</th>
+                <th style="width:130px;" class="center">Ҷамъи соатҳо</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td class="center">{{ forloop.counter }}</td>
+                <td>{{ r.student }}</td>
+                <td class="center">{% if r.excused %}{{ r.excused }}{% else %}0{% endif %}</td>
+                <td class="center">{% if r.unexcused %}<span class="abs-bad">{{ r.unexcused }}</span>{% else %}0{% endif %}</td>
+                <td class="center">{{ r.total }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5">Дар ин синф хонанда нест.</td></tr>
+            {% endfor %}
+            {% if rows %}
+            <tr>
+                <td></td>
+                <td class="tot">Ҷамъ</td>
+                <td class="center tot">{{ totals.excused }}</td>
+                <td class="center tot">{{ totals.unexcused }}</td>
+                <td class="center tot">{{ totals.total }}</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+    <p class="quarter-labels">
+        Ҳар як соат ба қайди «+» (бо сабаб) ё «−» (бе сабаб) дар журнал
+        мувофиқат мекунад. Шумораҳо ҳамон чизеро нишон медиҳанд, ки
+        дар корти «Давомат»-и саҳифаи Назорат дидан мумкин аст —
+        дарс дар ҷадвали расмӣ қайд нашуда бошад, он ба ҳисоб гирифта
+        намешавад.
+    </p>
+
+    <div class="sign-area">
+        <div class="sign-line"><span class="lbl">Роҳбари синф:</span><span class="blank"></span></div>
+        <div class="sign-line"><span class="lbl">Директори муассиса:</span><span class="blank"></span></div>
+    </div>
+</div>
+{% else %}
+<div class="doc-card">
+    <p>{% if can_pick_school %}Барои дидани давомот аввал муассисаро интихоб кунед.{% else %}Давомотро дидан мумкин нест — ба шумо ягон синф вобаста карда нашудааст.{% endif %}</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -71,6 +71,7 @@
         <a href="{% url 'zavuch_grades_export' %}?school_id={{ data.school.id }}" class="btn">📑 АЧЧ — ҷамъбастии чоряк</a>
         <a href="{% url 'excellent_students' %}?school_id={{ data.school.id }}" class="btn">⭐ Аълохон</a>
         <a href="{% url 'ungraded_students' %}?school_id={{ data.school.id }}" class="btn">⚠️ Хонандагони бебаҳо</a>
+        <a href="{% url 'absences' %}?school_id={{ data.school.id }}" class="btn">⏰ Ғоибият</a>
         <a href="{% url 'academic_years' %}?school_id={{ data.school.id }}" class="btn">🔒 Якуни чоряк</a>
     </div>
 </div>

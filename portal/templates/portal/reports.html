@@ -70,7 +70,7 @@
         <a href="{% url 'zavuch_report_export' %}?school_id={{ data.school.id }}" class="btn">📈 Ҳисоботи завуч</a>
         <a href="{% url 'zavuch_grades_export' %}?school_id={{ data.school.id }}" class="btn">📑 АЧЧ — ҷамъбастии чоряк</a>
         <a href="{% url 'excellent_students' %}?school_id={{ data.school.id }}" class="btn">⭐ Аълохон</a>
-        <a href="{% url 'ungraded_students' %}?school_id={{ data.school.id }}" class="btn">⚠️ Бебаҳогон</a>
+        <a href="{% url 'ungraded_students' %}?school_id={{ data.school.id }}" class="btn">⚠️ Хонандагони бебаҳо</a>
         <a href="{% url 'academic_years' %}?school_id={{ data.school.id }}" class="btn">🔒 Якуни чоряк</a>
     </div>
 </div>
@@ -225,7 +225,7 @@
     <div class="rp-stat"><div class="n">{{ data.excellent.students|length }}</div><div class="t">Аълохон (Ч{{ data.quarter }})</div></div>
     <div class="rp-stat warn"><div class="n">{{ data.ungraded.students }}</div><div class="t">Бебаҳо (Ч{{ data.quarter }})</div></div>
 </div>
-<p class="rp-note" style="margin:-.5rem 0 1.25rem;">«Журнал» = синф × фан. «Пурра» — ҳар хонанда меъёри пурраи чорякга етган; «Қисман» — баҳо бор, лекин ҳануз ҳама етмаган (чоряк давомида табиӣ); «Холӣ» — умуман баҳо киритилмаган.</p>
+<p class="rp-note" style="margin:-.5rem 0 1.25rem;">«Журнал» = синф × фан. «Пурра» — ҳар як хонанда меъёри пурраи чорякро иҷро кардааст; «Қисман» — баҳоҳо ҳастанд, лекин ҳанӯз ҳамаи хонандагон меъёри пурраро иҷро накардаанд (дар давоми чоряк табиӣ); «Холӣ» — умуман баҳо ворид нашудааст.</p>
 
 <div class="rp-card">
     <h2>👩‍🏫 Иҷрои меъёр — аз рӯи омӯзгорон <span class="rp-note">(Ч{{ data.quarter }}, вақти гузашта ҳисоб гирифта мешавад)</span></h2>

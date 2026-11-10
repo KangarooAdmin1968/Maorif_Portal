@@ -14,7 +14,7 @@
 {% csrf_token %}
 {{ form.as_p }}
 <div class="submit-row">
-    <input type="submit" class="default" value="{{ submit_label|default:'Оммавий қўшиш' }}">
+    <input type="submit" class="default" value="{{ submit_label|default:'Иловаи оммавӣ' }}">
     <a href="{% url 'admin:portal_classsubject_changelist' %}" class="button cancel-link">Бозгашт</a>
 </div>
 </form>

@@ -9272,7 +9272,7 @@ def zavuch_report_export(request):
         return redirect('dashboard')
     school = _class_report_school(request)
     if not school:
-        messages.warning(request, 'Ҳисобот учун муассисани танланг.')
+        messages.warning(request, 'Барои ҳисобот муассисаи таълимиро интихоб кунед.')
         return redirect('dashboard')
     if not _has_school_doc_access(request.user, school):
         return redirect('dashboard')
@@ -9303,7 +9303,7 @@ def zavuch_grades_export(request):
         return redirect('dashboard')
     school = _class_report_school(request)
     if not school:
-        messages.warning(request, 'Ҳисобот учун муассисани танланг.')
+        messages.warning(request, 'Барои ҳисобот муассисаи таълимиро интихоб кунед.')
         return redirect('dashboard')
     if not _has_school_doc_access(request.user, school):
         return redirect('dashboard')

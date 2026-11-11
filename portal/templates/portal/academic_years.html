@@ -78,7 +78,7 @@
             {% if q.closed %}
                 <span class="q-badge closed">🔒 Ҷамъбаст шудааст</span>
             {% elif q.reopened_until %}
-                <span class="q-badge open">⏳ Вақтинчалик кушода — то {{ q.reopened_until|date:"d.m.Y" }}</span>
+                <span class="q-badge open">⏳ Муваққатан кушода — то {{ q.reopened_until|date:"d.m.Y" }}</span>
             {% elif q.locked_count > 0 %}
                 <span class="q-badge partial">Қисман баста ({{ q.locked_count }}/{{ q.total }})</span>
             {% elif q.not_started %}

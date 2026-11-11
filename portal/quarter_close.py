@@ -66,7 +66,7 @@ def collect_quarter_close(school, quarter, year, today=None):
                      if quarter < 4 else datetime.date(year + 1, 8, 31))
     locked = _locked_keys(school, quarter, year)
     # Earliest «Кушодан» expiry among unlocked rows — the card shows
-    # «вақтинчалик кушода: то X»; NULL everywhere = indefinite reopen.
+    # «муваққатан кушода: то X»; NULL everywhere = indefinite reopen.
     reopened_until = QuarterLock.objects.filter(
         school=school, quarter=quarter, academic_year=year,
         locked=False).aggregate(m=Min('reopened_until'))['m']

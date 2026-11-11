@@ -17,8 +17,9 @@ from portal.quarter_close import (archive_path, auto_close_due,
                                   collect_quarter_close,
                                   save_quarter_archive)
 
-from .helpers import (GoldenBase, MATH, TAJIK, make_class_subject,
-                      make_grade, make_quarter_grade, make_user)
+from .helpers import (GoldenBase, MATH, TAJIK, lock_quarter,
+                      make_class_subject, make_grade, make_quarter_grade,
+                      make_user)
 
 
 _TMP_MEDIA = tempfile.mkdtemp(prefix='qc_archive_')
@@ -132,6 +133,51 @@ class QuarterCloseTests(GoldenBase):
         qs = collect_quarter_close(self.school_a, 1, self.ay)
         self.assertFalse(qs['closed'])
         self.assertEqual(qs['locked_count'], 0)
+
+    def test_reopen_button_on_partial_lock(self):
+        """A partially-locked quarter must still offer Кушодан to
+        маориф — the button used to appear only on fully-closed
+        quarters, leaving stray locks unopenable."""
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        self.client.force_login(self.director)
+        resp = self.client.get(reverse('academic_years'), {
+            'school_id': self.school_a.id})
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Қисман баста')
+        self.assertContains(resp, reverse('quarter_reopen') + '"')
+
+    # ---------------------------------------------------- reopen all
+
+    def test_reopen_all_unlocks_every_school(self):
+        self._close_q1()                       # school A: full lock
+        lock_quarter(self.school_b, '7-Б', MATH, quarter=1)  # school B
+        self.client.force_login(self.director)
+        until = (datetime.date.today()
+                 + datetime.timedelta(days=10)).isoformat()
+        resp = self.client.post(reverse('quarter_reopen_all'), {
+            'quarter': 1, 'year': self.ay, 'until': until})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(QuarterLock.objects.filter(locked=True).exists())
+        self.assertTrue(QuarterLock.objects.filter(
+            reopened_until__isnull=False).exists())
+
+    def test_reopen_all_denied_for_zavuch(self):
+        self._close_q1()
+        self.client.force_login(self.zavuch_a)
+        self.client.post(reverse('quarter_reopen_all'), {
+            'quarter': 1, 'year': self.ay})
+        self.assertTrue(QuarterLock.objects.filter(locked=True).exists())
+
+    def test_reopen_all_touches_only_given_quarter(self):
+        self._close_q1()
+        lock_quarter(self.school_a, '7-А', MATH, quarter=2)
+        self.client.force_login(self.director)
+        self.client.post(reverse('quarter_reopen_all'), {
+            'quarter': 1, 'year': self.ay})
+        self.assertFalse(QuarterLock.objects.filter(
+            quarter=1, locked=True).exists())
+        self.assertTrue(QuarterLock.objects.filter(
+            quarter=2, locked=True).exists())
 
     # ---------------------------------------------------------- page
 

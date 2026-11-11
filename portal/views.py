@@ -10043,7 +10043,9 @@ def quarter_reopen(request):
                 return _years_redirect(request, school)
         from .quarter_close import reopen_quarter
         n = reopen_quarter(school, quarter, year, until=until)
-        if until:
+        if not n:
+            messages.info(request, 'Ин чоряк аллакай кушода аст.')
+        elif until:
             messages.success(
                 request, f'Чоряк то {until:%d.%m.%Y} кушода шуд — '
                          f'{n} фан озод гардид.')
@@ -10051,6 +10053,49 @@ def quarter_reopen(request):
             messages.success(
                 request, f'Чоряк кушода шуд — {n} фан озод гардид.')
     return _years_redirect(request, school)
+
+
+@login_required
+@require_POST
+def quarter_reopen_all(request):
+    """Маориф/админ bulk action: reopen one quarter for EVERY academic
+    school at once — e.g. a district-wide correction window. Schools
+    whose quarter was never locked are simply skipped (0 rows)."""
+    if not _maorif_report_access(request.user):
+        return redirect('dashboard')
+    try:
+        quarter = int(request.POST.get('quarter'))
+        year = int(request.POST.get('year'))
+    except (TypeError, ValueError):
+        return redirect('academic_years')
+    until = None
+    raw = request.POST.get('until', '').strip()
+    if raw:
+        try:
+            until = datetime.date.fromisoformat(raw)
+        except ValueError:
+            messages.error(request, 'Санаи нодуруст.')
+            return redirect('academic_years')
+    if quarter in (1, 2, 3, 4):
+        from .quarter_close import reopen_quarter
+        schools_n = subjects_n = 0
+        for s in academic_schools():
+            n = reopen_quarter(s, quarter, year, until=until)
+            if n:
+                schools_n += 1
+                subjects_n += n
+        if schools_n:
+            messages.success(
+                request,
+                f'Чоряк дар {schools_n} муассиса кушода шуд — '
+                f'{subjects_n} фан озод гардид'
+                + (f' (то {until:%d.%m.%Y}).' if until else '.'))
+        else:
+            messages.info(
+                request,
+                'Қулфланган чоряк ёфта нашуд — муассисаҳо аллакай '
+                'кушодаанд ё ҳануз ҷамъбаст нашудаанд.')
+    return redirect('academic_years')
 
 
 @login_required

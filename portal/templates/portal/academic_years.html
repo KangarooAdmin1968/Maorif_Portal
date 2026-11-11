@@ -43,6 +43,30 @@
 </div>
 {% endif %}
 
+{% if can_reopen and district_view %}
+<div class="yr-card" style="border-color:#fcd34d;">
+    <h2>Кушодани чоряк барои ҳама муассисаҳо</h2>
+    <form method="post" action="{% url 'quarter_reopen_all' %}" class="yr-toolbar"
+          onsubmit="return confirm('Ин чоряк дар ҲАМА муассисаҳо кушода мешавад. Идома?');">
+        {% csrf_token %}
+        <input type="hidden" name="year" value="{{ current_year }}">
+        <label>Чоряк
+            <select name="quarter">
+                <option value="1">Чоряки якум</option>
+                <option value="2">Чоряки дуюм</option>
+                <option value="3">Чоряки сеюм</option>
+                <option value="4">Чоряки чорум</option>
+            </select>
+        </label>
+        <label>То санаи
+            <input type="date" name="until" value="{{ reopen_default }}"
+                   title="Пас аз ин сана чоряк автоматик ҷамъбаст мешавад">
+        </label>
+        <button type="submit" class="btn-open-q">Кушодан барои ҳама</button>
+    </form>
+</div>
+{% endif %}
+
 {% for y in years %}
 <div class="yr-card">
     <h2>Соли таҳсили {{ y.year }}-{{ y.year|add:1 }}{% if y.year == current_year %} <span style="font-weight:400; font-size:.8rem; color:#6b7280;">(ҷорӣ)</span>{% else %} <span style="font-weight:400; font-size:.8rem; color:#6b7280;">(архив)</span>{% endif %}</h2>
@@ -75,7 +99,8 @@
             <div class="q-actions">
                 {% if q.closed %}
                     <a class="btn-arch" href="{% url 'quarter_archive_download' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">📥 Архив</a>
-                    {% if can_reopen %}
+                {% endif %}
+                {% if can_reopen and q.locked_count > 0 %}
                     <form method="post" action="{% url 'quarter_reopen' %}" onsubmit="return confirm('Чоряк кушода мешавад — омӯзгорон дубора хол гузошта метавонанд. Идома?');">
                         {% csrf_token %}
                         <input type="hidden" name="school_id" value="{{ school.id }}">
@@ -86,7 +111,7 @@
                         </label>
                         <button type="submit" class="btn-open-q">Кушодан</button>
                     </form>
-                    {% endif %}
+                {% elif q.closed %}
                 {% elif can_close and q.ended %}
                     <a class="btn-close-q" href="{% url 'quarter_close' %}?quarter={{ q.quarter }}&year={{ q.year }}{% if district_view %}&school_id={{ school.id }}{% endif %}">🔒 Ҷамъбаст</a>
                     {% if q.grading_still_open %}

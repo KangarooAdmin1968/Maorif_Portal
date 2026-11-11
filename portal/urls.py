@@ -99,6 +99,8 @@ urlpatterns = [
     path('schools/years/', views.academic_years, name='academic_years'),
     path('schools/years/close/', views.quarter_close, name='quarter_close'),
     path('schools/years/reopen/', views.quarter_reopen, name='quarter_reopen'),
+    path('schools/years/reopen-all/', views.quarter_reopen_all,
+         name='quarter_reopen_all'),
     path('schools/years/archive/', views.quarter_archive_download, name='quarter_archive_download'),
     path('top-students/', views.top_students_ajax, name='top_students_ajax'),
     path('class-rankings/', views.class_rankings_ajax, name='class_rankings_ajax'),

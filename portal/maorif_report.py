@@ -124,6 +124,28 @@ def collect_maorif_stats(quarter, today=None):
     }
 
 
+def maorif_stats_cache_key(quarter, academic_year):
+    """Bounded-refresh cache key for the district stats payload."""
+    return f'rank:v1:maorif_stats:q{quarter}:{academic_year}'
+
+
+def collect_maorif_stats_cached(quarter, today=None):
+    """collect_maorif_stats through the shared bounded-refresh cache.
+
+    The district scan is memory-heavy — the merged-marks pool covers
+    every scored Ҷорӣ row of all ~17k students across the schools — so
+    requests must serve it read-only: refresh_rankings warms it from
+    cron. Request callers wrap this in rankings_read_only() and treat
+    RankingRefreshBusy as «retry shortly», like every other cached
+    district block.
+    """
+    from .views import _ranking_cached, academic_year_start
+    ay = academic_year_start(today)
+    return _ranking_cached(
+        maorif_stats_cache_key(quarter, ay),
+        lambda: collect_maorif_stats(quarter, today))
+
+
 def _district_director_name():
     dept = School.objects.filter(type='Идораи маориф').first()
     return (dept.director or '').strip() if dept else ''
@@ -324,9 +346,12 @@ def _totals(stats):
     return t
 
 
-def build_maorif_report_workbook(quarter, prepared_by=''):
-    """District А.Ҷ.Ч. workbook, one row per academic school -> BytesIO."""
-    stats = collect_maorif_stats(quarter)
+def build_maorif_report_workbook(quarter, prepared_by='', stats=None):
+    """District А.Ҷ.Ч. workbook, one row per academic school -> BytesIO.
+
+    Callers inside a request must pass the cached `stats` payload — the
+    fallback compute exists for management commands and tests only."""
+    stats = stats if stats is not None else collect_maorif_stats(quarter)
     wb = Workbook()
     ws = wb.active
     ws.title = f'АҶЧ-{quarter}'
@@ -344,13 +369,13 @@ def build_maorif_report_workbook(quarter, prepared_by=''):
     return _finish(wb)
 
 
-def build_maorif_total_workbook(quarter, prepared_by=''):
+def build_maorif_total_workbook(quarter, prepared_by='', stats=None):
     """Same district summary collapsed to the single Хамагӣ row.
 
     This is the standalone totals page the department sends upward —
     identical columns and footer to the per-school workbook.
     """
-    stats = collect_maorif_stats(quarter)
+    stats = stats if stats is not None else collect_maorif_stats(quarter)
     wb = Workbook()
     ws = wb.active
     ws.title = f'АҶЧ-{quarter} — ҳамагӣ'
@@ -476,8 +501,8 @@ def _grade_layout(ws):
 
 
 def _build_grades_sheet(quarter, name_header, rows_data, prepared_by,
-                        title):
-    stats = collect_maorif_stats(quarter)
+                        title, stats=None):
+    stats = stats if stats is not None else collect_maorif_stats(quarter)
     wb = Workbook()
     ws = wb.active
     ws.title = title
@@ -496,7 +521,7 @@ def _build_grades_sheet(quarter, name_header, rows_data, prepared_by,
     return _finish(wb)
 
 
-def build_maorif_grades_workbook(quarter, prepared_by=''):
+def build_maorif_grades_workbook(quarter, prepared_by='', stats=None):
     """Per-grade (10..1) form, one row per academic school -> BytesIO."""
     def rows(stats):
         out = [(i + 1, r['school_name'], r, None)
@@ -505,10 +530,11 @@ def build_maorif_grades_workbook(quarter, prepared_by=''):
         return out
     return _build_grades_sheet(
         quarter, 'Муассисаи таъсилотӣ', rows, prepared_by,
-        f'АҶЧ-{quarter} холҳо')
+        f'АҶЧ-{quarter} холҳо', stats=stats)
 
 
-def build_maorif_grades_district_workbook(quarter, prepared_by=''):
+def build_maorif_grades_district_workbook(quarter, prepared_by='',
+                                        stats=None):
     """Per-grade form as the official one-row district page: a single
     «ноҳияи Зафаробод» row plus the Хамагӣ line -> BytesIO."""
     def rows(stats):
@@ -517,5 +543,5 @@ def build_maorif_grades_district_workbook(quarter, prepared_by=''):
                 (None, 'Хамагӣ', totals, True)]
     return _build_grades_sheet(
         quarter, 'Вилоят, шаҳр, ноҳия', rows, prepared_by,
-        f'АҶЧ-{quarter} холҳо — ноҳия')
+        f'АҶЧ-{quarter} холҳо — ноҳия', stats=stats)
 

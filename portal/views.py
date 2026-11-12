@@ -10147,6 +10147,10 @@ def maorif_reports(request):
     if invalid_quarter:
         messages.warning(
             request, 'Чоряки нодуруст — чоряки ҷорӣ нишон дода шуд.')
+    # Register the picked quarter so refresh_rankings warms its stats
+    # cache before the first «Боргирӣ» click (exports serve read-only).
+    from .reports import mark_report_quarter_wanted
+    mark_report_quarter_wanted(quarter, academic_year_start())
     return render(request, 'portal/maorif_reports.html', {
         'quarter': quarter,
         'quarters': [1, 2, 3, 4],
@@ -10163,14 +10167,40 @@ def _maorif_xlsx_response(output, filename):
     return response
 
 
+def _maorif_stats_or_wait(request, quarter):
+    """Cached district stats for the АҶЧ exports, else None + message.
+
+    The district merged-marks scan is memory-heavy, so requests never
+    run it (the same OOM/504 rule as the rankings): refresh_rankings
+    warms the key from cron. A cold cache asks the user to retry shortly
+    and registers the quarter so the next cron tick prepares it.
+    """
+    from .maorif_report import collect_maorif_stats_cached
+    from .reports import mark_report_quarter_wanted
+    mark_report_quarter_wanted(quarter, academic_year_start())
+    try:
+        with rankings_read_only():
+            return collect_maorif_stats_cached(quarter)
+    except RankingRefreshBusy:
+        messages.warning(
+            request,
+            'Ҳисобот тайёр карда истодааст — чанд дақиқадан кейин '
+            '«Боргирӣ»-ро аз нав пахш кунед.')
+        return None
+
+
 @login_required
 def maorif_report_export(request):
     """District А.Ҷ.Ч. summary as xlsx — one row per academic school."""
     if not _maorif_report_access(request.user):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
+    stats = _maorif_stats_or_wait(request, quarter)
+    if stats is None:
+        return redirect('maorif_reports')
     prepared_by = request.user.get_full_name() or request.user.username
-    output = build_maorif_report_workbook(quarter, prepared_by=prepared_by)
+    output = build_maorif_report_workbook(
+        quarter, prepared_by=prepared_by, stats=stats)
     return _maorif_xlsx_response(
         output, f"Ҳисобот_АҶЧ{quarter}_муассисаҳо.xlsx")
 
@@ -10181,8 +10211,12 @@ def maorif_report_total_export(request):
     if not _maorif_report_access(request.user):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
+    stats = _maorif_stats_or_wait(request, quarter)
+    if stats is None:
+        return redirect('maorif_reports')
     prepared_by = request.user.get_full_name() or request.user.username
-    output = build_maorif_total_workbook(quarter, prepared_by=prepared_by)
+    output = build_maorif_total_workbook(
+        quarter, prepared_by=prepared_by, stats=stats)
     return _maorif_xlsx_response(
         output, f"Ҳисобот_АҶЧ{quarter}_ҳамагӣ.xlsx")
 
@@ -10193,8 +10227,12 @@ def maorif_report_grades_export(request):
     if not _maorif_report_access(request.user):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
+    stats = _maorif_stats_or_wait(request, quarter)
+    if stats is None:
+        return redirect('maorif_reports')
     prepared_by = request.user.get_full_name() or request.user.username
-    output = build_maorif_grades_workbook(quarter, prepared_by=prepared_by)
+    output = build_maorif_grades_workbook(
+        quarter, prepared_by=prepared_by, stats=stats)
     return _maorif_xlsx_response(
         output, f"Ҳисобот_АҶЧ{quarter}_холҳо_муассисаҳо.xlsx")
 
@@ -10205,9 +10243,12 @@ def maorif_report_grades_district_export(request):
     if not _maorif_report_access(request.user):
         return redirect('dashboard')
     quarter, _ = _class_report_quarter(request)
+    stats = _maorif_stats_or_wait(request, quarter)
+    if stats is None:
+        return redirect('maorif_reports')
     prepared_by = request.user.get_full_name() or request.user.username
     output = build_maorif_grades_district_workbook(
-        quarter, prepared_by=prepared_by)
+        quarter, prepared_by=prepared_by, stats=stats)
     return _maorif_xlsx_response(
         output, f"Ҳисобот_АҶЧ{quarter}_холҳо_ноҳия.xlsx")
 

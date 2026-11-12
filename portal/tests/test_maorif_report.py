@@ -19,10 +19,24 @@ class MaorifReportExportTests(GoldenBase):
 
     FIRST = 6   # first data row in the generated sheet
 
+    def _warm(self, quarter=1):
+        # The exports serve the stats cache read-only (requests never
+        # run the district scan — 504/OOM rule): clear any shadow left
+        # by an earlier test, then warm after the fixtures exist — the
+        # same thing refresh_rankings does from cron.
+        from django.core.cache import cache
+        from portal.maorif_report import (
+            collect_maorif_stats_cached, maorif_stats_cache_key)
+        from portal.views import academic_year_start
+        key = maorif_stats_cache_key(quarter, academic_year_start())
+        cache.delete_many([key, key + ':stale', key + ':computing'])
+        collect_maorif_stats_cached(quarter)
+
     def _get(self, user, **params):
         # Every fixture is quarter 1 — pin it: the view otherwise
         # defaults to today's quarter and reads empty after rollover.
         params.setdefault('quarter', 1)
+        self._warm(params['quarter'])
         self.client.force_login(user)
         return self.client.get(reverse('maorif_report_export'), params)
 
@@ -144,6 +158,7 @@ class MaorifReportExportTests(GoldenBase):
     def test_total_workbook_single_khamagi_row(self):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=9)
         make_quarter_grade(self.s3, '7-Б', MATH, 1, grade=3)
+        self._warm()
         self.client.force_login(self.admin)
         resp = self.client.get(
             reverse('maorif_report_total_export'), {'quarter': 1})
@@ -169,6 +184,7 @@ class MaorifReportExportTests(GoldenBase):
         # s1 avg 10 -> mark column "10"; s3 avg 3 -> mark column "3".
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=10)
         make_quarter_grade(self.s3, '7-Б', MATH, 1, grade=3)
+        self._warm()
         self.client.force_login(self.admin)
         resp = self.client.get(
             reverse('maorif_report_grades_export'), {'quarter': 1})
@@ -195,6 +211,7 @@ class MaorifReportExportTests(GoldenBase):
 
     def test_grades_district_workbook_single_row(self):
         make_quarter_grade(self.s1, '7-А', MATH, 1, grade=10)
+        self._warm()
         self.client.force_login(self.director)
         resp = self.client.get(
             reverse('maorif_report_grades_district_export'),
@@ -216,3 +233,33 @@ class MaorifReportExportTests(GoldenBase):
         self.assertContains(resp, reverse('maorif_report_grades_export'))
         self.assertContains(
             resp, reverse('maorif_report_grades_district_export'))
+
+    def test_cold_cache_redirects_instead_of_scanning(self):
+        # The 504 fix: a request must never run the district scan. On a
+        # cold cache the export redirects to the reports page with a
+        # retry message — refresh_rankings fills the key in minutes.
+        from django.core.cache import cache
+        from portal.maorif_report import maorif_stats_cache_key
+        from portal.views import academic_year_start
+        key = maorif_stats_cache_key(1, academic_year_start())
+        cache.delete_many([key, key + ':stale', key + ':computing'])
+        self.client.force_login(self.director)
+        resp = self.client.get(
+            reverse('maorif_report_grades_export'), {'quarter': 1})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, reverse('maorif_reports'))
+        msgs = [str(m) for m in resp.wsgi_request._messages]
+        self.assertTrue(
+            any('тайёр карда истодааст' in m for m in msgs), msgs)
+
+    def test_warm_cache_serves_all_four_exports(self):
+        # After the cron-style warm every export answers from the same
+        # cached payload — second/third/fourth download is instant.
+        self._warm()
+        self.client.force_login(self.director)
+        for name in ('maorif_report_export', 'maorif_report_total_export',
+                     'maorif_report_grades_export',
+                     'maorif_report_grades_district_export'):
+            resp = self.client.get(reverse(name), {'quarter': 1})
+            self.assertEqual(resp.status_code, 200, name)
+            self.assertIn('attachment', resp['Content-Disposition'])

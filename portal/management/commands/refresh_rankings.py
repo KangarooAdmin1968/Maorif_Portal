@@ -97,6 +97,23 @@ class Command(BaseCommand):
             skipped.append(f'report_counts: {exc}')
             logger.exception('refresh_rankings: report_counts failed')
 
+        # District АҶЧ stats payload for the Ҳисоботи маориф Excel
+        # exports — the same heavy merged-marks scan the export views
+        # must never run in-request (they serve it read-only).
+        try:
+            from portal.maorif_report import (
+                collect_maorif_stats_cached)
+            from portal.views import academic_year_start, get_date_quarter
+            today = datetime.date.today()
+            quarter = get_date_quarter(today) or 1
+            collect_maorif_stats_cached(quarter, today)
+            refreshed.append('maorif_stats')
+        except RankingRefreshBusy:
+            skipped.append('maorif_stats: busy')
+        except Exception as exc:  # noqa: BLE001
+            skipped.append(f'maorif_stats: {exc}')
+            logger.exception('refresh_rankings: maorif_stats failed')
+
         # Reports' per-quarter readiness — the Ҳисоботҳо district view
         # marks past quarters it was asked for; warm exactly those under
         # the same single-flight machinery (never inside a request). The
@@ -138,6 +155,24 @@ class Command(BaseCommand):
                     skipped.append(f'report_counts:q{q}: {exc}')
                     logger.exception(
                         'refresh_rankings: report_counts q%s failed', q)
+                # The АҶЧ exports only cover the current academic year
+                # (collect_maorif_stats derives ay from today) — warm a
+                # wanted quarter only when it belongs to this year.
+                try:
+                    from portal.maorif_report import (
+                        collect_maorif_stats, maorif_stats_cache_key)
+                    from portal.views import academic_year_start
+                    if ay == academic_year_start():
+                        _ranking_cached(
+                            maorif_stats_cache_key(q, ay),
+                            lambda qq=q: collect_maorif_stats(qq))
+                        refreshed.append(f'maorif_stats:q{q}')
+                except RankingRefreshBusy:
+                    skipped.append(f'maorif_stats:q{q}: busy')
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append(f'maorif_stats:q{q}: {exc}')
+                    logger.exception(
+                        'refresh_rankings: maorif_stats q%s failed', q)
         except Exception:  # noqa: BLE001 — optional feature, keep running
             logger.exception('refresh_rankings: quarter readiness failed')
 

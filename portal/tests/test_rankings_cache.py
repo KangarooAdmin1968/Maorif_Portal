@@ -189,13 +189,14 @@ class RankingCacheTests(GoldenBase):
 
     # --- F: TTL ------------------------------------------------------------
 
-    def test_ttl_is_60_seconds(self):
+    def test_ttl_is_600_seconds(self):
         with mock.patch.object(cache, 'set', wraps=cache.set) as spy:
             calculate_school_rankings()
             calculate_class_rankings()
             calculate_subject_rankings()
             calculate_top_students()
-        # Each refresh stores the main entry (60s) plus the shadow copy
+        # Each refresh stores the main entry (600s — quiet cron ticks then
+        # hit it instead of rescanning unchanged data) plus the shadow copy
         # that survives invalidation for rate-limited serving. Lock writes
         # (key:computing, via cache.add -> backend-internal set on
         # FileBasedCache) are a separate mechanism — filtered out.
@@ -210,7 +211,7 @@ class RankingCacheTests(GoldenBase):
             self.assertEqual(call.kwargs['timeout'], expected)
             self.assertEqual(
                 call.kwargs['timeout'],
-                60 if key in RANKING_CACHE_KEYS else 600)
+                600)
 
     # --- G: journal/grade freshness ----------------------------------------
 

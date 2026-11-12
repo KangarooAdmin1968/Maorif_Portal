@@ -1881,8 +1881,13 @@ def _add_score(totals, key, total, count):
 
 # Short-lived cache for the global (user-independent) ranking results.
 # TTL stays even with signal invalidation: out-of-band scripts and
-# QuerySet.update()/raw SQL can bypass model signals.
-RANKING_CACHE_TTL = 60
+# QuerySet.update()/raw SQL can bypass model signals. 600s matches the
+# shadow TTL, so a refresh_rankings tick on unchanged data finds the
+# entries still fresh and skips every district-wide scan — cron keeps
+# its */5 schedule but quiet ticks cost only a few cache reads, while
+# any signal-visible write still dirties the entries immediately and
+# forces a real recompute on the next tick.
+RANKING_CACHE_TTL = 600
 RANKING_GPAS_CACHE_KEY = 'rank:v1:gpas'
 RANKING_CACHE_KEYS = (
     'rank:v1:school',

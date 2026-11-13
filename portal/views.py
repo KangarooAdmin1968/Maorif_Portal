@@ -1,5 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.views import PasswordChangeView
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
 from django.db import IntegrityError, connection, transaction
@@ -12,6 +13,7 @@ import io
 import json
 import os
 import re
+import secrets
 import threading
 import time
 import urllib.parse
@@ -3024,6 +3026,29 @@ def _safe_login_next(request, next_url):
     return None
 
 
+# Brute-force guard: after LOGIN_FAIL_LIMIT failed POSTs against one
+# username the attempt is refused for LOGIN_LOCK_SECONDS. A higher limit
+# applies per client IP — a shared school NAT would otherwise let a few
+# teachers' typos lock out every colleague behind it, while credential
+# spraying across many usernames still trips it.
+# Counters live in the shared file cache so all gunicorn workers see them.
+LOGIN_FAIL_LIMIT = 5
+LOGIN_IP_FAIL_LIMIT = 15
+LOGIN_LOCK_SECONDS = 15 * 60
+
+
+def _login_fail_keys(request, username):
+    """Cache keys counting failures per client IP and per username. nginx
+    sets X-Forwarded-For to the real client; REMOTE_ADDR is the fallback
+    for direct hits (deploy smoke checks, local dev)."""
+    fwd = request.META.get('HTTP_X_FORWARDED_FOR', '')
+    ip = fwd.split(',')[0].strip() or request.META.get('REMOTE_ADDR', '')
+    return (
+        f'login-fail-ip-{ip}',
+        f'login-fail-user-{username.strip().lower()[:150]}',
+    )
+
+
 def login_view(request):
     next_url = request.POST.get('next') or request.GET.get('next', '')
     if request.method == 'POST':
@@ -3031,18 +3056,50 @@ def login_view(request):
         if form.is_valid():
             username = form.cleaned_data['username']
             password = form.cleaned_data['password']
-            user = authenticate(request, username=username, password=password)
-            if user:
-                login(request, user)
-                target = _safe_login_next(request, next_url)
-                if target:
-                    return redirect(target)
-                return redirect('dashboard')
+            ip_key, user_key = _login_fail_keys(request, username)
+            if ((cache.get(ip_key) or 0) >= LOGIN_IP_FAIL_LIMIT
+                    or (cache.get(user_key) or 0) >= LOGIN_FAIL_LIMIT):
+                form.add_error(
+                    None, 'Жуда кўп номуваффақ уриниш. '
+                          '15 дақиқадан сўнг такрор кунед.')
             else:
-                form.add_error(None, 'Номи корбар ёки рамз нодуруст')
+                user = authenticate(request, username=username,
+                                    password=password)
+                if user:
+                    cache.delete(user_key)
+                    login(request, user)
+                    target = _safe_login_next(request, next_url)
+                    if target:
+                        return redirect(target)
+                    return redirect('dashboard')
+                else:
+                    for k in (ip_key, user_key):
+                        count = (cache.get(k) or 0) + 1
+                        cache.set(k, count, LOGIN_LOCK_SECONDS)
+                        if count == LOGIN_FAIL_LIMIT:
+                            logger.warning(
+                                'Login blocked for username %r after %d '
+                                'failures', username, count)
+                    form.add_error(None, 'Номи корбар ёки рамз нодуруст')
     else:
         form = LoginForm()
     return render(request, 'portal/login.html', {'form': form, 'next': next_url})
+
+
+class PortalPasswordChangeView(PasswordChangeView):
+    """Stock password change + flag sync: once a teacher sets their own
+    password the generated-default window closes for good and the forced
+    change middleware stops rerouting them."""
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        tp = getattr(self.request.user, 'teacherprofile', None)
+        if tp is not None and not tp.custom_password_set:
+            tp.custom_password_set = True
+            tp.save(update_fields=['custom_password_set'])
+        from .middleware import PW_CHANGE_SESSION_KEY
+        self.request.session[PW_CHANGE_SESSION_KEY] = False
+        return response
 
 
 def logout_view(request):
@@ -6937,7 +6994,11 @@ def add_teacher(request, school_id):
     school_num = get_school_number(school)
     counter = _next_teacher_counter(school_num)
     username = f'teacher_{school_num}_{counter}'
-    password = f'Teacher_{school_num}_{counter}@2026'
+    # Random per-teacher password: the old Teacher_<n>_<m>@2026 formula was
+    # derivable from the public username, so anyone who knew the pattern
+    # could log in as any teacher. The generated value is shown once in the
+    # success message; afterwards the zavuch resets it via Tahrir.
+    password = secrets.token_urlsafe(9)
 
     try:
         user = User.objects.create_user(
@@ -6955,6 +7016,7 @@ def add_teacher(request, school_id):
         full_name=full_name,
         phone=phone,
         specialty=subject,
+        custom_password_set=True,
     )
     UserProfile.objects.update_or_create(
         user=user,
@@ -6970,7 +7032,11 @@ def add_teacher(request, school_id):
         phone=phone,
     )
 
-    messages.success(request, f'Омӯзгор {full_name} бо муваффақият илова шуд. Логин: {username}')
+    messages.success(
+        request,
+        f'Омӯзгор {full_name} бо муваффақият илова шуд. '
+        f'Логин: {username} — рамз: {password} '
+        f'(рамз фақат як марта намоиш дода мешавад — ба омӯзгор расонед)')
     return redirect('teacher_list', school_id=school.id)
 
 
@@ -7209,11 +7275,12 @@ def import_teachers(request, school_id):
 
         # Find the next available username for this school.
         username = f'teacher_{school_num}_{counter}'
-        password = f'Teacher_{school_num}_{counter}@2026'
         while User.objects.filter(username=username).exists():
             counter += 1
             username = f'teacher_{school_num}_{counter}'
-            password = f'Teacher_{school_num}_{counter}@2026'
+        # Random per-teacher password (see add_teacher) — shown once in the
+        # import result table instead of the derivable @2026 formula.
+        password = secrets.token_urlsafe(9)
 
         try:
             user = User.objects.create_user(
@@ -7231,6 +7298,7 @@ def import_teachers(request, school_id):
             phone=phone,
             education=education,
             specialty=specialty,
+            custom_password_set=True,
         )
 
         UserProfile.objects.update_or_create(

@@ -78,6 +78,10 @@ class PasswordAssignment(TeacherEditBase):
         self.assertFalse(self.profile.custom_password_set)
 
     def test_existing_session_invalidated(self):
+        # A teacher who already set their own password browses normally —
+        # ForceTeacherPasswordMiddleware only reroutes flag=False accounts.
+        self.profile.custom_password_set = True
+        self.profile.save(update_fields=['custom_password_set'])
         teacher_client = self.client_class()
         self.assertTrue(teacher_client.login(
             username='teacher_1_1', password='Teacher_1_1@2026'))

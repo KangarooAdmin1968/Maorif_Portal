@@ -6,14 +6,40 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-change-me-before-production'
+# Secret key: the committed default is a random per-project value (the old
+# 'django-insecure-change-me-before-production' placeholder was publicly
+# known and let anyone forge signed data). Override on the server with
+# DJANGO_SECRET_KEY to rotate without a code change.
+SECRET_KEY = os.environ.get(
+    'DJANGO_SECRET_KEY',
+    'DoGLvAeCKUKJ8s1qS5kAjLZ0K2xxU7FvTlzZxgQU1KL7-UdNJrxeaWiu5fai15HH2Hg')
 
 # Local development keeps DEBUG=True. Production sets DJANGO_DEBUG=0 in the
 # Gunicorn launch environment (deploy/gunicorn.service, deploy_to_server.py,
 # deploy_hotfix.py, .github/workflows/deploy.yml).
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = ['*']
+# Host whitelist: the previous '*' accepted any Host header (host-header
+# poisoning). Keep the production domains, the server IP (nginx
+# server_name), and loopback for the deploy smoke check and local dev.
+# Override with a comma-separated DJANGO_ALLOWED_HOSTS if the domain moves.
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get(
+        'DJANGO_ALLOWED_HOSTS',
+        'maorif-zafarobod.tj,www.maorif-zafarobod.tj,'
+        '169.58.154.191,127.0.0.1,localhost',
+    ).split(',')
+    if h.strip()
+]
+
+# nginx sets X-Forwarded-Proto so Django can tell real HTTPS traffic from
+# the local gunicorn hop; the Secure cookie flags and HSTS only apply in
+# production (DEBUG=False) so plain-HTTP local development keeps working.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SECURE_HSTS_SECONDS = 0 if DEBUG else 31536000
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -110,7 +136,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
         'OPTIONS': {
-            'min_length': 6,
+            'min_length': 8,
         }
     },
 ]
@@ -154,9 +180,14 @@ if DEBUG:
 # /var/log/gunicorn/, which deploy/gunicorn-logrotate already rotates).
 DJANGO_ERROR_LOG = os.environ.get(
     'DJANGO_ERROR_LOG', str(BASE_DIR / 'logs' / 'django_errors.log'))
+# Security events (login lockouts and similar) go to their own small file
+# so an attack attempt is visible without digging through request errors.
+DJANGO_SECURITY_LOG = os.environ.get(
+    'DJANGO_SECURITY_LOG', str(BASE_DIR / 'logs' / 'security.log'))
 try:
     # RotatingFileHandler does not create missing parent directories.
     Path(DJANGO_ERROR_LOG).parent.mkdir(parents=True, exist_ok=True)
+    Path(DJANGO_SECURITY_LOG).parent.mkdir(parents=True, exist_ok=True)
 except OSError:
     pass  # logging will report the problem on first write instead
 
@@ -181,6 +212,16 @@ LOGGING = {
             'formatter': 'django_error',
             'delay': True,  # create the file only when an error occurs
         },
+        'portal_security_file': {
+            'level': 'WARNING',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': DJANGO_SECURITY_LOG,
+            'maxBytes': 2 * 1024 * 1024,
+            'backupCount': 3,
+            'encoding': 'utf-8',
+            'formatter': 'django_error',
+            'delay': True,
+        },
     },
     'loggers': {
         # Handler level=ERROR keeps 4xx warnings out of the file;
@@ -188,6 +229,13 @@ LOGGING = {
         # mail_admins) exactly as before.
         'django.request': {
             'handlers': ['django_error_file'],
+            'propagate': True,
+        },
+        # Security signals raised inside the portal (login lockouts) —
+        # WARNING and above land in logs/security.log.
+        'portal': {
+            'handlers': ['portal_security_file'],
+            'level': 'WARNING',
             'propagate': True,
         },
     },

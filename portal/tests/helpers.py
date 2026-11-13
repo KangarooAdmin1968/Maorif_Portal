@@ -82,9 +82,16 @@ def make_user(username, role=None, school=None, superuser=False, staff=False):
     return user
 
 
-def make_teacher_profile(user, school, full_name='Омӯзгор Санъатбар'):
+def make_teacher_profile(user, school, full_name='Омӯзгор Санъатбар',
+                         custom_password_set=True):
+    # Default mirrors a teacher who has already set their own password —
+    # the ForceTeacherPasswordMiddleware reroutes flag=False accounts on
+    # every request, which would break every test that logs in as a
+    # teacher. Tests covering the legacy default-password path pass
+    # custom_password_set=False explicitly.
     return TeacherProfile.objects.create(
         user=user, school=school, full_name=full_name,
+        custom_password_set=custom_password_set,
     )
 
 

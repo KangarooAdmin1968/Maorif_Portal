@@ -106,6 +106,18 @@ def on_user_logged_in(sender, request, user, **kwargs):
         record_daily_activity(user, count_login=True)
     except Exception:
         logger.exception('Failed to record daily activity on login')
+    # Seed the forced-password-change flag for
+    # ForceTeacherPasswordMiddleware so steady-state requests cost zero
+    # queries. Test clients (force_login) take the same path.
+    try:
+        from .middleware import PW_CHANGE_SESSION_KEY
+        from .models import TeacherProfile
+        needs = (TeacherProfile.objects
+                 .filter(user_id=user.pk, custom_password_set=False)
+                 .exists())
+        request.session[PW_CHANGE_SESSION_KEY] = needs
+    except Exception:
+        logger.exception('Failed to seed password-change flag on login')
 
 
 def invalidate_ranking_caches(sender, **kwargs):

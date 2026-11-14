@@ -310,6 +310,20 @@ class HomeIsolationTests(HomeFixture):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Аҳмад Ҳофизов')
 
+    def test_superuser_without_school_gets_picker(self):
+        # Landing without ?school_id= must show the school selector,
+        # not the "access limited" error — the page exists for picking.
+        self.client.force_login(self.admin)
+        resp = self.client.get(reverse('home_education'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Интихоби муассиса')
+        self.assertNotContains(resp, 'Дастрасӣ маҳдуд аст')
+
+    def test_regular_teacher_still_blocked(self):
+        self.client.force_login(self.teacher_a)
+        resp = self.client.get(reverse('home_education'))
+        self.assertRedirects(resp, '/', fetch_redirect_response=False)
+
 
 class HomeMonitoringTests(HomeFixture):
     """Denominators: home students leave every class-level count."""

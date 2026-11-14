@@ -7776,6 +7776,19 @@ def home_education(request):
     """«Таҳсил дар хона» registry page for one school (Admin/Zavuch)."""
     school = _home_education_school(request)
     if not _home_education_allowed(request.user, school):
+        if request.user.is_superuser and school is None:
+            # Superuser without a picked school: show only the selector,
+            # not an error — the page exists exactly for choosing one.
+            return render(request, 'portal/home_education.html', {
+                'school': None, 'rows': [], 'class_names': [],
+                'students_json': '[]', 'subjects_json': '{}',
+                'teachers': TeacherProfile.objects.none(),
+                'all_schools': [s for s in School.objects.all().order_by('name')
+                              if is_academic_school(s)],
+                'is_superuser': True,
+                'max_weekly_hours': MAX_WEEKLY_HOURS,
+                'home_label': HOME_GROUP_LABEL,
+            })
         messages.error(request, 'Дастрасӣ маҳдуд аст. Таҳсил дар хонаро танҳо маъмурият ё завучи ҳамон муассиса идора мекунад.')
         return redirect('dashboard')
 

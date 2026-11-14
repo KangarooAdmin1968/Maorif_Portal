@@ -47,6 +47,7 @@ urlpatterns = [
     path('schools/allocation/<int:cs_id>/groups/', views.class_groups, name='class_groups'),
     path('schools/allocation/<int:cs_id>/groups/save/', views.save_class_groups, name='save_class_groups'),
     path('schools/allocation/<int:cs_id>/groups/delete/', views.delete_class_groups, name='delete_class_groups'),
+    path('conduct/', views.conduct_list, name='conduct_list'),
     path('schools/home-education/', views.home_education, name='home_education'),
     path('schools/home-education/add/', views.home_education_add, name='home_education_add'),
     path('schools/home-education/remove/', views.home_education_remove, name='home_education_remove'),

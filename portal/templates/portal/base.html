@@ -218,6 +218,7 @@
                     {% if user.is_superuser or user.is_staff or is_zavuch or user_role == 'director' or user_role == 'principal' %}
                         <a href="{% url 'nazorat' %}">🔎 Назорат</a>
                         <a href="{% url 'academic_years' %}">📁 Солҳои таҳсил</a>
+                        <a href="{% url 'conduct_list' %}">⚠️ Рафтор</a>
                     {% endif %}
                     {% if can_monitor %}
                         <a href="{% url 'monitoring_dashboard' %}">📊 Мониторинг</a>

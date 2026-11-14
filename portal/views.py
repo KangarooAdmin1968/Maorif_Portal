@@ -7750,6 +7750,130 @@ def delete_class_groups(request, cs_id):
 # own «ФАН — Таҳсил дар хона» line.
 # ---------------------------------------------------------------------------
 
+def _conduct_bad_rows(school_ids):
+    """Students whose latest-per-subject conduct average is below 3.
+
+    Same math as Student.behavior_status ('Ғайриқаноатбахш' when the mean
+    of the latest stored behavior_score per subject — defaulting to 5
+    for class subjects with no record — drops under 3), but computed for
+    a whole school set in a handful of queries: a window function picks
+    the newest behavior row per (student, subject) instead of one
+    conduct_map query per student.
+    """
+    from django.db.models import F, Window
+    from django.db.models.functions import RowNumber
+
+    school_ids = list(school_ids)
+    if not school_ids:
+        return []
+    students = list(
+        Student.objects.filter(school_id__in=school_ids)
+        .values('id', 'full_name', 'class_name', 'school_id'))
+    if not students:
+        return []
+
+    # Latest stored behavior_score per (student, raw subject). Aliases
+    # collapsing under normalize_subject are resolved below by recency.
+    latest = {}
+    for sid, subj, val, dt, pk in (
+        Grade.objects
+        .filter(student__school_id__in=school_ids,
+                behavior_score__isnull=False)
+        .annotate(rn=Window(
+            expression=RowNumber(),
+            partition_by=[F('student_id'), F('subject')],
+            order_by=[F('date').desc(), F('pk').desc()]))
+        .filter(rn=1)
+        .values_list('student_id', 'subject', 'behavior_score', 'date', 'pk')
+    ):
+        slot = latest.setdefault(sid, {})
+        key = normalize_subject(subj)
+        prev = slot.get(key)
+        if prev is None or (dt, pk) > (prev[0], prev[1]):
+            slot[key] = (dt, pk, val)
+
+    class_subjects = {}
+    for school_id, class_name, subj in (
+        ClassSubject.objects
+        .filter(school_id__in=school_ids, is_active=True)
+        .values_list('school_id', 'class_name', 'subject')
+    ):
+        class_subjects.setdefault(
+            (school_id, class_name), set()).add(normalize_subject(subj))
+
+    school_names = dict(
+        School.objects.filter(id__in=school_ids).values_list('id', 'name'))
+
+    rows = []
+    for st in students:
+        sid = st['id']
+        own = latest.get(sid, {})
+        subjects = (class_subjects.get((st['school_id'], st['class_name']), set())
+                    | set(own))
+        if not subjects:
+            continue
+        values = [(own[s][2] if s in own else 5) for s in subjects]
+        avg = sum(values) / len(values)
+        if avg >= 3.0:
+            continue
+        bad = sorted(((s, v[2]) for s, v in own.items() if v[2] < 3),
+                     key=lambda t: (t[1], t[0]))
+        rows.append({
+            'name': st['full_name'],
+            'school_name': school_names.get(st['school_id'], ''),
+            'class_name': st['class_name'],
+            'avg': round(avg, 1),
+            'bad': bad,
+        })
+    rows.sort(key=lambda r: (
+        r['school_name'], class_numeric_part(r['class_name']) or 0,
+        r['class_name'], r['avg'], r['name']))
+    return rows
+
+
+@login_required
+def conduct_list(request):
+    """⚠️ Рафтор — students with «Ғайриқаноатбахш» conduct.
+
+    Zavuch/principal see only their own school; superuser, staff and the
+    district director get every academic school plus a ?school_id=
+    picker. Read-only report — computed on demand, never cached into
+    normal page traffic.
+    """
+    role = get_user_role(request.user)
+    district_view = _maorif_report_access(request.user)
+    school = get_user_school(request.user)
+    if not (district_view or _is_zavuch(request.user, role)
+            or (role == settings.ROLE_PRINCIPAL and school)):
+        return redirect('dashboard')
+
+    schools = None
+    if district_view:
+        schools = [s for s in School.objects.all().order_by('name')
+                   if is_academic_school(s)]
+        selected = request.GET.get('school_id')
+        if selected:
+            try:
+                school = next(s for s in schools if s.id == int(selected))
+            except (ValueError, StopIteration):
+                school = None
+            school_ids = [school.id] if school else []
+        else:
+            school = None
+            school_ids = [s.id for s in schools]
+    else:
+        school_ids = [school.id] if school else []
+
+    rows = _conduct_bad_rows(school_ids)
+    return render(request, 'portal/conduct_list.html', {
+        'school': school,
+        'schools': schools,
+        'rows': rows,
+        'district_view': district_view,
+        'total': len(rows),
+    })
+
+
 def _home_education_school(request):
     """School context: a zavuch's own school; the superuser may inspect or
     manage any academic school through ?school_id= / POST school_id."""

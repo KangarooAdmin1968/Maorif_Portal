@@ -1,0 +1,60 @@
+{% extends 'portal/base.html' %}
+{% block title %}Хонандагони рафторашон ғайриқаноатбахш{% if school %} — {{ school.name }}{% endif %}{% endblock %}
+{% block content %}
+{% if district_view and schools %}
+<div style="margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.75rem; background: #f1f5f9; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #cbd5e1;">
+    <label for="conduct-school-select" style="font-weight: 700; color: #1e293b; font-size: 0.95rem;">🏫 Интихоби муассиса:</label>
+    <select id="conduct-school-select" class="form-select" style="padding: 0.4rem 0.8rem; font-weight: 600; border-radius: 6px; border: 1px solid #94a3b8; background: #fff;"
+            onchange="location.href='{% url 'conduct_list' %}' + (this.value ? '?school_id=' + this.value : '')">
+        <option value="" {% if not school %}selected{% endif %}>Ҳамаи муассисаҳо</option>
+        {% for sc in schools %}
+        <option value="{{ sc.id }}" {% if school and sc.id == school.id %}selected{% endif %}>{{ sc.name }}</option>
+        {% endfor %}
+    </select>
+    <button type="button" onclick="window.print()" style="margin-left: auto; padding: 0.4rem 0.9rem; border: 1px solid #94a3b8; border-radius: 6px; background: #fff; cursor: pointer; font-weight: 600;">🖨 Чоп</button>
+</div>
+{% endif %}
+
+<h1>{% if school %}{{ school.name }} — {% endif %}Хонандагони рафторашон ғайриқаноатбахш</h1>
+<p style="color: #4b5563; font-size: .92rem; margin: .25rem 0 .4rem;">
+    Дар ин рӯйхат хонандагоне нишон дода мешаванд, ки баҳои миёнаи рафтори онҳо аз 3 паст аст.
+</p>
+<p style="font-weight: 700; color: #1e293b; margin-bottom: 1rem;">
+    Ҳамагӣ: {{ total }} нафар хонанда
+</p>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>№</th>
+            <th>Насаб, ном</th>
+            <th>Синф</th>
+            {% if district_view %}<th>Муассиса</th>{% endif %}
+            <th>Баҳои миёнаи рафтор</th>
+            <th>Фанҳои баҳояшон ғайриқаноатбахш</th>
+            <th>Ҳолат</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.class_name }}</td>
+            {% if district_view %}<td>{{ row.school_name }}</td>{% endif %}
+            <td style="text-align:center; font-weight:700; color:#b91c1c;">{{ row.avg }}</td>
+            <td>
+                {% for subj, score in row.bad %}{{ subj }} ({{ score }}){% if not forloop.last %}, {% endif %}{% endfor %}
+            </td>
+            <td>
+                <span style="display:inline-block; font-size:.78rem; font-weight:700; background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; border-radius:999px; padding:.1rem .6rem;">Ғайриқаноатбахш</span>
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if district_view %}7{% else %}6{% endif %}" style="text-align:center; color:#6b7280; padding:1.2rem;">
+            Хонандагони рафторашон ғайриқаноатбахш ёфт нашуданд
+        </td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

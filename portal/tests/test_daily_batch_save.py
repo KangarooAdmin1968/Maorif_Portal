@@ -8,6 +8,7 @@ monthly_save, permission/scope/lock enforcement, partial failures, and
 batch atomicity. Assessment-linked and quarterly writes stay on their own
 endpoints and are never sent here.
 """
+import datetime
 import json
 from unittest import mock
 
@@ -17,10 +18,13 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from portal import views
-from portal.models import Assessment, Grade, SubjectGroupMembership, TeachingGroup
+from portal.models import (
+    Assessment, Grade, StudentExemption, SubjectGroupMembership,
+    TeachingGroup,
+)
 from portal.tests.helpers import (
     D_Q1, D_Q1_B, MATH, TAJIK, GoldenBase, lock_quarter, make_grade,
-    make_student, make_teacher_profile,
+    make_student, make_teacher_profile, make_user,
 )
 from portal.tests.test_phase4_lessons import make_control, make_lesson
 
@@ -650,6 +654,41 @@ class DailyBatchMemoizationTests(GoldenBase):
         self.assertTrue(
             Grade.objects.filter(student=self.s1, date=D).exists())
         self.assertFalse(
+            Grade.objects.filter(student=self.s2, date=D).exists())
+
+    def test_home_group_does_not_scope_class_journal(self):
+        # Regression (production 14.11): a CS carrying only an active
+        # таҳсил дар хона group scoped the writable set to an empty
+        # frozenset — every class-teacher cell failed 'Дастрасӣ манъ
+        # аст.' A home group alone must NOT group-scope the class journal:
+        # the class teacher keeps non-home students, the home student is
+        # writable only by their own home-group teacher.
+        home_user = make_user(
+            'teacher_home', role='teacher', school=self.school_a)
+        home_profile = make_teacher_profile(home_user, self.school_a)
+        home_group = TeachingGroup.objects.create(
+            class_subject=self.cs_a, label='Таҳсил дар хона',
+            teacher=home_profile, is_home=True)
+        SubjectGroupMembership.objects.create(
+            class_subject=self.cs_a, group=home_group, student=self.s2)
+        StudentExemption.objects.create(
+            student=self.s2, reason='home',
+            start_date=datetime.date(2026, 9, 1))
+        resp = self._post([
+            self._item(self.s1, 'score', '8'),
+            self._item(self.s2, 'score', '9'),
+        ])
+        data = resp.json()
+        self.assertEqual(data['saved'], 1)
+        self.assertTrue(
+            Grade.objects.filter(student=self.s1, date=D).exists())
+        self.assertFalse(
+            Grade.objects.filter(student=self.s2, date=D).exists())
+        # The home group's own teacher reaches the home student.
+        self.client.force_login(home_user)
+        resp = self._post([self._item(self.s2, 'score', '9')])
+        self.assertEqual(resp.json()['saved'], 1)
+        self.assertTrue(
             Grade.objects.filter(student=self.s2, date=D).exists())
 
     def test_scope_error_memoized_with_identical_message(self):

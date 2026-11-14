@@ -4915,10 +4915,15 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
         writable = ctx.get(wkey, _MEMO_MISS)
         if writable is _MEMO_MISS:
             # Mirrors _teacher_can_write_student: privileged roles and
-            # ungrouped CS may write anyone; a grouped CS limits a regular
-            # teacher to students of their own active group.
-            if _is_regular_teacher(user) and cs.groups.filter(
-                    is_active=True).exists():
+            # ungrouped CS may write anyone; a canonically grouped CS
+            # limits a regular teacher to students of their own active
+            # group. A таҳсил дар хона group alone does NOT scope the
+            # class journal — the class teacher keeps every non-home
+            # student and only the home group's own teacher reaches its
+            # members.
+            if not _is_regular_teacher(user):
+                writable = True
+            elif cs.groups.filter(_canonical_group_q()).exists():
                 writable = frozenset(
                     SubjectGroupMembership.objects.filter(
                         class_subject=cs,
@@ -4927,7 +4932,17 @@ def _save_journal_cell(user, item, ctx=None, affected=None):
                     ).values_list('student_id', flat=True)
                 )
             else:
-                writable = True
+                class_ids = list(Student.objects.filter(
+                    school=cs.school, class_name=cs.class_name
+                ).values_list('pk', flat=True))
+                allowed = set(class_ids) - home_student_ids(class_ids)
+                allowed |= set(SubjectGroupMembership.objects.filter(
+                    class_subject=cs,
+                    group__is_active=True,
+                    group__is_home=True,
+                    group__teacher__user=user,
+                ).values_list('student_id', flat=True))
+                writable = frozenset(allowed)
             ctx[wkey] = writable
         if writable is not True and student.pk not in writable:
             return False, 'Дастрасӣ манъ аст.'

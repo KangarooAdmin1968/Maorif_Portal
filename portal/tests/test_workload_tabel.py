@@ -7,6 +7,7 @@ unassigned-load warnings, school isolation/permissions, month selection,
 manual-entry persistence, historical-month freezing, and the Excel
 export's preserved A–AB structure.
 """
+import datetime
 import importlib
 import io
 import re
@@ -15,9 +16,11 @@ from unittest import mock
 
 from django.apps import apps
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 
@@ -25,7 +28,8 @@ from portal.curriculum_hours import CURRICULUM_HOURS, DEFAULT_WEEKLY_HOURS
 from django.db.models import ProtectedError
 
 from portal.models import (
-    ClassSubject, Teacher, TeacherProfile, TeacherTabelMonth, TeachingGroup,
+    ClassSubject, DailyActivity, Teacher, TeacherProfile, TeacherTabelMonth,
+    TeachingGroup,
 )
 from portal.tabel import (
     BAND_1_4, BAND_5_9, BAND_10_11, band_key_for_class,
@@ -887,6 +891,70 @@ class TabelIntegrityTests(GoldenBase):
             TeacherProfile.objects.filter(pk=self.profile_a.pk).exists())
         from django.contrib.auth.models import User
         self.assertFalse(User.objects.filter(pk=self.teacher_a.pk).exists())
+
+    def test_remove_teacher_activity_collision_not_500(self):
+        # Regression: deleting a user SET_NULLs DailyActivity.user, which
+        # collided with the partial-unique anonymous (date) aggregate —
+        # the real cause of the 500 on duplicate-teacher removal.
+        roster = self._roster_teacher()
+        day = datetime.date(2026, 10, 21)
+        DailyActivity.objects.create(
+            user=None, date=day, category='parent_student',
+            first_seen=timezone.now(), last_seen=timezone.now())
+        DailyActivity.objects.create(
+            user=self.teacher_a, date=day, category='teacher',
+            first_seen=timezone.now(), last_seen=timezone.now())
+        self.client.force_login(self.zavuch_a)
+        r = self.client.post(self.remove_url, {'teacher_id': roster.id})
+        self.assertEqual(r.status_code, 302)
+        self.assertFalse(
+            User.objects.filter(pk=self.teacher_a.pk).exists())
+        self.assertFalse(
+            TeacherProfile.objects.filter(pk=self.profile_a.pk).exists())
+        # The anonymous aggregate row survives; the colliding row is gone.
+        rows = DailyActivity.objects.filter(date=day)
+        self.assertEqual(rows.count(), 1)
+        self.assertIsNone(rows.get().user)
+
+    def test_remove_teacher_keeps_activity_on_free_dates(self):
+        # Activity on a date with no anonymous row detaches into history
+        # (the username snapshot keeps it identifiable) instead of dying
+        # with the account.
+        roster = self._roster_teacher()
+        day = datetime.date(2026, 10, 22)
+        DailyActivity.objects.create(
+            user=self.teacher_a, username='teacher_1', date=day,
+            category='teacher',
+            first_seen=timezone.now(), last_seen=timezone.now())
+        self.client.force_login(self.zavuch_a)
+        r = self.client.post(self.remove_url, {'teacher_id': roster.id})
+        self.assertEqual(r.status_code, 302)
+        row = DailyActivity.objects.get(date=day)
+        self.assertIsNone(row.user)
+        self.assertEqual(row.username, 'teacher_1')
+
+    def test_remove_duplicate_picks_empty_profile(self):
+        # Double-added teachers share one roster name: the older login
+        # holds every allocation while the duplicate never signed in.
+        # Removal must drop the empty account — .first() would pick the
+        # real teacher.
+        dup_user = make_user('teacher_1b', role='teacher',
+                             school=self.school_a)
+        dup_profile = make_teacher_profile(
+            dup_user, self.school_a, full_name='Омӯзгор А')
+        roster_dup = self._roster_teacher()
+        self.client.force_login(self.zavuch_a)
+        r = self.client.post(self.remove_url, {'teacher_id': roster_dup.id})
+        self.assertEqual(r.status_code, 302)
+        self.assertFalse(User.objects.filter(pk=dup_user.pk).exists())
+        self.assertFalse(
+            TeacherProfile.objects.filter(pk=dup_profile.pk).exists())
+        # The real account and its allocations are untouched.
+        self.assertTrue(User.objects.filter(pk=self.teacher_a.pk).exists())
+        self.assertTrue(
+            TeacherProfile.objects.filter(pk=self.profile_a.pk).exists())
+        self.cs_a.refresh_from_db()
+        self.assertEqual(self.cs_a.teacher_id, self.teacher_a.pk)
 
     def test_repeated_remove_is_safe(self):
         self._save_month()

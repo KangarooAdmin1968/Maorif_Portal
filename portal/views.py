@@ -31,7 +31,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, StudentMovement, StudentExemption, CLASS_LETTERS
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, StudentMovement, StudentExemption, DailyActivity, CLASS_LETTERS
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -7040,6 +7040,30 @@ def add_teacher(request, school_id):
     return redirect('teacher_list', school_id=school.id)
 
 
+def _pick_removable_teacher_profile(profiles):
+    """Choose which same-name profile a roster removal targets.
+
+    Double-added teachers create two logins under one roster name — the
+    older login holds every allocation while the duplicate never signed
+    in. Plain ``.first()`` (PK order) would pick the real teacher and
+    wipe their account, so prefer the profile with the least live work;
+    on a tie the newest row is the removable copy.
+    """
+    if not profiles:
+        return None
+    if len(profiles) == 1:
+        return profiles[0]
+
+    def live_work(tp):
+        return (tp.tabel_months.count()
+                + tp.allocated_subjects.count()
+                + tp.teaching_groups.count()
+                + ClassSubject.objects.filter(
+                    teacher_id=tp.user_id).count())
+
+    return min(profiles, key=lambda tp: (live_work(tp), -tp.pk))
+
+
 @login_required
 @require_POST
 def remove_teacher(request, school_id):
@@ -7059,13 +7083,25 @@ def remove_teacher(request, school_id):
         return redirect('teacher_list', school_id=school.id)
 
     full_name = teacher.name
-    teacher_profile = TeacherProfile.objects.filter(
-        school=school, full_name=full_name).first()
+    teacher_profiles = list(TeacherProfile.objects.filter(
+        school=school, full_name=full_name))
+    teacher_profile = _pick_removable_teacher_profile(teacher_profiles)
     archived = False
     if teacher_profile and not teacher_profile.is_archived:
         has_history = teacher_profile.tabel_months.exists()
         if not has_history:
             try:
+                # Deleting the user SET_NULLs DailyActivity.user, which
+                # collides with the partial-unique anonymous aggregate on
+                # any date that already has one (anon row = user IS NULL).
+                # Rows on free dates still detach into history — the
+                # username snapshot keeps them identifiable — so drop
+                # only the colliding rows, then delete the user.
+                anon_dates = list(DailyActivity.objects.filter(
+                    user__isnull=True).values_list('date', flat=True))
+                DailyActivity.objects.filter(
+                    user_id=teacher_profile.user_id,
+                    date__in=anon_dates).delete()
                 # No recorded months — legacy hard-delete is still safe.
                 teacher_profile.user.delete()
             except ProtectedError:

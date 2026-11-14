@@ -10409,6 +10409,89 @@ def export_monitoring_excel(request):
     return response
 
 
+@login_required
+def backup_download(request):
+    """Superuser-only full-database backup, downloaded through the browser.
+
+    Flow: build a WAL-consistent snapshot with SQLite's online backup API
+    (the same mechanism deploy.yml uses for its verified backups), then
+    hand the file to nginx via X-Accel-Redirect — the internal location
+    streams the ~1GB payload while the gunicorn worker returns instantly,
+    so a download can never occupy a worker or hit its timeout. Local
+    development (DEBUG=True, no nginx) streams the same snapshot through
+    FileResponse instead.
+
+    Safety: refuses to run while another snapshot is in flight (cache
+    lock), refuses when free disk is under ~2x the database (the deploy
+    #204 incident was a full disk), and keeps only the two newest
+    snapshots so the directory cannot grow unbounded.
+    """
+    if not request.user.is_superuser:
+        return redirect('dashboard')
+
+    import shutil
+    import sqlite3
+    from pathlib import Path
+
+    from django.http import FileResponse
+
+    backup_dir = Path(getattr(
+        settings, 'BACKUP_SNAPSHOT_DIR',
+        settings.BASE_DIR / 'backups'))
+    # Production stores SQLite at a file path; tests may run on an
+    # in-memory 'file:...' URI, which has no size and needs uri=True.
+    db_name = str(settings.DATABASES['default']['NAME'])
+    db_is_uri = db_name.startswith('file:')
+
+    lock_key = 'backup-snapshot-busy'
+    if not cache.add(lock_key, 1, 300):
+        messages.warning(
+            request,
+            'Бэкап тайёрланмоқда — бир дақиқадан сўнг такрор кунед.')
+        return redirect('dashboard')
+
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        db_size = 0 if db_is_uri else Path(db_name).stat().st_size
+        if shutil.disk_usage(backup_dir).free < db_size * 2:
+            messages.error(
+                request,
+                'Дискда етарли жой йўқ — бэкап яратиб бўлмади.')
+            return redirect('dashboard')
+
+        # Keep at most two snapshots on disk before writing another ~1GB.
+        existing = sorted(
+            backup_dir.glob('maorif_snapshot_*.sqlite3'),
+            key=lambda p: p.stat().st_mtime)
+        for old in existing[:-1]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+        ts = timezone.localtime().strftime('%Y%m%d_%H%M')
+        target = backup_dir / f'maorif_snapshot_{ts}.sqlite3'
+        # Backup through Django's own connection: a second connection
+        # deadlocks against the shared in-memory test database.
+        dst = sqlite3.connect(str(target))
+        try:
+            connection.connection.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        cache.delete(lock_key)
+
+    filename = f'maorif_backup_{ts}.sqlite3'
+    if settings.DEBUG:
+        return FileResponse(
+            open(target, 'rb'), as_attachment=True, filename=filename)
+    response = HttpResponse()
+    response['Content-Type'] = 'application/octet-stream'
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response['X-Accel-Redirect'] = f'/protected-backup/{target.name}'
+    return response
+
+
 def google_verification(request):
     """Return the Google Search Console verification file content."""
     return HttpResponse(

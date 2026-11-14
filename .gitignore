@@ -21,6 +21,9 @@ data/cache/
 # Runtime logs (django_errors.log, security.log) — written per machine
 logs/
 
+# Admin backup snapshots — large runtime files, server-side only
+backups/
+
 # Uploaded media (news photos etc.) — lives on the server, not in git
 media/
 

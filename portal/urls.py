@@ -111,4 +111,5 @@ urlpatterns = [
     path('news/manage/<int:pk>/edit/', views.news_edit, name='news_edit'),
     path('news/manage/<int:pk>/action/', views.news_action, name='news_action'),
     path('news/manage/photo/<int:photo_id>/', views.news_photo_action, name='news_photo_action'),
+    path('backup/download/', views.backup_download, name='backup_download'),
 ]

@@ -319,3 +319,39 @@ Traceback (most recent call last):
   File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\site-packages\django\template\base.py", line 776, in __init__
     raise TemplateSyntaxError(
 django.template.exceptions.TemplateSyntaxError: Template: D:\Loihalar\Maorif_Portal\portal\templates\portal\reports.html, Could not parse the remainder: ' + data.journal.partial' from 'data.journal.empty + data.journal.partial'
+2026-11-14 04:58:04,169 ERROR django.request Internal Server Error: /backup/download/
+Traceback (most recent call last):
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\site-packages\django\contrib\auth\decorators.py", line 59, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Loihalar\Maorif_Portal\portal\views.py", line 10452, in backup_download
+    db_size = db_path.stat().st_size
+              ^^^^^^^^^^^^^^
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 840, in stat
+    return os.stat(self, follow_symlinks=follow_symlinks)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 2] Не удается найти указанный файл: 'file:memorydb_default?mode=memory&cache=shared'
+2026-11-14 04:58:05,447 ERROR django.request Internal Server Error: /backup/download/
+Traceback (most recent call last):
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\site-packages\django\core\handlers\exception.py", line 55, in inner
+    response = get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\site-packages\django\core\handlers\base.py", line 198, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\site-packages\django\contrib\auth\decorators.py", line 59, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Loihalar\Maorif_Portal\portal\views.py", line 10452, in backup_download
+    db_size = db_path.stat().st_size
+              ^^^^^^^^^^^^^^
+  File "C:\Users\UsarZokirov\AppData\Local\Programs\Python\Python312\Lib\pathlib.py", line 840, in stat
+    return os.stat(self, follow_symlinks=follow_symlinks)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [WinError 2] Не удается найти указанный файл: 'file:memorydb_default?mode=memory&cache=shared'

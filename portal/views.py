@@ -11318,7 +11318,7 @@ def reports_export(request):
 
 @login_required
 def video_lessons(request):
-    """Видео дарсҳо — the Ministry e-library (marifat.tj) directory.
+    """Дарсҳои видеоӣ — the Ministry e-library (marifat.tj) directory.
 
     Open to every authenticated user — teachers, zavuch, maorif staff —
     per the maorif director's request: the same archive that was

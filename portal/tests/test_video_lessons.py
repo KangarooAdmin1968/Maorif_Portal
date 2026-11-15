@@ -1,4 +1,4 @@
-"""Видео дарсҳо — the marifat.tj video-lesson directory page.
+"""Дарсҳои видеоӣ — the marifat.tj video-lesson directory page.
 
 Open to every authenticated user (teacher, zavuch, maorif staff) per the
 maorif director's request; anonymous visitors are redirected to login.

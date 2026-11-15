@@ -211,7 +211,7 @@ class RankingCacheTests(GoldenBase):
             self.assertEqual(call.kwargs['timeout'], expected)
             self.assertEqual(
                 call.kwargs['timeout'],
-                600)
+                600 if key in RANKING_CACHE_KEYS else RANKING_STALE_TTL)
 
     # --- G: journal/grade freshness ----------------------------------------
 

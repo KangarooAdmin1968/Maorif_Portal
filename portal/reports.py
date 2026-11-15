@@ -100,7 +100,11 @@ def _rankings_block():
 # quarter is marked here and refresh_rankings warms its readiness key —
 # the first cold view renders '—' until the next cron tick fills it.
 REPORT_WANTED_READINESS_KEY = 'rank:v1:report_wanted_readiness'
-_REPORT_WANTED_TTL = 24 * 3600
+# A viewed quarter stays cron-warmed for a month. At 24h the marker
+# lapsed between a user's report visits, the per-quarter cache files
+# then expired unwarmed, and the next view rendered zeros until the
+# following tick — the intermittent "ҳамма нарса 0" report complaint.
+_REPORT_WANTED_TTL = 31 * 24 * 3600
 
 
 def mark_report_quarter_wanted(quarter, academic_year):

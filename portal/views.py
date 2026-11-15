@@ -1907,7 +1907,15 @@ RANKING_CACHE_KEYS = (
 # is reflected within RANKING_REFRESH_INTERVAL; the TTL above remains
 # the backstop for writes that never fire signals.
 RANKING_REFRESH_INTERVAL = 30
-RANKING_STALE_TTL = 600
+# Shadow lifetime. The cron warms every key each ~5-minute tick, so the
+# shadow's CONTENT stays ~10 minutes old in normal operation; this TTL is
+# only the survival window when refreshes are skipped or the cron stalls
+# (overlapping 5+ min runs leave per-quarter keys 'busy' every other
+# tick — at 600s their files expired before the next successful refresh
+# and reports rendered zeros). Serving last-good data during an outage is
+# strictly better than an empty table; freshness is still governed by the
+# refresh loop and the dirty stamp on the main entry, not by this TTL.
+RANKING_STALE_TTL = 6 * 3600
 RANKING_STALE_SUFFIX = ':stale'
 # Single-flight: one refresh per key at a time across every gunicorn
 # worker and thread, enforced by an OS file lock (see _ranking_flock_try).

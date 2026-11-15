@@ -81,9 +81,9 @@
         {% for topic, file in subject.lessons %}
         <div class="vl-row" data-src="{{ video_base }}{{ file }}" data-i="{{ forloop.counter0 }}">
             <span class="num">{{ forloop.counter }}</span><span>{{ topic }}</span>
-            <a class="dl" href="{{ video_base }}{{ file }}" target="_blank" rel="noopener"
+            <a class="dl" href="{% url 'video_download' filename=file %}"
                onclick="event.stopPropagation()"
-               title="Файлни юклаб олиш (Ctrl+S)">⬇</a>
+               title="Файлни юклаб олиш">⬇</a>
         </div>
         {% endfor %}
     </div>

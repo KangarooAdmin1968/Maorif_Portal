@@ -23,7 +23,7 @@ from decimal import Decimal, InvalidOperation
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, Protection, PatternFill, Border, Side
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -11353,4 +11353,19 @@ def video_lessons(request):
         'video_base': VIDEO_BASE,
         'extra': VIDEO_LESSON_EXTRA,
     })
+
+
+@login_required
+def video_download(request, filename):
+    """Dev fallback for /video-dl/<file>. In production nginx intercepts
+    this path and proxies marifat.tj while adding Content-Disposition:
+    attachment — the browser downloads the file directly instead of
+    opening it in a new tab (cross-origin `download` attributes are
+    ignored by browsers, and a Django stream would exceed the 60s
+    gunicorn timeout on these ~600MB files). Without nginx the request
+    reaches here and simply bounces to the source (Ctrl+S saves it)."""
+    if not re.fullmatch(r'[0-9A-Za-z_-]+\.mp4', filename):
+        return HttpResponseBadRequest('invalid filename')
+    return redirect(
+        f'https://marifat.tj/admin/videos/{filename}')
 

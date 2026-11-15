@@ -73,6 +73,23 @@ class VideoLessonsTests(GoldenBase):
         r = self.client.get(reverse('dashboard'))
         self.assertContains(r, reverse('video_lessons'))
 
+    def test_download_endpoint_redirects_to_source(self):
+        self.client.force_login(self.teacher_a)
+        _title, _url, rows = VIDEO_LESSON_CLASSES[5][0]
+        r = self.client.get(
+            reverse('video_download', kwargs={'filename': rows[0][1]}))
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(
+            r['Location'],
+            'https://marifat.tj/admin/videos/' + rows[0][1])
+
+    def test_download_endpoint_rejects_bad_filename(self):
+        self.client.force_login(self.teacher_a)
+        r = self.client.get(
+            reverse('video_download',
+                    kwargs={'filename': 'not_a_video.txt'}))
+        self.assertEqual(r.status_code, 400)
+
     def test_extra_section_rendered(self):
         self.client.force_login(self.teacher_a)
         r = self.client.get(reverse('video_lessons'))

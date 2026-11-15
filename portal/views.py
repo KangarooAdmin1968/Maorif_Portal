@@ -11322,21 +11322,35 @@ def video_lessons(request):
 
     Open to every authenticated user — teachers, zavuch, maorif staff —
     per the maorif director's request: the same archive that was
-    distributed to schools on hard drives, linked class-by-class and
-    subject-by-subject. Links open on marifat.tj in a new tab; no
-    grading data is involved, so no school scoping is needed.
+    distributed to schools on hard drives, organized class-by-class and
+    subject-by-subject. Topics play inline on this page (files stream
+    from marifat.tj); a fallback link opens the source page. No grading
+    data is involved, so no school scoping is needed.
     """
-    from .video_lessons import VIDEO_LESSON_CLASSES, VIDEO_LESSON_EXTRA
+    from .video_lessons import (
+        VIDEO_BASE, VIDEO_LESSON_CLASSES, VIDEO_LESSON_EXTRA)
     try:
         selected = int(request.GET.get('class', ''))
     except (TypeError, ValueError):
         selected = 0
     if selected not in VIDEO_LESSON_CLASSES:
         selected = 1
+    subjects = VIDEO_LESSON_CLASSES[selected]
+    subject = None
+    try:
+        idx = int(request.GET.get('subject', ''))
+        if 0 <= idx < len(subjects):
+            title, url, rows = subjects[idx]
+            subject = {'index': idx, 'title': title, 'url': url,
+                       'lessons': rows}
+    except (TypeError, ValueError):
+        pass
     return render(request, 'portal/video_lessons.html', {
         'classes': sorted(VIDEO_LESSON_CLASSES),
         'selected': selected,
-        'subjects': VIDEO_LESSON_CLASSES[selected],
+        'subjects': subjects,
+        'subject': subject,
+        'video_base': VIDEO_BASE,
         'extra': VIDEO_LESSON_EXTRA,
     })
 

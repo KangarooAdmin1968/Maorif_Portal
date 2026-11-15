@@ -20,10 +20,37 @@
   }
   .subj-card:hover { border-color: #003366; box-shadow: 0 2px 8px rgba(0,51,102,.12); }
   .subj-card .ico { font-size: 1.25rem; }
-  .subj-card .ext { margin-left: auto; color: #9ca3af; font-size: .8rem; font-weight: 400; }
+  .subj-card .cnt { margin-left: auto; color: #9ca3af; font-size: .8rem; font-weight: 400; }
   .vl-note {
     background: #f0f6ff; border: 1px solid #bfdbfe; border-radius: .6rem;
     padding: .7rem 1rem; color: #1e40af; font-size: .88rem; margin-bottom: 1rem;
+  }
+  .vl-player-wrap {
+    display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+    gap: 1rem; margin-bottom: 1.5rem; align-items: start;
+  }
+  .vl-player-wrap video {
+    width: 100%; border-radius: .6rem; background: #000;
+  }
+  .vl-list {
+    max-height: 460px; overflow-y: auto; background: #fff;
+    border: 1px solid #e5e7eb; border-radius: .6rem;
+  }
+  .vl-row {
+    display: flex; gap: .6rem; padding: .55rem .8rem; cursor: pointer;
+    border-bottom: 1px solid #f1f5f9; font-size: .88rem; align-items: baseline;
+  }
+  .vl-row:hover { background: #f0f6ff; }
+  .vl-row.active { background: #003366; color: #fff; }
+  .vl-row .num { color: #9ca3af; min-width: 1.6rem; font-size: .8rem; }
+  .vl-row.active .num { color: #dbeafe; }
+  .vl-row .dl { margin-left: auto; color: #9ca3af; text-decoration: none; font-size: .85rem; }
+  .vl-row .dl:hover { color: #003366; }
+  .vl-row.active .dl { color: #dbeafe; }
+  .vl-subject-head { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+  .vl-subject-head h2 { margin: 0; font-size: 1.15rem; color: #003366; }
+  @media (max-width: 860px) {
+    .vl-player-wrap { grid-template-columns: 1fr; }
   }
 </style>
 {% endblock %}
@@ -32,8 +59,8 @@
 
 <div class="vl-note">
     Дарсҳои видеоии Вазорати маориф — ҳамон маҷмӯае, ки ба мактабҳо дар
-    диск паҳн шудааст. Фанро интихоб кунед — рӯйхати дарсҳо дар сайти
-    <strong>marifat.tj</strong> дар варақаи нав кушода мешавад.
+    диск паҳн шудааст. Синф ва фанро интихоб кунед — мавзӯро босед,
+    видео ҳамин ҷо намоиш дода мешавад.
 </div>
 
 <div class="class-tabs">
@@ -42,22 +69,66 @@
     {% endfor %}
 </div>
 
+{% if subject %}
+<div class="vl-subject-head">
+    <h2>📚 {{ subject.title }} — Синфи {{ selected }}</h2>
+    <a class="btn" href="{% url 'video_lessons' %}?class={{ selected }}">← Ба фанҳо</a>
+    <a class="btn" href="{{ subject.url }}" target="_blank" rel="noopener">marifat.tj ↗</a>
+</div>
+<div class="vl-player-wrap" style="margin-top:.9rem;">
+    <video id="vl-video" controls preload="none"></video>
+    <div class="vl-list" id="vl-list">
+        {% for topic, file in subject.lessons %}
+        <div class="vl-row" data-src="{{ video_base }}{{ file }}" data-i="{{ forloop.counter0 }}">
+            <span class="num">{{ forloop.counter }}</span><span>{{ topic }}</span>
+            <a class="dl" href="{{ video_base }}{{ file }}" target="_blank" rel="noopener"
+               onclick="event.stopPropagation()"
+               title="Файлни юклаб олиш (Ctrl+S)">⬇</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+<script>
+(function () {
+    var video = document.getElementById('vl-video');
+    var rows = document.querySelectorAll('.vl-row');
+    function pick(row) {
+        rows.forEach(function (r) { r.classList.remove('active'); });
+        row.classList.add('active');
+        video.src = row.getAttribute('data-src');
+        video.load();
+        video.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+        var p = video.play();
+        if (p && p.catch) { p.catch(function () {}); }
+    }
+    rows.forEach(function (row) {
+        row.addEventListener('click', function () { pick(row); });
+    });
+    if (rows.length) {
+        rows[0].classList.add('active');
+        video.src = rows[0].getAttribute('data-src');
+        video.load();
+    }
+})();
+</script>
+{% else %}
 <div class="subj-grid">
-    {% for title, url in subjects %}
-    <a class="subj-card" href="{{ url }}" target="_blank" rel="noopener">
-        <span class="ico">📚</span> {{ title }} <span class="ext">↗</span>
+    {% for title, url, rows in subjects %}
+    <a class="subj-card" href="{% url 'video_lessons' %}?class={{ selected }}&subject={{ forloop.counter0 }}">
+        <span class="ico">📚</span> {{ title }} <span class="cnt">{{ rows|length }} дарс</span>
     </a>
     {% endfor %}
 </div>
 
 {% if extra %}
-<h2 style="font-size:1.05rem; color:#003366;">Қӯшимча</h2>
+<h2 style="font-size:1.05rem; color:#003366;">Иловагӣ</h2>
 <div class="subj-grid">
-    {% for title, url in extra %}
+    {% for title, url, rows in extra %}
     <a class="subj-card" href="{{ url }}" target="_blank" rel="noopener">
-        <span class="ico">📺</span> {{ title }} <span class="ext">↗</span>
+        <span class="ico">📺</span> {{ title }} <span class="cnt">↗</span>
     </a>
     {% endfor %}
 </div>
+{% endif %}
 {% endif %}
 {% endblock %}

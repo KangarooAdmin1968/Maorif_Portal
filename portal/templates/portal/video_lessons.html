@@ -131,9 +131,10 @@
                     return reader.read().then(function (r) {
                         if (r.done) { return chunks; }
                         chunks.push(r.value); got += r.value.length;
+                        var mb = Math.round(got / 1048576);
                         a.textContent = total
-                            ? Math.round(got / total * 100) + '%'
-                            : Math.round(got / 1048576) + 'MB';
+                            ? mb + 'МБ·' + Math.round(got / total * 100) + '%'
+                            : mb + 'МБ';
                         return pump();
                     });
                 }

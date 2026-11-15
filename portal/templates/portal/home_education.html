@@ -138,12 +138,47 @@
             <td>{{ row.teacher.full_name|default:'—' }}</td>
             <td>
                 {{ row.hours }}
+                <button type="button" class="btn btn-secondary btn-sm" title="Таҳрир"
+                        style="float:right; margin-left:.3rem;"
+                        onclick="toggleHeEdit('he-edit-{{ m.id }}', this)">✎</button>
                 <form method="post" action="{% url 'home_education_remove' %}" style="display:inline; float:right;"
                       onsubmit="return confirm('{{ m.student.full_name }} аз таҳсил дар хона хориҷ карда шавад?');">
                     {% csrf_token %}
                     {% if is_superuser %}<input type="hidden" name="school_id" value="{{ school.id }}">{% endif %}
                     <input type="hidden" name="membership_id" value="{{ m.id }}">
                     <button type="submit" class="btn btn-danger btn-sm" title="Хориҷ">×</button>
+                </form>
+            </td>
+        </tr>
+        <tr id="he-edit-{{ m.id }}" style="display:none; background:#f8fafc;">
+            <td colspan="5">
+                <form method="post" action="{% url 'home_education_edit' %}" class="home-form" style="margin-bottom:0;">
+                    {% csrf_token %}
+                    {% if is_superuser %}<input type="hidden" name="school_id" value="{{ school.id }}">{% endif %}
+                    <input type="hidden" name="membership_id" value="{{ m.id }}">
+                    <div class="fld">
+                        <label>Хонанда (номи)</label>
+                        <input type="text" name="student_name" value="{{ m.student.full_name }}"
+                               maxlength="255" required>
+                    </div>
+                    <div class="fld">
+                        <label>Омӯзгор</label>
+                        <select name="teacher_id" required>
+                            {% for t in teachers %}
+                            <option value="{{ t.id }}" {% if row.teacher and t.id == row.teacher.id %}selected{% endif %}>{{ t.full_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="fld" style="max-width:8rem;">
+                        <label>Соатҳои ҳафтаина</label>
+                        <input type="number" name="hours" value="{{ row.hours }}"
+                               min="0.5" max="{{ max_weekly_hours }}" step="0.5" required>
+                    </div>
+                    <div class="fld">
+                        <button type="submit" class="btn btn-success">💾 Сабт</button>
+                        <button type="button" class="btn btn-secondary"
+                                onclick="toggleHeEdit('he-edit-{{ m.id }}', this)">Бекор</button>
+                    </div>
                 </form>
             </td>
         </tr>
@@ -165,6 +200,11 @@
 
 {% if school %}
 <script>
+function toggleHeEdit(id) {
+    const row = document.getElementById(id);
+    if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+
 const STUDENTS = {{ students_json|safe }};
 const SUBJECTS = {{ subjects_json|safe }};
 const classSel = document.getElementById('he-class');

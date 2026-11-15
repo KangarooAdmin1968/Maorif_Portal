@@ -348,3 +348,122 @@ class HomeMonitoringTests(HomeFixture):
         g = make_grade(self.s_home, subject=MATH, score=5)
         self.assertEqual(g.student.class_name, '7-А')
         self.assertEqual(g.subject, MATH)
+
+
+class HomeEditTests(HomeFixture):
+    """«Таҳрир» — teacher, hours and name fixes on a home seat."""
+
+    def _seat(self):
+        return SubjectGroupMembership.objects.get(
+            class_subject=self.cs_math, student=self.s_home)
+
+    def _edit(self, user, membership, **overrides):
+        self.client.force_login(user)
+        payload = {
+            'membership_id': membership.id,
+            'teacher_id': self.profile_home.id,
+            'hours': '4',
+            'student_name': membership.student.full_name,
+        }
+        payload.update(overrides)
+        return self.client.post(reverse('home_education_edit'), payload)
+
+    def test_edit_updates_teacher_and_hours(self):
+        other = make_teacher_profile(
+            make_user('teacher_h3', role='teacher', school=self.school_a),
+            self.school_a, full_name='Омӯзгори дигар')
+        resp = self._edit(self.zavuch_a, self._seat(),
+                          teacher_id=other.id, hours='4.5')
+        self.assertEqual(resp.status_code, 302)
+        self.home_group.refresh_from_db()
+        self.assertEqual(self.home_group.teacher_id, other.id)
+        self.assertEqual(self.home_group.hours_per_week, 4.5)
+
+    def test_edit_bad_hours_rejected(self):
+        resp = self._edit(self.zavuch_a, self._seat(), hours='99')
+        self.assertEqual(resp.status_code, 302)
+        self.home_group.refresh_from_db()
+        self.assertEqual(self.home_group.hours_per_week, 2)
+
+    def test_edit_renames_student_and_keeps_seats(self):
+        # A second home seat on another subject — the rename must carry
+        # every membership, not just the edited row.
+        cs_rus = make_class_subject(self.school_a, '7-А', 'ЗАБОНИ РУСӢ')
+        home_group_rus = TeachingGroup.objects.create(
+            class_subject=cs_rus, label='Таҳсил дар хона',
+            teacher=self.profile_home, is_home=True, hours_per_week=1)
+        SubjectGroupMembership.objects.create(
+            class_subject=cs_rus, group=home_group_rus,
+            student=self.s_home)
+        grade = make_grade(self.s_home, subject=MATH, score=5)
+        old_id = self.s_home.id
+
+        resp = self._edit(self.zavuch_a, self._seat(),
+                          student_name='Аҳмад Ҳофизови Точӣ')
+        self.assertEqual(resp.status_code, 302)
+
+        new_student = Student.objects.get(
+            school=self.school_a, class_name='7-А',
+            full_name='Аҳмад Ҳофизови Точӣ')
+        self.assertNotEqual(new_student.id, old_id)
+        self.assertFalse(Student.all_objects.filter(id=old_id).exists())
+        # Every seat follows the renamed record.
+        seats = SubjectGroupMembership.objects.filter(student=new_student)
+        self.assertEqual(
+            {m.class_subject_id for m in seats},
+            {self.cs_math.id, cs_rus.id})
+        self.assertTrue(all(m.group.is_home for m in seats))
+        # Grades and the home exemption follow too.
+        grade.refresh_from_db()
+        self.assertEqual(grade.student_id, new_student.id)
+        self.assertIn(new_student.id, home_student_ids([new_student.id]))
+
+    def test_edit_rejects_existing_name(self):
+        resp = self._edit(self.zavuch_a, self._seat(),
+                          student_name=self.s1.full_name)
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Student.objects.filter(
+            school=self.school_a, class_name='7-А',
+            full_name='Аҳмад Ҳофизов').exists())
+
+    def test_edit_cross_school_blocked(self):
+        zavuch_b = make_user('zavuch_8', role='teacher', school=self.school_b)
+        membership = self._seat()
+        resp = self._edit(zavuch_b, membership, hours='9')
+        self.assertEqual(resp.status_code, 302)
+        self.home_group.refresh_from_db()
+        self.assertEqual(self.home_group.hours_per_week, 2)
+
+    def test_deactivate_subject_guarded_by_home_seat(self):
+        # Removing the fan must not silently hide the registry row —
+        # the seat leaves through «Таҳсил дар хона» first.
+        self.client.force_login(self.admin)
+        resp = self.client.post(
+            reverse('deactivate_subject'), {'cs_id': self.cs_math.id})
+        self.assertEqual(resp.status_code, 302)
+        self.cs_math.refresh_from_db()
+        self.assertTrue(self.cs_math.is_active)
+        self.assertTrue(
+            SubjectGroupMembership.objects.filter(
+                class_subject=self.cs_math, student=self.s_home).exists())
+
+    def test_add_reuses_inactive_class_subject(self):
+        # The fan was removed from the class allocation (the row still
+        # exists, inactive): adding it for home education reactivates the
+        # same ClassSubject instead of stacking a duplicate.
+        self.cs_math.is_active = False
+        self.cs_math.save(update_fields=['is_active'])
+        self.client.force_login(self.zavuch_a)
+        resp = self.client.post(
+            reverse('home_education_add'), {
+                'class_name': '7-А', 'subject': MATH,
+                'teacher_id': self.profile_home.id, 'hours': '3',
+                'student_id': self.s1.id,
+            })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            ClassSubject.objects.filter(
+                school=self.school_a, class_name='7-А',
+                subject=MATH).count(), 1)
+        self.cs_math.refresh_from_db()
+        self.assertTrue(self.cs_math.is_active)

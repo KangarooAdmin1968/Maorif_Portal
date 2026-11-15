@@ -8108,9 +8108,20 @@ def home_education_add(request):
 
     cs = _class_subject_for(school, class_name, subject)
     if cs is None:
-        cs = ClassSubject.objects.create(
-            school=school, class_name=class_name, subject=subject,
-            is_default=False, is_active=True)
+        # An inactive row may exist (the fan was removed from the class
+        # allocation — possibly carrying a hidden home group). Reuse it
+        # instead of stacking a duplicate row for the same triple; the
+        # add is an explicit re-authorization anyway.
+        cs = ClassSubject.objects.filter(
+            school=school, class_name=normalize_class_name(class_name),
+            subject=subject, is_active=False).order_by('pk').first()
+        if cs is not None:
+            cs.is_active = True
+            cs.save(update_fields=['is_active'])
+        else:
+            cs = ClassSubject.objects.create(
+                school=school, class_name=class_name, subject=subject,
+                is_default=False, is_active=True)
     # One membership per (class, subject) is DB-enforced — check both
     # sides before the insert: a canonical group, or another home group
     # (a different teacher for the same subject).
@@ -8221,6 +8232,104 @@ def home_education_remove(request):
     return redirect(redirect_url)
 
 
+def _home_education_membership(request, school):
+    """The (membership, redirect_url) this POST targets — one student's
+    seat in an active is_home group of this school."""
+    redirect_url = reverse('home_education')
+    if request.user.is_superuser and school:
+        redirect_url += f'?school_id={school.id}'
+    try:
+        membership = SubjectGroupMembership.objects.select_related(
+            'group', 'student', 'class_subject').get(
+            pk=int(request.POST.get('membership_id', '')),
+            class_subject__school=school,
+            group__is_home=True, group__is_active=True)
+    except (ValueError, TypeError, SubjectGroupMembership.DoesNotExist):
+        messages.error(request, 'Сабт ёфт нашуд.')
+        return None, redirect_url
+    return membership, redirect_url
+
+
+@login_required
+@require_POST
+def home_education_edit(request):
+    """Edit one home-education seat: teacher, weekly hours and — when the
+    roster name was typed wrong — the student's full name.
+
+    Renaming goes through _move_student (the same machinery edit_student
+    uses) because the Student PK embeds the name; _move_student re-links
+    grades, quarter grades and exemptions but CASCADEs the group
+    memberships, so they are recreated for the renamed record here."""
+    school = _home_education_school(request)
+    if not _home_education_allowed(request.user, school):
+        messages.error(request, 'Дастрасӣ маҳдуд аст.')
+        return redirect('dashboard')
+
+    membership, redirect_url = _home_education_membership(request, school)
+    if membership is None:
+        return redirect(redirect_url)
+
+    try:
+        teacher_id = int(request.POST.get('teacher_id', ''))
+    except (ValueError, TypeError):
+        teacher_id = None
+    teacher = TeacherProfile.objects.filter(
+        pk=teacher_id, school=school, is_archived=False).first()
+
+    raw_hours = request.POST.get('hours', '').strip()
+    try:
+        hours = Decimal(raw_hours.replace(',', '.'))
+    except InvalidOperation:
+        hours = None
+    hours_ok = (
+        hours is not None
+        and Decimal('0.5') <= hours <= MAX_WEEKLY_HOURS
+        and hours % Decimal('0.5') == 0)
+
+    errors = []
+    if teacher is None:
+        errors.append('Омӯзгор нодуруст интихоб шудааст.')
+    if not hours_ok:
+        errors.append(f'Соатҳо нодуруст: аз 0,5 то {MAX_WEEKLY_HOURS}, қадами 0,5.')
+    if errors:
+        for e in errors:
+            messages.error(request, e)
+        return redirect(redirect_url)
+
+    student = membership.student
+    new_name = ' '.join(request.POST.get('student_name', '').split())[:255]
+    rename = bool(new_name) and new_name != student.full_name
+
+    with transaction.atomic():
+        group = membership.group
+        if group.teacher_id != teacher.id:
+            group.teacher = teacher
+        if group.hours_per_week != hours:
+            group.hours_per_week = hours
+        group.save()
+        if rename:
+            # Keep every seat the student holds — _move_student deletes
+            # the old Student row, cascading the FK memberships away.
+            seats = list(SubjectGroupMembership.objects.filter(
+                student=student).values_list('class_subject_id', 'group_id'))
+            try:
+                student = _move_student(
+                    school, student, student.class_name, new_name)
+            except ValueError as e:
+                messages.error(request, str(e))
+                return redirect(redirect_url)
+            for cs_id, group_id in seats:
+                SubjectGroupMembership.objects.get_or_create(
+                    class_subject_id=cs_id, group_id=group_id,
+                    student=student)
+
+    messages.success(
+        request,
+        f'Сабти «{membership.class_subject.subject}» — {student.full_name} '
+        'нав карда шуд.')
+    return redirect(redirect_url)
+
+
 @login_required
 @require_POST
 def deactivate_subject(request):
@@ -8238,6 +8347,17 @@ def deactivate_subject(request):
     if not is_academic_school(cs.school):
         messages.error(request, 'Фан танҳо дар муассисаҳои таҳсилоти умумӣ идора мешавад.')
         return redirect('lesson_allocation')
+    # A home-education seat hangs off this ClassSubject — deactivating it
+    # would silently hide the registry row and the home journal. Refuse:
+    # the seat must be removed through «Таҳсил дар хона» first.
+    if SubjectGroupMembership.objects.filter(
+            class_subject=cs, group__is_home=True,
+            group__is_active=True).exists():
+        messages.error(
+            request,
+            f'«{cs.subject}» — {cs.class_name}: таҳсил дар хона сабти бор. '
+            'Аввал уни «Таҳсил дар хона» саҳифасидан хориҷ кунед.')
+        return redirect(f'{reverse("lesson_allocation")}?school_id={cs.school_id}')
     cs.is_active = False
     cs.save()
     # Same explicit opt-out the approval flow writes — a later student
@@ -8367,6 +8487,17 @@ def review_deactivation_request(request):
     now = timezone.now()
     cs = req.class_subject
     if action == 'approve':
+        # Same guard as deactivate_subject: a cs carrying an active
+        # home-education seat must not be silenced from under the
+        # registry — the seat leaves through «Таҳсил дар хона» first.
+        if SubjectGroupMembership.objects.filter(
+                class_subject=cs, group__is_home=True,
+                group__is_active=True).exists():
+            messages.error(
+                request,
+                f'«{cs.subject}» — {cs.class_name}: таҳсил дар хона сабти бор. '
+                'Аввал уни «Таҳсил дар хона» саҳифасидан хориҷ кунед.')
+            return redirect('deactivation_requests')
         cs.is_active = False
         cs.teacher = None
         cs.allocated_teacher = None

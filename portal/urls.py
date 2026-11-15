@@ -51,6 +51,7 @@ urlpatterns = [
     path('schools/home-education/', views.home_education, name='home_education'),
     path('schools/home-education/add/', views.home_education_add, name='home_education_add'),
     path('schools/home-education/remove/', views.home_education_remove, name='home_education_remove'),
+path('schools/home-education/edit/', views.home_education_edit, name='home_education_edit'),
     path('schools/allocation/deactivate/', views.deactivate_subject, name='deactivate_subject'),
     path('schools/allocation/request-deactivation/', views.request_deactivation, name='request_deactivation'),
     path('schools/deactivation-requests/', views.deactivation_requests, name='deactivation_requests'),

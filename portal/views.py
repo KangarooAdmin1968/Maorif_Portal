@@ -11315,3 +11315,28 @@ def reports_export(request):
     response['Content-Disposition'] = f"attachment; filename*=utf-8''{encoded_filename}"
     return response
 
+
+@login_required
+def video_lessons(request):
+    """Видео дарсҳо — the Ministry e-library (marifat.tj) directory.
+
+    Open to every authenticated user — teachers, zavuch, maorif staff —
+    per the maorif director's request: the same archive that was
+    distributed to schools on hard drives, linked class-by-class and
+    subject-by-subject. Links open on marifat.tj in a new tab; no
+    grading data is involved, so no school scoping is needed.
+    """
+    from .video_lessons import VIDEO_LESSON_CLASSES, VIDEO_LESSON_EXTRA
+    try:
+        selected = int(request.GET.get('class', ''))
+    except (TypeError, ValueError):
+        selected = 0
+    if selected not in VIDEO_LESSON_CLASSES:
+        selected = 1
+    return render(request, 'portal/video_lessons.html', {
+        'classes': sorted(VIDEO_LESSON_CLASSES),
+        'selected': selected,
+        'subjects': VIDEO_LESSON_CLASSES[selected],
+        'extra': VIDEO_LESSON_EXTRA,
+    })
+

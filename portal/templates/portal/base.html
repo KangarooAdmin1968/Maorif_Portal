@@ -184,6 +184,7 @@
                 {% if user.is_authenticated %}
                     <a href="{% url 'dashboard' %}">Асосӣ</a>
                     <a href="{% url 'search' %}">🔍 Ҷустуҷӯ</a>
+                    <a href="{% url 'video_lessons' %}">🎬 Видео дарсҳо</a>
                     {% if user.is_superuser %}
                         <a href="{% url 'school_list' %}">Муассисаҳо</a>
                     {% endif %}

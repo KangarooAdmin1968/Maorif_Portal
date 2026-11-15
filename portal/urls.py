@@ -86,6 +86,7 @@ path('schools/home-education/edit/', views.home_education_edit, name='home_educa
     path('nazorat/', views.nazorat, name='nazorat'),
     path('reports/', views.reports_view, name='reports'),
     path('reports/export/', views.reports_export, name='reports_export'),
+    path('video-lessons/', views.video_lessons, name='video_lessons'),
     path('schools/documents/movements/', views.student_movements, name='student_movements'),
     path('schools/documents/movements/export/', views.movements_export, name='movements_export'),
     path('schools/documents/excellent/', views.excellent_students, name='excellent_students'),

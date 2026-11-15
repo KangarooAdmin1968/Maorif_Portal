@@ -1,0 +1,63 @@
+{% extends 'portal/base.html' %}
+{% block title %}Видео дарсҳо{% endblock %}
+{% block extra_head %}
+<style>
+  .class-tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 1.25rem; }
+  .class-tabs a {
+    padding: .4rem .9rem; border-radius: .5rem; text-decoration: none;
+    border: 1px solid #cbd5e1; color: #1e3a5f; background: #fff; font-weight: 600;
+  }
+  .class-tabs a.active { background: #003366; color: #fff; border-color: #003366; }
+  .subj-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: .7rem; margin-bottom: 1.5rem;
+  }
+  .subj-card {
+    display: flex; align-items: center; gap: .55rem; background: #fff;
+    border: 1px solid #e5e7eb; border-radius: .6rem; padding: .8rem 1rem;
+    text-decoration: none; color: #1e3a5f; font-weight: 600;
+    transition: box-shadow .15s ease, border-color .15s ease;
+  }
+  .subj-card:hover { border-color: #003366; box-shadow: 0 2px 8px rgba(0,51,102,.12); }
+  .subj-card .ico { font-size: 1.25rem; }
+  .subj-card .ext { margin-left: auto; color: #9ca3af; font-size: .8rem; font-weight: 400; }
+  .vl-note {
+    background: #f0f6ff; border: 1px solid #bfdbfe; border-radius: .6rem;
+    padding: .7rem 1rem; color: #1e40af; font-size: .88rem; margin-bottom: 1rem;
+  }
+</style>
+{% endblock %}
+{% block content %}
+<h1>🎬 Видео дарсҳо</h1>
+
+<div class="vl-note">
+    Дарсҳои видеоии Вазорати маориф — ҳамон маҷмӯае, ки ба мактабҳо дар
+    диск паҳн шудааст. Фанро интихоб кунед — рӯйхати дарсҳо дар сайти
+    <strong>marifat.tj</strong> дар варақаи нав кушода мешавад.
+</div>
+
+<div class="class-tabs">
+    {% for c in classes %}
+    <a href="{% url 'video_lessons' %}?class={{ c }}"{% if c == selected %} class="active"{% endif %}>Синфи {{ c }}</a>
+    {% endfor %}
+</div>
+
+<div class="subj-grid">
+    {% for title, url in subjects %}
+    <a class="subj-card" href="{{ url }}" target="_blank" rel="noopener">
+        <span class="ico">📚</span> {{ title }} <span class="ext">↗</span>
+    </a>
+    {% endfor %}
+</div>
+
+{% if extra %}
+<h2 style="font-size:1.05rem; color:#003366;">Қӯшимча</h2>
+<div class="subj-grid">
+    {% for title, url in extra %}
+    <a class="subj-card" href="{{ url }}" target="_blank" rel="noopener">
+        <span class="ico">📺</span> {{ title }} <span class="ext">↗</span>
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

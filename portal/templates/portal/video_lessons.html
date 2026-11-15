@@ -109,6 +109,52 @@
         video.src = rows[0].getAttribute('data-src');
         video.load();
     }
+
+    // ⬇ in-place download with animated progress. /video-dl/ is same-origin
+    // (nginx proxies marifat.tj), so fetch() is allowed — CORS would block
+    // the same call straight to marifat.tj. While downloading, the ⬇ spot
+    // shows %; clicking again aborts. On any failure the plain link opens.
+    document.querySelectorAll('.vl-row .dl').forEach(function (a) {
+        a.addEventListener('click', function (e) {
+            e.preventDefault(); e.stopPropagation();
+            var row = a.closest('.vl-row');
+            if (row._dl) { row._dl.abort(); return; }
+            var ac = new AbortController(); row._dl = ac;
+            var orig = a.textContent;
+            a.textContent = '⏳';
+            fetch(a.href, {signal: ac.signal}).then(function (resp) {
+                if (!resp.ok) { throw new Error('http ' + resp.status); }
+                var total = +resp.headers.get('Content-Length') || 0;
+                var reader = resp.body.getReader();
+                var chunks = [], got = 0;
+                function pump() {
+                    return reader.read().then(function (r) {
+                        if (r.done) { return chunks; }
+                        chunks.push(r.value); got += r.value.length;
+                        a.textContent = total
+                            ? Math.round(got / total * 100) + '%'
+                            : Math.round(got / 1048576) + 'MB';
+                        return pump();
+                    });
+                }
+                return pump();
+            }).then(function (chunks) {
+                var blob = new Blob(chunks, {type: 'video/mp4'});
+                var dl = document.createElement('a');
+                dl.href = URL.createObjectURL(blob);
+                dl.download = a.href.split('/').pop();
+                document.body.appendChild(dl); dl.click(); dl.remove();
+                setTimeout(function () { URL.revokeObjectURL(dl.href); }, 5000);
+                a.textContent = '✓';
+                setTimeout(function () { a.textContent = orig; }, 4000);
+            }).catch(function (err) {
+                a.textContent = orig;
+                if (!err || err.name !== 'AbortError') {
+                    window.open(a.href, '_blank');
+                }
+            }).finally(function () { row._dl = null; });
+        });
+    });
 })();
 </script>
 {% else %}

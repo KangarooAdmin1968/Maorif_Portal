@@ -253,6 +253,68 @@ class LessonDeleteTests(GoldenBase):
 
 
 # ---------------------------------------------------------------------------
+# lesson_delete — with_data=1 removes the lesson AND its recorded data
+# ---------------------------------------------------------------------------
+
+
+class LessonDeleteWithDataTests(GoldenBase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.teacher_a)
+        self.lesson = make_lesson(self.cs_a, D_Q1, 1)
+
+    def _delete(self, lesson=None):
+        return self.client.post(
+            LESSON_DELETE_URL,
+            {'lesson_id': (lesson or self.lesson).id, 'with_data': '1'},
+        )
+
+    def test_with_data_deletes_lesson_grades(self):
+        post_grade(self.client, self.s1, score='9', lesson=self.lesson)
+        post_grade(self.client, self.s2, score='7', lesson=self.lesson)
+        resp = self._delete()
+        self.assertTrue(resp.json()['success'])
+        self.assertFalse(Lesson.objects.filter(pk=self.lesson.pk).exists())
+        self.assertFalse(
+            Grade.objects.filter(
+                student__in=(self.s1, self.s2)).exists())
+
+    def test_with_data_deletes_control_assessment_and_grades(self):
+        a = make_control(self.cs_a, lesson=self.lesson)
+        post_grade(self.client, self.s1, score='8', assessment=a)
+        resp = self._delete()
+        self.assertTrue(resp.json()['success'])
+        self.assertFalse(Lesson.objects.filter(pk=self.lesson.pk).exists())
+        self.assertFalse(Assessment.objects.filter(pk=a.pk).exists())
+        self.assertFalse(Grade.objects.filter(student=self.s1).exists())
+
+    def test_with_data_keeps_other_slots_rows(self):
+        other = make_lesson(self.cs_a, D_Q1, 2)
+        post_grade(self.client, self.s1, score='9', lesson=self.lesson)
+        post_grade(self.client, self.s1, score='8', lesson=other)
+        post_grade(self.client, self.s2, score='7')
+        resp = self._delete()
+        self.assertTrue(resp.json()['success'])
+        rows = Grade.objects.filter(date=D_Q1)
+        self.assertEqual(rows.count(), 2)
+        self.assertEqual(rows.get(lesson=other).score, 8)
+        self.assertEqual(rows.get(lesson__isnull=True).score, 7)
+
+    def test_with_data_empty_lesson_still_deleted(self):
+        resp = self._delete()
+        self.assertTrue(resp.json()['success'])
+        self.assertFalse(Lesson.objects.filter(pk=self.lesson.pk).exists())
+
+    def test_with_data_locked_quarter_still_blocked(self):
+        post_grade(self.client, self.s1, score='9', lesson=self.lesson)
+        lock_quarter(self.school_a, '7-А', MATH, quarter=1)
+        resp = self._delete()
+        self.assertFalse(resp.json()['success'])
+        self.assertTrue(Lesson.objects.filter(pk=self.lesson.pk).exists())
+        self.assertTrue(Grade.objects.filter(lesson=self.lesson).exists())
+
+
+# ---------------------------------------------------------------------------
 # Daily grade isolation — the core Phase 4 requirement
 # ---------------------------------------------------------------------------
 
@@ -794,7 +856,7 @@ class LessonCreateCancelTests(GoldenBase):
         from django.conf import settings
         src = (Path(settings.BASE_DIR) / 'portal' / 'templates' / 'portal'
                / 'grade_entry.html').read_text(encoding='utf-8')
-        fn = src[src.index('function createLesson()'):src.index('function deleteLesson()')]
+        fn = src[src.index('function createLesson()'):src.index('function deleteLessonChip(')]
         self.assertNotIn('prompt(', fn)
         self.assertIn('lessonSaveUrl', fn)
 

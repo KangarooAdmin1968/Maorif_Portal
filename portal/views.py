@@ -4530,10 +4530,6 @@ def grade_entry(request, school_id, class_name, subject):
         'teacher_group': journal_group,
         'lessons': lessons_payload,
         'selected_lesson': selected_lesson,
-        'selected_lesson_has_data': next(
-            (l['has_data'] for l in lessons_payload
-             if selected_lesson and l['id'] == selected_lesson.id), False
-        ),
         'control_assessments': control_assessments,
         'assessment_grade_map': assessment_grade_map,
         'assessment_marks': assessment_marks,
@@ -6761,14 +6757,18 @@ def lesson_save(request):
 @login_required
 @require_POST
 def lesson_delete(request):
-    """Delete an empty Lesson. Block-when-data-exists by design.
+    """Delete a Lesson, optionally together with its recorded data.
 
-    Grade.lesson and Assessment.lesson are SET_NULL — deleting a lesson
-    with linked rows would silently orphan them into the day's lesson-less
-    pool, so deletion is refused until the teacher clears the data first.
+    Empty lessons delete directly. A lesson carrying Grade rows or
+    Assessments requires ``with_data=1`` — the deliberate-confirm path the
+    UI posts after warning that every mark entered in that lesson is
+    removed too. Without the flag deletion is refused: Grade.lesson and
+    Assessment.lesson are SET_NULL, so silently deleting would orphan the
+    rows into the day's lesson-less pool.
     """
     try:
         lesson_id = request.POST.get('lesson_id', '').strip()
+        with_data = request.POST.get('with_data', '').strip() == '1'
         try:
             lesson = Lesson.objects.select_related('class_subject__school').get(pk=lesson_id)
         except (Lesson.DoesNotExist, ValueError, TypeError):
@@ -6783,13 +6783,27 @@ def lesson_delete(request):
                 get_date_quarter(lesson.date),
                 academic_year_start(lesson.date)):
             return JsonResponse({'success': False, 'message': 'Ин чоряк баста шудааст.'}, status=200)
-        if Grade.objects.filter(lesson=lesson).exists() or Assessment.objects.filter(lesson=lesson).exists():
+        assessments = Assessment.objects.filter(lesson=lesson)
+        has_data = (Grade.objects.filter(lesson=lesson).exists()
+                    or assessments.exists())
+        if has_data and not with_data:
             return JsonResponse({
                 'success': False,
                 'message': 'Ин дарс холҳо ё санҷишҳо дорад — аввал маълумоти дарсро тоза кунед.'
             }, status=200)
-        with transaction.atomic():
+        from .signals import defer_quarter_recalc  # local import avoids cycles
+        with transaction.atomic(), defer_quarter_recalc() as deferred:
+            if has_data:
+                # Deliberate teacher action (the UI confirms first): the
+                # lesson's own Grade rows, every Assessment anchored to it
+                # and those assessments' Grade rows are removed — the same
+                # scoped-delete rule assessment_delete applies.
+                Grade.objects.filter(
+                    Q(lesson=lesson) | Q(assessment__in=assessments)
+                ).delete()
+                assessments.delete()
             lesson.delete()
+            recalculate_quarter_grades_bulk(deferred)
         return JsonResponse({'success': True}, status=200)
     except Exception as e:
         return JsonResponse({'success': False, 'message': str(e)}, status=200)

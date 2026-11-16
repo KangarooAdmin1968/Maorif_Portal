@@ -8,6 +8,7 @@ from django.db.models import Avg, Count, Sum, Q, Max, ProtectedError
 from django.core.cache import cache
 import calendar
 import contextlib
+import copy
 import contextvars
 import io
 import json
@@ -1702,6 +1703,53 @@ def teacher_group_for(user, cs):
     ).order_by('is_home', 'pk').first()
 
 
+def _is_class_subject_teacher(user, cs):
+    """The user holds the CS-level (class-wide) teacher assignment —
+    the legacy cs.teacher link or the allocated TeacherProfile. This is
+    the 'class teacher' role on the subject, distinct from any
+    TeachingGroup membership (canonical split or таҳсил дар хона)."""
+    return cs.teacher_id == user.id or (
+        cs.allocated_teacher_id is not None
+        and cs.allocated_teacher.user_id == user.id
+    )
+
+
+# Sentinel: caller did not precompute the group, resolve it inside.
+_GROUP_UNSET = object()
+# Sentinel: a client-supplied group id resolved to nothing usable.
+_GROUP_INVALID = object()
+
+
+def journal_group_for(user, cs, gid=None):
+    """The TeachingGroup context of the journal view being requested.
+
+    teacher_group_for() alone cannot express a dual-role teacher who is
+    BOTH the class's regular teacher AND the home group's teacher on the
+    same ClassSubject — the plain link must open the class journal while
+    ?group=<id> opens the таҳсил дар хона journal.
+
+    `gid` is the ?group= request parameter (or a POSTed group_id); it
+    resolves only among the teacher's OWN active groups and returns
+    _GROUP_INVALID for anything else (never trust a client-supplied id).
+    With no gid a teacher whose ONLY stake is the home group still lands
+    in the home journal, but a dual-role teacher lands in the class
+    journal (None = class context) — the class-teacher role takes
+    precedence for the default view.
+    """
+    if not _is_regular_teacher(user):
+        return None
+    if gid:
+        if not str(gid).isdigit():
+            return _GROUP_INVALID
+        g = cs.groups.filter(
+            is_active=True, teacher__user=user, pk=int(gid)).first()
+        return g if g is not None else _GROUP_INVALID
+    group = teacher_group_for(user, cs)
+    if group is not None and group.is_home and _is_class_subject_teacher(user, cs):
+        return None
+    return group
+
+
 def _class_subject_for(school, class_name, subject):
     """The active ClassSubject row for a school/class/subject triple."""
     return ClassSubject.objects.filter(
@@ -1710,10 +1758,6 @@ def _class_subject_for(school, class_name, subject):
         subject=normalize_subject(subject),
         is_active=True,
     ).order_by('pk').first()
-
-
-# Sentinel: caller did not precompute the group, resolve it inside.
-_GROUP_UNSET = object()
 
 
 def _exclude_home_students(students):
@@ -1813,7 +1857,12 @@ def _teacher_can_use_lesson(user, lesson):
         return True
     if lesson.group_id is None:
         own = teacher_group_for(user, lesson.class_subject)
-        return own is None or not own.is_home
+        if own is None or not own.is_home:
+            return True
+        # Shared class lessons also remain usable when the home-group
+        # teacher is the CS's regular class teacher too (dual role) —
+        # the class journal context belongs to her as well.
+        return _is_class_subject_teacher(user, lesson.class_subject)
     return lesson.class_subject.groups.filter(
         is_active=True, teacher__user=user, pk=lesson.group_id
     ).exists()
@@ -3386,27 +3435,60 @@ def class_detail(request, school_id, class_name):
     # picker — for grouped subjects that means their TeachingGroup.
     teacher_hours = []
     if _is_regular_teacher(request.user):
-        subjects = [
+        try:
+            _own_profile_id = request.user.teacherprofile.id
+        except TeacherProfile.DoesNotExist:
+            _own_profile_id = None
+        cs_list = [
             cs for cs in subjects.prefetch_related('groups', 'allocated_teacher')
             if _teacher_can_access_cs(request.user, cs)
         ]
-        for cs in subjects:
-            own_group = teacher_group_for(request.user, cs)
-            cs.group_label = own_group.label if own_group else None
+        subjects = []
+        for cs in cs_list:
+            own_groups = sorted(
+                (g for g in cs.groups.all()
+                 if g.is_active and g.teacher_id == _own_profile_id),
+                key=lambda g: (g.is_home, g.pk))
+            primary = own_groups[0] if own_groups else None
+            # Dual role (home group + CS-level class teacher): the plain
+            # subject link opens the CLASS journal — the таҳсил дар хона
+            # journal gets its own ?group= entry appended below.
+            default_group = None if (
+                primary is not None and primary.is_home
+                and _is_class_subject_teacher(request.user, cs)) else primary
+            cs.group_label = default_group.label if default_group else None
+            cs.journal_gid = None
+            subjects.append(cs)
+            for g in own_groups:
+                if g is not default_group:
+                    extra = copy.copy(cs)
+                    extra.group_label = g.label
+                    extra.journal_gid = g.pk
+                    subjects.append(extra)
             # «Соатҳои ҳафтаинаи шумо» — the hours the teacher is actually
-            # paid for. For a home-education group that is its own explicit
-            # value; otherwise the class-subject weekly hours (confirmed in
-            # «Тақсимоти дарсҳо» or the national curriculum).
-            if own_group is not None and own_group.is_home:
-                hours_val = group_weekly_hours(own_group, cs)
-            else:
-                hours_val = weekly_hours(class_name, cs.subject, cs)
-            teacher_hours.append({
-                'subject': cs.subject,
-                'label': own_group.label if own_group else None,
-                'is_home': bool(own_group is not None and own_group.is_home),
-                'hours': disp_hours(hours_val),
-            })
+            # paid for. A class-level role yields the class-subject weekly
+            # hours; each own home group adds its own explicit value —
+            # a dual-role teacher is paid for both.
+            has_class_role = (
+                _is_class_subject_teacher(request.user, cs)
+                or any(not g.is_home for g in own_groups))
+            if has_class_role:
+                teacher_hours.append({
+                    'subject': cs.subject,
+                    'label': primary.label if (
+                        primary is not None and not primary.is_home) else None,
+                    'is_home': False,
+                    'hours': disp_hours(
+                        weekly_hours(class_name, cs.subject, cs)),
+                })
+            for g in own_groups:
+                if g.is_home:
+                    teacher_hours.append({
+                        'subject': cs.subject,
+                        'label': g.label,
+                        'is_home': True,
+                        'hours': disp_hours(group_weekly_hours(g, cs)),
+                    })
     non_graded = is_non_graded(class_name)
     student_classes = {
         c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()
@@ -3896,8 +3978,21 @@ def grade_entry(request, school_id, class_name, subject):
         return HttpResponse('Дастрасӣ манъ аст.', status=403)
 
     class_subject = _class_subject_for(school, class_name, subject)
+    # Journal group context (?group=<id>): a dual-role teacher — regular
+    # class teacher AND таҳсил дар хона group owner on the same CS —
+    # defaults to the class roster here; the home journal is reached only
+    # through the explicit ?group= link. A teacher whose only stake is
+    # the home group resolves to it either way.
+    journal_group = None
+    if class_subject is not None and _is_regular_teacher(request.user):
+        journal_group = journal_group_for(
+            request.user, class_subject,
+            request.GET.get('group') or request.POST.get('journal_group'))
+        if journal_group is _GROUP_INVALID:
+            return HttpResponse('Дастрасӣ манъ аст.', status=403)
     if class_subject is not None:
-        students = visible_students_for(request.user, class_subject)
+        students = visible_students_for(
+            request.user, class_subject, group=journal_group)
     else:
         students = sort_students(_exclude_home_students(
             Student.objects.filter(school=school, class_name=class_name)))
@@ -3908,10 +4003,6 @@ def grade_entry(request, school_id, class_name, subject):
     # In the таҳсил дар хона journal the «Дар хона таҳсил мегирад» status is
     # not an exemption — these students ARE the journal's roster and count
     # toward its norm like any ordinary student.
-    journal_group = (
-        teacher_group_for(request.user, class_subject)
-        if class_subject is not None else None
-    )
     if journal_group is not None and journal_group.is_home:
         exemption_map = {
             sid: ex for sid, ex in exemption_map.items()
@@ -4088,6 +4179,8 @@ def grade_entry(request, school_id, class_name, subject):
         tab = request.POST.get('tab', '')
         if tab in ('daily', 'quarterly'):
             back += f"&tab={tab}"
+        if isinstance(journal_group, TeachingGroup):
+            back += f"&group={journal_group.id}"
         return redirect(
             reverse('grade_entry', kwargs={
                 'school_id': school.id, 'class_name': class_name, 'subject': subject
@@ -4112,7 +4205,8 @@ def grade_entry(request, school_id, class_name, subject):
             class_subject=class_subject, date=selected_date
         ).select_related('group')
         if _is_regular_teacher(request.user):
-            lesson_qs = lesson_qs.filter(_visible_lessons_q(request.user, class_subject))
+            lesson_qs = lesson_qs.filter(_visible_lessons_q(
+                request.user, class_subject, group=journal_group))
         day_lessons = list(lesson_qs.order_by('lesson_number'))
         lesson_param = request.GET.get('lesson', '').strip()
         ln_param = request.GET.get('ln', '').strip()
@@ -4267,16 +4361,21 @@ def grade_entry(request, school_id, class_name, subject):
         if _is_regular_teacher(request.user) and class_subject.groups.filter(
                 _canonical_group_q()).exists():
             assessments_qs = assessments_qs.filter(
-                _visible_assessments_q(request.user, class_subject)
+                _visible_assessments_q(
+                    request.user, class_subject, group=journal_group)
             )
         elif _is_regular_teacher(request.user):
             # A таҳсил дар хона group alone does not group-scope the class
-            # journal — but the home teacher's own assessments stay scoped
-            # to their home journal.
-            own = teacher_group_for(request.user, class_subject)
-            if own is not None and own.is_home:
+            # journal — but the home journal's own assessments stay scoped
+            # to its group; home-lesson controls never appear in the class
+            # journal either.
+            if journal_group is not None and journal_group.is_home:
                 assessments_qs = assessments_qs.filter(
-                    _visible_assessments_q(request.user, class_subject))
+                    _visible_assessments_q(
+                        request.user, class_subject, group=journal_group))
+            else:
+                assessments_qs = assessments_qs.exclude(
+                    lesson__group__is_home=True)
         for a in assessments_qs.order_by('quarter', 'number', 'date', 'id'):
             control_assessments.append({
                 'id': a.id,
@@ -4502,7 +4601,14 @@ def monthly_journal(request, school_id, class_name, subject):
     teacher_group = None
     if class_subject is not None and is_regular:
         has_groups = class_subject.groups.filter(_canonical_group_q()).exists()
-        teacher_group = teacher_group_for(request.user, class_subject)
+        # ?group=<id> selects the journal context — same resolution as the
+        # daily journal: a dual-role teacher defaults to the class journal
+        # and reaches the таҳсил дар хона journal only via the explicit
+        # parameter.
+        teacher_group = journal_group_for(
+            request.user, class_subject, request.GET.get('group'))
+        if teacher_group is _GROUP_INVALID:
+            return HttpResponse('Дастрасӣ манъ аст.', status=403)
     if class_subject is not None:
         students = list(visible_students_for(
             request.user, class_subject,
@@ -4572,6 +4678,10 @@ def monthly_journal(request, school_id, class_name, subject):
                 _visible_assessments_q(request.user, class_subject,
                                        group=teacher_group)
             )
+        elif is_regular:
+            # Class journal: home-education controls belong to the home
+            # journal only — same split as the daily journal.
+            assessment_qs = assessment_qs.exclude(lesson__group__is_home=True)
         for a in assessment_qs:
             control_slots.add((a.date, a.lesson_id))
             ctl_by_slot[(a.date, a.lesson_id)].append(a)
@@ -4790,8 +4900,14 @@ def export_journal_excel(request, school_id, class_name, subject):
     )
 
     class_subject = _class_subject_for(school, class_name, subject)
+    journal_group = None
+    if class_subject is not None and _is_regular_teacher(request.user):
+        journal_group = journal_group_for(
+            request.user, class_subject, request.GET.get('group'))
+        if journal_group is _GROUP_INVALID:
+            return HttpResponse('Дастрасӣ манъ аст.', status=403)
     students = (
-        visible_students_for(request.user, class_subject)
+        visible_students_for(request.user, class_subject, group=journal_group)
         if class_subject is not None
         else Student.objects.filter(school=school, class_name=class_name)
     )
@@ -6042,8 +6158,15 @@ def calc_quarter_from_daily(request, school_id, class_name, subject):
         return HttpResponse('Дастрасӣ барои тағйир додан манъ аст.', status=403)
 
     class_subject = _class_subject_for(school, class_name, subject)
+    journal_group = None
+    if class_subject is not None and _is_regular_teacher(request.user):
+        journal_group = journal_group_for(
+            request.user, class_subject,
+            request.GET.get('group') or request.POST.get('journal_group'))
+        if journal_group is _GROUP_INVALID:
+            return HttpResponse('Дастрасӣ манъ аст.', status=403)
     students = (
-        visible_students_for(request.user, class_subject)
+        visible_students_for(request.user, class_subject, group=journal_group)
         if class_subject is not None
         else Student.objects.filter(school=school, class_name=class_name)
     )
@@ -6070,6 +6193,8 @@ def calc_quarter_from_daily(request, school_id, class_name, subject):
     tab = request.POST.get('tab', '') or request.GET.get('tab', '')
     if tab in ('daily', 'quarterly'):
         back.append(f'tab={tab}')
+    if isinstance(journal_group, TeachingGroup):
+        back.append(f'group={journal_group.id}')
     url = reverse('grade_entry', kwargs={
         'school_id': school.id, 'class_name': class_name, 'subject': subject
     })
@@ -6125,7 +6250,10 @@ def assessment_save(request):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
 
         is_regular = _is_regular_teacher(request.user)
-        own_group = teacher_group_for(request.user, cs) if is_regular else None
+        own_group = journal_group_for(
+            request.user, cs, request.POST.get('group_id')) if is_regular else None
+        if own_group is _GROUP_INVALID:
+            return JsonResponse({'success': False, 'message': 'Гурӯҳ ёфт нашуд.'}, status=200)
         # A таҳсил дар хона group does not switch the class into group
         # mode — but a teacher who owns ONLY the home group is scoped to it.
         cs_grouped = cs.groups.filter(_canonical_group_q()).exists() or (
@@ -6296,7 +6424,10 @@ def assessment_delete(request):
         if not can_edit_grade_journal(request.user, cs.school, cs.class_name, cs.subject):
             return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
         if _is_regular_teacher(request.user):
-            own_group = teacher_group_for(request.user, cs)
+            own_group = journal_group_for(
+                request.user, cs, request.POST.get('group_id'))
+            if own_group is _GROUP_INVALID:
+                return JsonResponse({'success': False, 'message': 'Гурӯҳ ёфт нашуд.'}, status=200)
             cs_grouped = cs.groups.filter(_canonical_group_q()).exists() or (
                 own_group is not None and own_group.is_home)
             if cs_grouped and (own_group is None or assessment.lesson_id is None
@@ -6391,7 +6522,10 @@ def assessment_toggle(request):
                 return JsonResponse({'success': False, 'message': 'Дарс ба ин сана ё фан тааллуқ надорад.'}, status=200)
 
         is_regular = _is_regular_teacher(request.user)
-        own_group = teacher_group_for(request.user, cs) if is_regular else None
+        own_group = journal_group_for(
+            request.user, cs, request.POST.get('group_id')) if is_regular else None
+        if own_group is _GROUP_INVALID:
+            return JsonResponse({'success': False, 'message': 'Гурӯҳ ёфт нашуд.'}, status=200)
         # таҳсил дар хона group alone does not group-scope the CS, but a
         # teacher owning ONLY the home group works inside it.
         cs_grouped = cs.groups.filter(_canonical_group_q()).exists() or (
@@ -6552,7 +6686,15 @@ def lesson_save(request):
         group = None
         if cs.groups.filter(is_active=True).exists():
             if _is_regular_teacher(request.user):
-                group = teacher_group_for(request.user, cs)
+                # New lessons attach to the journal context the request
+                # came from: a dual-role teacher creates shared
+                # (group=NULL) lessons in the class journal and
+                # group-owned lessons in the ?group= journal — a posted
+                # group_id is honored only when it names her own group.
+                group = journal_group_for(
+                    request.user, cs, request.POST.get('group_id'))
+                if group is _GROUP_INVALID:
+                    return JsonResponse({'success': False, 'message': 'Гурӯҳ ёфт нашуд.'}, status=200)
                 if group is None and cs.groups.filter(_canonical_group_q()).exists():
                     return JsonResponse({'success': False, 'message': 'Дастрасӣ барои тағйир додан манъ аст.'}, status=403)
             else:

@@ -210,10 +210,14 @@ class ReadinessTimeAwareTests(GoldenBase):
             _norm_fulfillment(2, self._school_expected_min(), Q_PROGRESS))
 
     def test_full_norm_reached_early_caps_at_100(self):
-        # 7 norm x 2 students, all inside the quarter on distinct dates.
-        for i in range(14):
-            make_grade(self.s1, subject=MATH, score=9,
-                       date=Q_START + datetime.timedelta(days=i))
+        # School-level done is capped per student at min_norm (marks beyond
+        # the norm cannot cover a classmate with none) — so reaching the
+        # full school norm needs 7 marks on EACH of the 2 students, not
+        # 14 on one.
+        for i in range(7):
+            day = Q_START + datetime.timedelta(days=i)
+            make_grade(self.s1, subject=MATH, score=9, date=day)
+            make_grade(self.s2, subject=MATH, score=9, date=day)
         row, t = self._readiness()
         self.assertEqual(t['fulfillment'], 100.0)
         self.assertEqual(

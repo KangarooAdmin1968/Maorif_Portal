@@ -348,17 +348,17 @@ class GroupLessonTests(GroupedFixture):
         self.assertEqual(lesson.group_id, self.g1.id)
 
     def test_teacher_cannot_create_lesson_for_other_group(self):
-        # A forged group_id is ignored — the server always assigns the
-        # teacher's own group.
+        # A forged group_id is rejected outright — group_id now names the
+        # journal context (таҳсил дар хона), so a foreign id can no longer
+        # be silently rewritten to the teacher's own group. No lesson is
+        # created under either group.
         resp = self._save(
             self.teacher_a,
             class_subject_id=str(self.cs_math.id),
             date=D_Q1.isoformat(), group_id=str(self.g2.id))
-        self.assertTrue(resp.json()['success'])
-        self.assertEqual(
-            Lesson.objects.get(
-                class_subject=self.cs_math, date=D_Q1).group_id,
-            self.g1.id)
+        self.assertFalse(resp.json()['success'])
+        self.assertFalse(Lesson.objects.filter(
+            class_subject=self.cs_math, date=D_Q1).exists())
 
     def test_teacher_cannot_claim_other_group_lesson_slot(self):
         Lesson.objects.create(

@@ -5,7 +5,7 @@
 <h1>{% if teacher_group.is_home %}Журнали таҳсил дар хона{% else %}Ҷурнали моҳона{% endif %} — {{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}{% if teacher_group %} — {{ teacher_group.label }}{% endif %}</h1>
 
 <a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
-<a href="{% url 'grade_entry' school.id class_name subject %}" class="btn btn-secondary" style="margin-bottom:1rem;">📝 Ҷурнали ҳаррӯза</a>
+<a href="{% url 'grade_entry' school.id class_name subject %}{% if teacher_group %}?group={{ teacher_group.id }}{% endif %}" class="btn btn-secondary" style="margin-bottom:1rem;">📝 Ҷурнали ҳаррӯза</a>
 
 <style>
 .month-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 1rem 0; }
@@ -121,10 +121,10 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
 
 <div class="month-toolbar">
   <label for="month-input">Моҳ:</label>
-  <a class="btn btn-secondary month-nav" href="?month={{ prev_month|date:'Y-m' }}" title="Моҳи қаблӣ">◀</a>
-  <input type="month" id="month-input" value="{{ month_start|date:'Y-m' }}"{% if can_edit %} onchange="requestNav('?month='+this.value)"{% else %} onchange="location.href='?month='+this.value"{% endif %}>
-  <a class="btn btn-secondary month-nav" href="?month={{ next_month|date:'Y-m' }}" title="Моҳи оянда">▶</a>
-  <a class="btn btn-secondary" href="{% url 'export_journal_excel' school.id class_name subject %}?month={{ month_start|date:'Y-m' }}">📊 Excel</a>
+  <a class="btn btn-secondary month-nav" href="?month={{ prev_month|date:'Y-m' }}{% if teacher_group %}&group={{ teacher_group.id }}{% endif %}" title="Моҳи қаблӣ">◀</a>
+  <input type="month" id="month-input" value="{{ month_start|date:'Y-m' }}"{% if can_edit %} onchange="requestNav('?month='+this.value+jgParam)"{% else %} onchange="location.href='?month='+this.value+jgParam"{% endif %}>
+  <a class="btn btn-secondary month-nav" href="?month={{ next_month|date:'Y-m' }}{% if teacher_group %}&group={{ teacher_group.id }}{% endif %}" title="Моҳи оянда">▶</a>
+  <a class="btn btn-secondary" href="{% url 'export_journal_excel' school.id class_name subject %}?month={{ month_start|date:'Y-m' }}{% if teacher_group %}&group={{ teacher_group.id }}{% endif %}">📊 Excel</a>
   {% if can_edit %}
   <button type="button" class="btn btn-primary" id="month-save-btn" onclick="saveMonthly()">💾 Сабт кардан</button>
   <span class="ab-tabs" id="ab-tabs" role="group" aria-label="Давомот ва рафтор">
@@ -209,13 +209,13 @@ td.mcell-editable:focus.mcell-active { outline: 2px solid #2563eb; outline-offse
       <span class="d-lessons">
         {% if d.lessons %}
           {% for l in d.lessons %}
-          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}&lesson={{ l.id }}">Дарси {{ l.lesson_number }}</a>
+          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}&lesson={{ l.id }}{% if teacher_group %}&group={{ teacher_group.id }}{% endif %}">Дарси {{ l.lesson_number }}</a>
           {% endfor %}
           {% if d.has_legacy_data %}
-          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Умумӣ</a>
+          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}{% if teacher_group %}&group={{ teacher_group.id }}{% endif %}">Умумӣ</a>
           {% endif %}
         {% else %}
-          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}">Кушодан</a>
+          <a class="d-lesson" href="{% url 'grade_entry' school.id class_name subject %}?date={{ d.date|date:'Y-m-d' }}{% if teacher_group %}&group={{ teacher_group.id }}{% endif %}">Кушодан</a>
         {% endif %}
       </span>
       {% if can_edit %}<button type="button" class="d-toggle" onclick="toggleDay(this)">✎</button>{% endif %}
@@ -289,6 +289,11 @@ const assessmentToggleUrl = "{% url 'assessment_toggle' %}";
 const csrfToken = "{{ csrf_token }}";
 const subjectName = "{{ subject|escapejs }}";
 const classSubjectId = "{{ class_subject_id|default:'' }}";
+// Journal group context (?group=) — the таҳсил дар хона journal for a
+// dual-role teacher; appended to navigation and toggle requests so the
+// server-side group scoping stays in this journal's context.
+const journalGid = "{% if teacher_group %}{{ teacher_group.id }}{% endif %}";
+const jgParam = journalGid ? '&group=' + journalGid : '';
 const pendingEdits = {};   // key -> {score?, attendance?, behavior_score?}
 let pickerCell = null;
 
@@ -685,6 +690,7 @@ document.querySelectorAll('.ctl-tgl').forEach(btn => {
       date: btn.dataset.date,
       lesson_id: btn.dataset.lesson || '',
     });
+    if (journalGid) body.set('group_id', journalGid);
     fetch(assessmentToggleUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body})
       .then(r => r.json())
       .then(resp => {

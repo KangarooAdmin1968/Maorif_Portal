@@ -5,7 +5,7 @@
 <h1>{{ school.name }} — Синф {{ class_name }} — Фан: {{ subject }}{% if teacher_group %} — {{ teacher_group.label }}{% endif %}</h1>
 
 <a href="{% url 'class_detail' school_id=school.id class_name=class_name %}" class="btn btn-secondary" style="margin-bottom:1rem;">⬅️ Бозгашт ба синф</a>
-<a href="{% url 'monthly_journal' school.id class_name subject %}" class="btn btn-secondary" style="margin-bottom:1rem;">📅 Ҷурнали моҳона</a>
+<a href="{% url 'monthly_journal' school.id class_name subject %}{% if teacher_group %}?group={{ teacher_group.id }}{% endif %}" class="btn btn-secondary" style="margin-bottom:1rem;">📅 Ҷурнали моҳона</a>
 
 <style>
 .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 2px solid #e5e7eb; }
@@ -87,9 +87,10 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
 .leave-box { background: #fff; border-radius: 0.75rem; padding: 1.25rem; max-width: 22rem; width: 90%; display: flex; flex-direction: column; gap: 0.6rem; }
 </style>
 
-<form method="post" action="{% url 'grade_entry' school.id class_name subject %}" id="grade-form">
+<form method="post" action="{% url 'grade_entry' school.id class_name subject %}{% if teacher_group %}?group={{ teacher_group.id }}{% endif %}" id="grade-form">
 {% csrf_token %}
 <input type="hidden" name="tab" id="tab-input" value="daily">
+{% if teacher_group %}<input type="hidden" name="journal_group" value="{{ teacher_group.id }}">{% endif %}
 {% if selected_lesson %}<input type="hidden" name="lesson_id" value="{{ selected_lesson.id }}">{% endif %}
 <div id="offline-banner" class="offline-banner">⚠️ Алоқа бо сомона канда шуд. Маълумот дар хотираи телефон ҳифз шуд ва ба таври автоматикӣ ҳангоми пайдо шудани интернет сабт мешавад.</div>
 <div id="sync-toast" class="sync-toast">✅ Маълумоти ҳифзшуда ба таври автоматикӣ бо сомона ҳамоҳанг ва сабт карда шуд!</div>
@@ -314,7 +315,7 @@ tr.drow-active > td:nth-child(1), tr.drow-active > td:nth-child(2) { background:
     </table>
   </div>
   <div class="toolbar" style="margin-top:1rem;">
-    <button type="submit" class="btn btn-secondary" formaction="{% url 'calc_quarter_from_daily' school.id class_name subject %}">🔄 Ҳисобкунӣ аз холҳои ҷорӣ</button>
+    <button type="submit" class="btn btn-secondary" formaction="{% url 'calc_quarter_from_daily' school.id class_name subject %}{% if teacher_group %}?group={{ teacher_group.id }}{% endif %}">🔄 Ҳисобкунӣ аз холҳои ҷорӣ</button>
   </div>
 </div>
 {% endif %}
@@ -382,6 +383,12 @@ const dateIsControl = {{ date_is_control|yesno:"true,false" }};
 const schoolId = "{{ school.id }}";
 const className = "{{ class_name|escapejs }}";
 const subjectName = "{{ subject|escapejs }}";
+// Journal group context (?group=): the таҳсил дар хона journal for a
+// dual-role teacher. It must survive date/lesson navigation and reach
+// the write endpoints as group_id so server-side scoping stays in the
+// same context.
+const journalGid = "{% if teacher_group %}{{ teacher_group.id }}{% endif %}";
+const jgParam = journalGid ? '&group=' + journalGid : '';
 let assessments = [];
 let assessmentGrades = {};
 let assessmentMarks = {};
@@ -401,7 +408,7 @@ function navToDate(value) {
     if (!value) return;
     let url = '?date=' + value;
     if (selectedLessonNumber) url += '&ln=' + selectedLessonNumber;
-    requestNav(url);
+    requestNav(url + jgParam);
 }
 function navDate(offset) {
     const d = new Date(pageDate + 'T00:00:00');
@@ -410,7 +417,7 @@ function navDate(offset) {
     navToDate(d.toISOString().slice(0, 10));
 }
 function selectLesson(id) {
-    requestNav('?date=' + pageDate + (id ? '&lesson=' + id : ''));
+    requestNav('?date=' + pageDate + (id ? '&lesson=' + id : '') + jgParam);
 }
 function createLesson() {
     if (!navigator.onLine) { showOfflineBanner(); return; }
@@ -420,6 +427,7 @@ function createLesson() {
         class_subject_id: classSubjectId,
         date: pageDate,
     });
+    if (journalGid) params.set('group_id', journalGid);
     fetch(lessonSaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
     .then(r => r.json())
     .then(resp => {
@@ -704,6 +712,7 @@ function autoCreateControl() {
     date: pageDate,
     lesson_id: selectedLessonId,
   });
+  if (journalGid) params.set('group_id', journalGid);
   fetch(assessmentToggleUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
   .then(r => r.json())
   .then(resp => {
@@ -741,6 +750,7 @@ function revertSlotToCurrent() {
     date: pageDate,
     lesson_id: selectedLessonId,
   });
+  if (journalGid) params.set('group_id', journalGid);
   fetch(assessmentToggleUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
   .then(r => r.json())
   .then(resp => {
@@ -830,6 +840,7 @@ function deleteSelectedAssessment() {
   if (!confirm('«' + a.label + '» ва холҳои алоқамандаш нест карда мешаванд. Идома додан?')) return;
   if (!navigator.onLine) { showOfflineBanner(); return; }
   const params = new URLSearchParams({assessment_id: a.id});
+  if (journalGid) params.set('group_id', journalGid);
   fetch(assessmentDeleteUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
   .then(r => r.json())
   .then(resp => {
@@ -884,6 +895,7 @@ function saveAssessment() {
     work_type: document.getElementById('af-worktype').value,
     lesson_id: selectedLessonId,
   });
+  if (journalGid) params.set('group_id', journalGid);
   fetch(assessmentSaveUrl, {method: 'POST', headers: {'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest'}, body: params})
   .then(r => r.json())
   .then(resp => {

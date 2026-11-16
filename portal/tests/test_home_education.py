@@ -21,8 +21,8 @@ from portal.models import (
 )
 from portal.tabel import teacher_workload
 from portal.tests.helpers import (
-    D_Q1, MATH, GoldenBase, make_class_subject, make_grade, make_student,
-    make_teacher_profile, make_user,
+    D_Q1, MATH, TAJIK, GoldenBase, make_class_subject, make_grade,
+    make_student, make_teacher_profile, make_user,
 )
 from portal.views import visible_students_for, teacher_group_for
 
@@ -140,6 +140,165 @@ class HomeJournalTests(HomeFixture):
         self.client.force_login(self.teacher_a)
         resp = self.client.get(self._url() + f'?date={D_Q1.isoformat()}')
         self.assertNotContains(resp, f'selectLesson(\'{lesson.id}\')')
+
+
+class DualRoleTests(GoldenBase):
+    """Dual-role teacher: the CS's regular class teacher AND the owner of
+    its таҳсил дар хона group on the same ClassSubject.
+
+    Regression: teacher_group_for() alone trapped such a teacher inside
+    the home journal — the class roster collapsed to the home students
+    and shared class lessons refused her writes. The plain link must
+    open the class journal; the home journal stays reachable via
+    ?group=<id> (journal_group_for).
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.cs_math = cls.cs_a  # 7-А МАТЕМАТИКА, class teacher = teacher_a
+        cls.s_home = make_student(cls.school_a, '7-А', 'Аҳмад Ҳофизов')
+        cls.profile_a = make_teacher_profile(
+            cls.teacher_a, cls.school_a, full_name='Омӯзгор А')
+        cls.home_group = TeachingGroup.objects.create(
+            class_subject=cls.cs_math, label='Таҳсил дар хона',
+            teacher=cls.profile_a, is_home=True, hours_per_week=2)
+        SubjectGroupMembership.objects.create(
+            class_subject=cls.cs_math, group=cls.home_group,
+            student=cls.s_home)
+        StudentExemption.objects.create(
+            student=cls.s_home, reason='home',
+            start_date=D_Q1 - datetime.timedelta(days=60))
+
+    def _url(self):
+        return reverse('grade_entry', args=[self.school_a.id, '7-А', MATH])
+
+    def test_journal_group_resolution(self):
+        from portal.views import journal_group_for, _GROUP_INVALID
+        # The plain link opens the class journal for the dual-role teacher.
+        self.assertIsNone(journal_group_for(self.teacher_a, self.cs_math))
+        # ?group=<own> opens the home journal explicitly.
+        self.assertEqual(
+            journal_group_for(
+                self.teacher_a, self.cs_math, self.home_group.id),
+            self.home_group)
+        # Foreign or malformed ids are rejected, never silently widened.
+        self.assertIs(
+            journal_group_for(self.teacher_a, self.cs_math, '999999'),
+            _GROUP_INVALID)
+        self.assertIs(
+            journal_group_for(self.teacher_a, self.cs_math, 'x'),
+            _GROUP_INVALID)
+
+    def test_pure_home_teacher_resolution_unchanged(self):
+        from portal.views import journal_group_for
+        th = make_user('teacher_h2', role='teacher', school=self.school_a)
+        prof = make_teacher_profile(th, self.school_a)
+        g2 = TeachingGroup.objects.create(
+            class_subject=self.cs_math, label='Таҳсил дар хона 2',
+            teacher=prof, is_home=True)
+        # Only the home group, no class role -> home journal by default.
+        self.assertEqual(journal_group_for(th, self.cs_math), g2)
+
+    def test_class_journal_default_shows_class_roster(self):
+        self.client.force_login(self.teacher_a)
+        resp = self.client.get(self._url())
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Фирӯз Раҳимов')
+        self.assertNotContains(resp, 'Аҳмад Ҳофизов')
+
+    def test_home_journal_via_group_param(self):
+        self.client.force_login(self.teacher_a)
+        resp = self.client.get(self._url() + f'?group={self.home_group.id}')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Аҳмад Ҳофизов')
+        self.assertNotContains(resp, 'Фирӯз Раҳимов')
+
+    def test_foreign_group_param_rejected(self):
+        self.client.force_login(self.teacher_a)
+        other = make_user('teacher_y', role='teacher', school=self.school_a)
+        prof = make_teacher_profile(other, self.school_a)
+        foreign = TeachingGroup.objects.create(
+            class_subject=self.cs_math, label='Гурӯҳи дигар', teacher=prof)
+        resp = self.client.get(self._url() + f'?group={foreign.id}')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_monthly_journal_dual_contexts(self):
+        self.client.force_login(self.teacher_a)
+        url = reverse(
+            'monthly_journal', args=[self.school_a.id, '7-А', MATH])
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Фирӯз Раҳимов')
+        self.assertNotContains(resp, 'Аҳмад Ҳофизов')
+        resp = self.client.get(url + f'?group={self.home_group.id}')
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'Аҳмад Ҳофизов')
+        self.assertNotContains(resp, 'Фирӯз Раҳимов')
+
+    def test_shared_lesson_usable_by_dual_role(self):
+        # The actual blocker: shared (group=NULL) class lessons refused
+        # writes while the teacher's only group was home — fixed via the
+        # class-teacher fallback in _teacher_can_use_lesson.
+        from portal.models import Lesson
+        from portal.views import _teacher_can_use_lesson
+        lesson = Lesson.objects.create(
+            class_subject=self.cs_math, date=D_Q1, lesson_number=1)
+        self.assertTrue(_teacher_can_use_lesson(self.teacher_a, lesson))
+
+    def test_class_journal_new_lesson_is_shared(self):
+        self.client.force_login(self.teacher_a)
+        resp = self.client.post(reverse('lesson_save'), {
+            'class_subject_id': self.cs_math.id,
+            'date': D_Q1.isoformat(),
+        })
+        self.assertEqual(resp.status_code, 200)
+        from portal.models import Lesson
+        lesson = Lesson.objects.get(pk=resp.json()['lesson']['id'])
+        self.assertIsNone(lesson.group_id)
+
+    def test_home_journal_lesson_attaches_to_home_group(self):
+        self.client.force_login(self.teacher_a)
+        resp = self.client.post(reverse('lesson_save'), {
+            'class_subject_id': self.cs_math.id,
+            'date': D_Q1.isoformat(),
+            'group_id': str(self.home_group.id),
+        })
+        self.assertEqual(resp.status_code, 200)
+        from portal.models import Lesson
+        lesson = Lesson.objects.get(pk=resp.json()['lesson']['id'])
+        self.assertEqual(lesson.group_id, self.home_group.id)
+
+    def test_writes_class_student_on_shared_lesson(self):
+        from portal.models import Grade, Lesson
+        lesson = Lesson.objects.create(
+            class_subject=self.cs_math, date=D_Q1, lesson_number=1)
+        self.client.force_login(self.teacher_a)
+        resp = self.client.post(reverse('save_grade_ajax'), {
+            'student_id': self.s1.id, 'subject': MATH,
+            'date': D_Q1.isoformat(), 'score': '9',
+            'lesson_id': str(lesson.id), 'type': 'daily',
+        })
+        data = resp.json()
+        self.assertTrue(data['success'], data.get('message'))
+        self.assertTrue(Grade.objects.filter(
+            student=self.s1, lesson=lesson, score=9).exists())
+
+    def test_class_picker_offers_both_journals(self):
+        # The picker only lists official curriculum subjects — МАТЕМАТИКА
+        # is not in TJC_SUBJECTS['7'], so mirror the dual role onto the
+        # official ЗАБОНИ ТОҶИКӢ row for this UI assertion.
+        cs_tajik = make_class_subject(
+            self.school_a, '7-А', TAJIK, teacher=self.teacher_a)
+        home_t = TeachingGroup.objects.create(
+            class_subject=cs_tajik, label='Таҳсил дар хона',
+            teacher=self.profile_a, is_home=True, hours_per_week=2)
+        self.client.force_login(self.teacher_a)
+        resp = self.client.get(
+            reverse('class_detail', args=[self.school_a.id, '7-А']))
+        self.assertEqual(resp.status_code, 200)
+        # Plain subject link (class journal) + ?group= entry (home journal)
+        self.assertContains(resp, f'?group={home_t.id}')
 
 
 class HomeExemptionTests(HomeFixture):

@@ -1,5 +1,6 @@
 import re
 import datetime
+from urllib.parse import unquote
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -26,12 +27,26 @@ LANGUAGE_CHOICES = [
 # Official Tajik Cyrillic class letters (uppercase) in standard order
 CLASS_LETTERS = 'АБВГҒДЕЁЖЗИӢЙКҚЛМНОПРСТУӮФХҲЧҶШЪЭЮЯ'
 
+# Canonical class name shape: grade 1-11 + one official Cyrillic letter.
+CLASS_NAME_RE = re.compile(rf'^(?:[1-9]|1[0-1])-[{CLASS_LETTERS}]$')
+
 
 def normalize_class_name(raw):
     """10a, 10-a, 10_a -> 10-А (Cyrillic uppercase)"""
     if not raw:
         return ''
-    raw = str(raw).strip().upper()
+    raw = str(raw)
+    # URL path params arrive decoded once; links copied/shared through
+    # other tools or hit by crawlers may carry extra percent-encoding
+    # layers ("/class/5-%25D0%2590/" decodes to the literal "5-%D0%90").
+    # Unwrap them so they resolve to the real class instead of being
+    # stored as a bogus class name.
+    for _ in range(3):
+        decoded = unquote(raw)
+        if decoded == raw:
+            break
+        raw = decoded
+    raw = raw.strip().upper()
     # unify separators
     raw = raw.replace('_', '-')
     raw = raw.replace(' ', '-')

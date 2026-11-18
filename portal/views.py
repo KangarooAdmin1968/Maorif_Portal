@@ -32,7 +32,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 
-from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, StudentMovement, StudentExemption, DailyActivity, CLASS_LETTERS
+from .models import School, Teacher, Student, Grade, QuarterGrade, QuarterLock, ClassSubject, UserProfile, TeacherProfile, TeacherTabelMonth, SubjectDeactivationRequest, Lesson, Assessment, TeachingGroup, SubjectGroupMembership, Subject, SubjectAvailability, StudentMovement, StudentExemption, DailyActivity, CLASS_LETTERS, CLASS_NAME_RE
 from .forms import LoginForm, SchoolForm, TeacherForm, StudentForm, GradeForm, ClassSubjectForm
 from .utils import (
     normalize_class_name, normalize_subject, is_litsey, class_numeric_part,
@@ -41,7 +41,7 @@ from .utils import (
     academic_school_ids, official_subjects,
     official_subjects_for, canonical_subject_for,
     registry_subjects_for, reactivate_class_subjects,
-    reverse_approved_deactivations,
+    reverse_approved_deactivations, school_declares_class,
     canonical_grade_rows, canonical_grade_values,
 )
 from .curriculum_hours import (
@@ -1381,9 +1381,6 @@ def _is_regular_teacher(user, role=None):
 def _teacher_assignment_filter(user):
     """Q filter matching the ClassSubjects a teacher is assigned to (either field)."""
     return Q(teacher=user) | Q(allocated_teacher__user=user)
-
-
-CLASS_NAME_RE = re.compile(rf'^(?:[1-9]|1[0-1])-[{CLASS_LETTERS}]$')
 
 
 def _can_manage_school(user, school):
@@ -3234,7 +3231,11 @@ def class_list(request, school_id=None):
 
     student_classes = {c for c in Student.objects.filter(school=school).values_list('class_name', flat=True).distinct()}
     subject_classes = {c for c in ClassSubject.objects.filter(school=school).values_list('class_name', flat=True).distinct()}
-    class_names = sorted(student_classes | subject_classes, key=class_numeric_part)
+    # Canonicalize stored variants (e.g. legacy percent-encoded names) so
+    # they merge onto the real class instead of rendering a duplicate row.
+    class_names = sorted(
+        {n for n in (normalize_class_name(c) for c in student_classes | subject_classes) if n},
+        key=class_numeric_part)
 
     # Regular teachers only see the classes they are assigned to in "Тақсимоти дарсҳо"
     # or teach a group in (grouped subjects count as assignments).
@@ -3247,9 +3248,14 @@ def class_list(request, school_id=None):
         }
         class_names = [c for c in class_names if c in assigned_class_names]
 
-    student_counts = dict(
-        Student.objects.filter(school=school).values('class_name').annotate(count=Count('id')).values_list('class_name', 'count')
-    )
+    student_counts = {}
+    for raw_name, cnt in (
+        Student.objects.filter(school=school)
+        .values('class_name').annotate(count=Count('id'))
+        .values_list('class_name', 'count')
+    ):
+        canonical = normalize_class_name(raw_name)
+        student_counts[canonical] = student_counts.get(canonical, 0) + cnt
 
     graded_stats = []
     non_graded_stats = []
@@ -3387,7 +3393,15 @@ def delete_class(request, school_id, class_name):
 
 def class_detail(request, school_id, class_name):
     school = get_object_or_404(School, id=school_id)
-    class_name = normalize_class_name(class_name)
+    normalized = normalize_class_name(class_name)
+    if normalized != class_name:
+        # Canonicalize variant/percent-encoded forms — e.g. a leftover
+        # "5-%D0%90" link resolves to the real "5-А" class instead of
+        # rendering a duplicate ghost page.
+        return redirect(
+            'class_detail', school_id=school_id,
+            class_name=normalized, permanent=True)
+    class_name = normalized
     if request.user.is_authenticated:
         user_school = get_user_school(request.user)
         role = get_user_role(request.user)
@@ -3410,7 +3424,18 @@ def class_detail(request, school_id, class_name):
             return redirect('dashboard')
     if not is_academic_school(school):
         return redirect('school_list')
-    ensure_class_subjects(school, class_name)
+    # Seed/maintain ClassSubjects only for a class that actually exists —
+    # anonymous visits (crawlers) to a never-created class name must not
+    # materialize one. New classes are seeded explicitly via add_class;
+    # school-configured classes (e.g. Uzbek tracks) and classes with
+    # reserved registry subjects legitimately exist before enrolment.
+    if (
+        ClassSubject.objects.filter(school=school, class_name=class_name).exists()
+        or Student.all_objects.filter(school=school, class_name=class_name).exists()
+        or school_declares_class(school, class_name)
+        or registry_subjects_for(school, class_name)
+    ):
+        ensure_class_subjects(school, class_name)
     students = sort_students(Student.objects.filter(
         school=school, class_name=class_name))
     total_count = len(students)

@@ -8,7 +8,7 @@ from django.conf import settings
 from .models import (
     School, Student, Grade, ClassSubject, Subject, SubjectAvailability,
     SubjectDeactivationRequest, normalize_class_name, normalize_subject,
-    is_litsey,
+    is_litsey, CLASS_NAME_RE,
 )
 
 
@@ -215,6 +215,13 @@ def _school_subject_overrides(school, class_name):
     )
 
 
+def school_declares_class(school, class_name):
+    """True when SCHOOL_CLASS_SUBJECTS declares this class for the school —
+    e.g. the Uzbek-track classes that legitimately exist before any
+    student enrols in them."""
+    return bool(_school_subject_overrides(school, class_name))
+
+
 def extra_subjects_for(school, class_name):
     """School+class-scoped subjects seeded on top of the curriculum."""
     return [
@@ -287,6 +294,15 @@ def is_non_graded(class_name):
 def ensure_class_subjects(school, class_name):
     """Create default ClassSubject records for a school/class and deactivate non-official ones."""
     class_name = normalize_class_name(class_name)
+    if not CLASS_NAME_RE.match(class_name):
+        # Never seed/deactivate subjects for a non-canonical name — a
+        # bogus value (percent-encoding remnants, mojibake) must not
+        # materialize a ghost class. Exception: real students are already
+        # enrolled under that exact name (e.g. Uzbek-track Latin-letter
+        # classes), which makes the class real data worth maintaining.
+        if not Student.all_objects.filter(
+                school=school, class_name=class_name).exists():
+            return 0
     subjects = default_subjects_for_class(class_name)
     extras = extra_subjects_for(school, class_name)
     registry = registry_subjects_for(school, class_name)

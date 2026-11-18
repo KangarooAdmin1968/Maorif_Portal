@@ -2,7 +2,7 @@ import re
 
 from django.conf import settings
 
-from .models import School, Student, ClassSubject
+from .models import School, Student, ClassSubject, normalize_class_name
 from .monitoring import can_access_monitoring
 from .utils import class_numeric_part, is_academic_school
 
@@ -57,7 +57,12 @@ def parent_portal(request):
         for row in qs:
             if row['school_id'] not in eligible_ids:
                 continue
-            classes_map.setdefault(row['school_id'], set()).add(row['class_name'])
+            # Canonicalize so stored variants (e.g. legacy percent-encoded
+            # names) collapse onto the real class instead of rendering a
+            # second chip.
+            name = normalize_class_name(row['class_name'])
+            if name:
+                classes_map.setdefault(row['school_id'], set()).add(name)
 
     data = {
         'schools': [{'id': s.id, 'name': s.name} for s in schools],

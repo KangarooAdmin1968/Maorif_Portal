@@ -51,3 +51,14 @@ the rules below govern how the agent works.
 
 - If an action is ambiguous or could lose data, stop and ask for approval
   instead of guessing.
+
+## Production operations (learned)
+
+- Server: `169.58.154.191`, project `/var/www/maorif_zafarobod`, venv `venv/bin/python`.
+- SSH: key auth via `%USERPROFILE%\.ssh\deploy_key` (paramiko); no password needed.
+- Gunicorn runs under **systemd** - restart with `systemctl restart gunicorn`
+  (the old `pkill`/`--daemon` flow in `deploy_hotfix.py` is outdated).
+- Remote Django scripts must run with `PYTHONPATH=/var/www/maorif_zafarobod`
+  when placed outside the project dir (e.g. `/tmp`).
+- Production DB is SQLite under a live gunicorn - wrap remote writes in
+  small transactions with `PRAGMA busy_timeout` + retry (`database is locked` errors are transient).

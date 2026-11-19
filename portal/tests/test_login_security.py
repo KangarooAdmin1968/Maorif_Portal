@@ -2,7 +2,7 @@
 
 Covers the hardening added after the intrusion audit:
 
-* login brute-force lockout (5 failures -> 15 min block, per IP + username);
+* login brute-force lockout (5 failures -> 10 min block, per IP + username);
 * random per-teacher passwords instead of the derivable
   Teacher_<school>_<n>@2026 formula;
 * redirect to password_change right after login while the account still
@@ -45,7 +45,7 @@ class LoginLockoutTests(TestCase):
         for _ in range(LOGIN_FAIL_LIMIT):
             self._post_login('wrong')
         response = self._post_login('correct_horse_123')
-        self.assertContains(response, 'такрор кунед', status_code=200)
+        self.assertContains(response, 'кӯшиш кунед', status_code=200)
         self.assertNotIn('_auth_user_id', self.client.session)
 
     def test_successful_login_clears_counters(self):
@@ -89,7 +89,7 @@ class LoginLockoutTests(TestCase):
             'username': 'teacher_1_3',
             'password': 'other_pw_123',
         })
-        self.assertContains(response, 'такрор кунед', status_code=200)
+        self.assertContains(response, 'кӯшиш кунед', status_code=200)
 
 
 class RandomTeacherPasswordTests(TestCase):

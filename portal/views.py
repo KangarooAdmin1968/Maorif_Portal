@@ -3088,7 +3088,7 @@ def _safe_login_next(request, next_url):
 # Counters live in the shared file cache so all gunicorn workers see them.
 LOGIN_FAIL_LIMIT = 5
 LOGIN_IP_FAIL_LIMIT = 15
-LOGIN_LOCK_SECONDS = 15 * 60
+LOGIN_LOCK_SECONDS = 10 * 60
 
 
 def _login_fail_keys(request, username):
@@ -3114,8 +3114,8 @@ def login_view(request):
             if ((cache.get(ip_key) or 0) >= LOGIN_IP_FAIL_LIMIT
                     or (cache.get(user_key) or 0) >= LOGIN_FAIL_LIMIT):
                 form.add_error(
-                    None, 'Жуда кўп номуваффақ уриниш. '
-                          '15 дақиқадан сўнг такрор кунед.')
+                    None, 'Кӯшишҳои номуваффақ аз ҳад зиёд. Пас аз '
+                          f'{LOGIN_LOCK_SECONDS // 60} дақиқа боз кӯшиш кунед.')
             else:
                 user = authenticate(request, username=username,
                                     password=password)
